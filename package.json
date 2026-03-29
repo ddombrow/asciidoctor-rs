@@ -3,11 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "install:wasm-bindgen": "node scripts/install-wasm-bindgen.mjs",
     "build:wasm:test": "node tests/browser/build-wasm.mjs",
     "preview:browser": "npm run build:wasm:test && node tests/browser/server.mjs",
     "test:browser": "npm run build:wasm:test && playwright test",
     "test:browser:headed": "npm run build:wasm:test && playwright test --headed",
-    "test:tck:smoke": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-tck-smoke.ps1"
+    "test:tck:smoke": "node scripts/run-tck-smoke.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1"

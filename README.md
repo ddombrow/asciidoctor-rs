@@ -40,13 +40,13 @@ the TCK stdin envelope and emit ASG JSON on stdout:
 
 ```powershell
 Get-Content request.json | cargo run -- --format tck-json --stdin
-node C:\Users\ddomb\src\asciidoc-tck\harness\bin\asciidoc-tck.js cli --adapter-command "C:\Users\ddomb\src\asciidoctor-rs\scripts\tck-adapter.cmd"
+node C:\Users\ddomb\src\asciidoc-tck\harness\bin\asciidoc-tck.js cli --adapter-command "node C:\Users\ddomb\src\asciidoctor-rs\scripts\tck-adapter.mjs"
 ```
 
 There is also a local smoke suite wired to the real TCK harness:
 
 ```powershell
-npm.cmd run test:tck:smoke
+npm run test:tck:smoke
 ```
 
 ## WASM Direction
@@ -68,13 +68,13 @@ There is also a Playwright-based browser integration harness that exercises the 
 module through a real page:
 
 ```powershell
-npm.cmd install
-npm.cmd run build:wasm:test
-npm.cmd run test:browser
+npm install
+npm run build:wasm:test
+npm run test:browser
 ```
 
-The browser build currently expects a locally downloaded `wasm-bindgen.exe`. Install it with:
+The browser build currently expects a locally downloaded `wasm-bindgen` binary. Install it with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-wasm-bindgen.ps1
+npm run install:wasm-bindgen
 ```
