@@ -506,6 +506,42 @@ fn map_inline(
                 ],
             })
         }
+        Inline::Link(link) => AsgInline::Span(InlineSpanNode {
+            name: "link",
+            node_type: "inline",
+            variant: "link",
+            form: if link.bare { "bare" } else { "macro" },
+            inlines: link
+                .text
+                .iter()
+                .enumerate()
+                .map(|(idx, child)| {
+                    let child_text = child.plain_text();
+                    let child_start = link
+                        .text
+                        .iter()
+                        .take(idx)
+                        .map(Inline::plain_text)
+                        .collect::<String>()
+                        .len();
+                    map_inline(
+                        child,
+                        child_start,
+                        child_start + child_text.len(),
+                        &link.text.iter().map(Inline::plain_text).collect::<String>(),
+                        &compute_line_starts(
+                            &link.text.iter().map(Inline::plain_text).collect::<String>(),
+                        ),
+                        base_line,
+                        base_col,
+                    )
+                })
+                .collect(),
+            location: [
+                offset_to_position(start, line_starts, base_line, base_col),
+                offset_to_end_position(end, line_starts, base_line, base_col),
+            ],
+        }),
     }
 }
 

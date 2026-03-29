@@ -54,9 +54,41 @@ test("preview rerenders as the source changes", async ({ page }) => {
   await page.fill("#source", "= Sample Document\n\nbefore\n");
 
   const frame = page.frameLocator("#preview-frame");
-  await expect(frame.locator("p")).toHaveText("before");
+  await expect(frame.locator("p")).toHaveCount(1);
+  await expect(frame.locator("p").first()).toHaveText("before");
 
   await page.fill("#source", "= Sample Document\n\nA *bold* change\n");
+  await expect(frame.locator("p")).toHaveCount(1);
   await expect(frame.locator("strong")).toHaveText("bold");
-  await expect(frame.locator("p")).toHaveText("A bold change");
+  await expect(frame.locator("p").first()).toHaveText("A bold change");
+});
+
+test("preview renders links", async ({ page }) => {
+  const source =
+    "= Sample Document\n\nSee https://example.org[example] and http://foo.com, please.\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const links = frame.locator("a");
+  await expect(links).toHaveCount(2);
+  await expect(links.nth(0)).toHaveText("example");
+  await expect(links.nth(0)).toHaveAttribute("href", "https://example.org");
+  await expect(links.nth(1)).toHaveText("http://foo.com");
+  await expect(links.nth(1)).toHaveAttribute("href", "http://foo.com");
+});
+
+test("preview renders special links with window targets", async ({ page }) => {
+  const source =
+    "= Sample Document\n\nSee https://example.org[example^] and link:/home.html[Home,window=_blank].\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const links = frame.locator("a");
+  await expect(links).toHaveCount(2);
+  await expect(links.nth(0)).toHaveAttribute("target", "_blank");
+  await expect(links.nth(0)).toHaveAttribute("rel", "noopener");
+  await expect(links.nth(1)).toHaveAttribute("target", "_blank");
+  await expect(links.nth(1)).toHaveAttribute("href", "/home.html");
 });

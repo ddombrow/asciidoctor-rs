@@ -26,6 +26,7 @@ pub struct Paragraph {
 pub enum Inline {
     Text(String),
     Span(InlineSpan),
+    Link(InlineLink),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +34,14 @@ pub struct InlineSpan {
     pub variant: InlineVariant,
     pub form: InlineForm,
     pub inlines: Vec<Inline>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineLink {
+    pub target: String,
+    pub text: Vec<Inline>,
+    pub bare: bool,
+    pub window: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +62,12 @@ impl Inline {
             Self::Text(text) => text.clone(),
             Self::Span(span) => span
                 .inlines
+                .iter()
+                .map(Self::plain_text)
+                .collect::<Vec<_>>()
+                .join(""),
+            Self::Link(link) => link
+                .text
                 .iter()
                 .map(Self::plain_text)
                 .collect::<Vec<_>>()

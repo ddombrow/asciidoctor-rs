@@ -73,6 +73,21 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 render_inlines(html, &span.inlines);
                 html.push_str(&format!("</{tag}>"));
             }
+            PreparedInline::Link(link) => {
+                html.push_str(&format!("<a href=\"{}\"", escape_html(&link.target)));
+                if link.bare {
+                    html.push_str(" class=\"bare\"");
+                }
+                if let Some(window) = &link.window {
+                    html.push_str(&format!(" target=\"{}\"", escape_html(window)));
+                    if window == "_blank" {
+                        html.push_str(" rel=\"noopener\"");
+                    }
+                }
+                html.push('>');
+                render_inlines(html, &link.inlines);
+                html.push_str("</a>");
+            }
         }
     }
 }
@@ -97,7 +112,8 @@ fn escape_html(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, Document, Heading, Inline, InlineForm, InlineSpan, InlineVariant, Paragraph,
+        Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
+        Paragraph,
     };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
@@ -231,5 +247,57 @@ mod tests {
         let html = render_html(&document);
 
         assert!(html.contains("<p>*not strong* and _not emphasis_</p>"));
+    }
+
+    #[test]
+    fn renders_links() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["See https://example.org[example] and http://foo.com".into()],
+                inlines: vec![
+                    Inline::Text("See ".into()),
+                    Inline::Link(InlineLink {
+                        target: "https://example.org".into(),
+                        text: vec![Inline::Text("example".into())],
+                        bare: false,
+                        window: None,
+                    }),
+                    Inline::Text(" and ".into()),
+                    Inline::Link(InlineLink {
+                        target: "http://foo.com".into(),
+                        text: vec![Inline::Text("http://foo.com".into())],
+                        bare: true,
+                        window: None,
+                    }),
+                ],
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<a href=\"https://example.org\">example</a>"));
+        assert!(html.contains("<a href=\"http://foo.com\" class=\"bare\">http://foo.com</a>"));
+    }
+
+    #[test]
+    fn renders_links_with_window_targets() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["See https://example.org[example^]".into()],
+                inlines: vec![Inline::Link(InlineLink {
+                    target: "https://example.org".into(),
+                    text: vec![Inline::Text("example".into())],
+                    bare: false,
+                    window: Some("_blank".into()),
+                })],
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains(
+            "<a href=\"https://example.org\" target=\"_blank\" rel=\"noopener\">example</a>"
+        ));
     }
 }

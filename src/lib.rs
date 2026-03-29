@@ -7,12 +7,14 @@ pub mod tck;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-pub use ast::{Block, Document, Heading, Inline, InlineForm, InlineSpan, InlineVariant, Paragraph};
+pub use ast::{
+    Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant, Paragraph,
+};
 pub use inline::{SpannedInline, parse_inlines, parse_spanned_inlines};
 pub use parser::parse_document;
 pub use prepare::{
-    Author, CompoundBlock, DocumentBlock, DocumentSection, Footnote, ParagraphBlock, PreparedBlock,
-    PreparedInline, SectionBlock, SpanInline, TextInline, prepare_document,
+    Author, CompoundBlock, DocumentBlock, DocumentSection, Footnote, LinkInline, ParagraphBlock,
+    PreparedBlock, PreparedInline, SectionBlock, SpanInline, TextInline, prepare_document,
     prepared_document_to_json,
 };
 pub use render::{render_html, render_prepared_html};

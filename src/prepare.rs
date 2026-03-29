@@ -71,6 +71,7 @@ pub struct ParagraphBlock {
 pub enum PreparedInline {
     Text(TextInline),
     Span(SpanInline),
+    Link(LinkInline),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +85,15 @@ pub struct SpanInline {
     pub variant: String,
     pub form: String,
     pub inlines: Vec<PreparedInline>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkInline {
+    pub target: String,
+    pub inlines: Vec<PreparedInline>,
+    pub bare: bool,
+    pub window: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -268,6 +278,12 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
                 form: inline_form_name(span.form).into(),
                 inlines: prepare_inlines(&span.inlines),
             }),
+            Inline::Link(link) => PreparedInline::Link(LinkInline {
+                target: link.target.clone(),
+                inlines: prepare_inlines(&link.text),
+                bare: link.bare,
+                window: link.window.clone(),
+            }),
         })
         .collect()
 }
@@ -364,10 +380,11 @@ fn inline_form_name(form: InlineForm) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, Document, Heading, Inline, InlineForm, InlineSpan, InlineVariant, Paragraph,
+        Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
+        Paragraph,
     };
     use crate::prepare::{
-        ContentModel, PreparedBlock, prepare_document, prepared_document_to_json,
+        ContentModel, PreparedBlock, PreparedInline, prepare_document, prepared_document_to_json,
     };
 
     #[test]
@@ -522,5 +539,39 @@ mod tests {
         };
 
         assert_eq!(paragraph.inlines.len(), 3);
+    }
+
+    #[test]
+    fn prepares_links_for_wasm_facing_output() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["See https://example.org[example]".into()],
+                inlines: vec![
+                    Inline::Text("See ".into()),
+                    Inline::Link(InlineLink {
+                        target: "https://example.org".into(),
+                        text: vec![Inline::Text("example".into())],
+                        bare: false,
+                        window: None,
+                    }),
+                ],
+            })],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+
+        assert_eq!(paragraph.inlines.len(), 2);
+        let PreparedInline::Link(link) = &paragraph.inlines[1] else {
+            panic!("expected link inline");
+        };
+        assert_eq!(link.target, "https://example.org");
+        assert_eq!(link.window, None);
     }
 }

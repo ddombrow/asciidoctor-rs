@@ -168,6 +168,13 @@ function renderInlines(inlines) {
         return `<${tag}>${renderInlines(inline.inlines ?? [])}</${tag}>`;
       }
 
+      if (inline.type === "link") {
+        const bare = inline.bare ? ' class="bare"' : "";
+        const target = inline.window ? ` target="${escapeHtml(inline.window)}"` : "";
+        const rel = inline.window === "_blank" ? ' rel="noopener"' : "";
+        return `<a href="${escapeHtml(inline.target ?? "")}"${bare}${target}${rel}>${renderInlines(inline.inlines ?? [])}</a>`;
+      }
+
       return escapeHtml(JSON.stringify(inline));
     })
     .join("");
