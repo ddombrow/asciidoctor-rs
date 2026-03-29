@@ -14,12 +14,16 @@ pub enum Block {
 pub struct Heading {
     pub level: u8,
     pub title: String,
+    pub id: Option<String>,
+    pub reftext: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paragraph {
     pub lines: Vec<String>,
     pub inlines: Vec<Inline>,
+    pub id: Option<String>,
+    pub reftext: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

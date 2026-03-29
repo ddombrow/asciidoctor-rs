@@ -116,3 +116,15 @@ test("preview renders generated section ids for direct xrefs", async ({ page }) 
   await expect(link).toHaveAttribute("href", "#_first_section");
   await expect(frame.locator("#_first_section")).toHaveCount(1);
 });
+
+test("preview resolves explicit section anchors", async ({ page }) => {
+  const source = "= Sample Document\n\nSee <<install>>.\n\n[[install,Installation]]\n== First Section\n\nHello.\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const link = frame.locator("a").first();
+  await expect(link).toHaveText("Installation");
+  await expect(link).toHaveAttribute("href", "#install");
+  await expect(frame.locator("#install")).toHaveCount(1);
+});

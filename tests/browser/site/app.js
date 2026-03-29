@@ -123,8 +123,9 @@ function renderBlock(block, parentSectionLevel = 0) {
   }
 
   if (block.type === "paragraph") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     return `
-      <div class="paragraph">
+      <div class="paragraph"${id}>
         <p>${renderInlines(block.inlines ?? [])}</p>
         </div>
     `;

@@ -50,6 +50,8 @@ pub enum PreparedBlock {
 pub struct ParagraphBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
     pub blocks: Vec<PreparedBlock>,
     pub content: String,
     pub inlines: Vec<PreparedInline>,
@@ -112,10 +114,18 @@ struct SectionRef {
     title: String,
 }
 
+#[derive(Debug, Clone)]
+struct BlockRef {
+    id: String,
+    title: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SectionBlock {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
     pub blocks: Vec<PreparedBlock>,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
@@ -173,7 +183,8 @@ pub fn prepare_document(document: &Document) -> DocumentBlock {
     let mut next_section_ids = Vec::new();
     let mut blocks = prepare_blocks(&document.blocks, true, &mut next_section_ids);
     let section_refs = collect_section_refs(&blocks);
-    resolve_xrefs_in_blocks(&mut blocks, &section_refs);
+    let block_refs = collect_block_refs(&blocks);
+    resolve_xrefs_in_blocks(&mut blocks, &section_refs, &block_refs);
     let sections = collect_sections(&blocks);
 
     DocumentBlock {
@@ -223,13 +234,17 @@ fn prepare_blocks(
                 }
                 seen_section = true;
                 let section_level = heading.level;
-                let id = next_section_id(section_ids, section_level, &heading.title);
+                let id = heading
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| next_section_id(section_ids, section_level, &heading.title));
                 let next_heading_index = find_section_end(blocks, index + 1, section_level);
                 let section_blocks =
                     prepare_blocks(&blocks[index + 1..next_heading_index], false, section_ids);
 
                 prepared.push(PreparedBlock::Section(SectionBlock {
                     id,
+                    reftext: heading.reftext.clone(),
                     blocks: section_blocks,
                     attributes: BTreeMap::new(),
                     content_model: Some(ContentModel::Compound),
@@ -270,7 +285,8 @@ fn find_section_end(blocks: &[Block], mut index: usize, level: u8) -> usize {
 
 fn prepare_paragraph(paragraph: &Paragraph) -> ParagraphBlock {
     ParagraphBlock {
-        id: None,
+        id: paragraph.id.clone(),
+        reftext: paragraph.reftext.clone(),
         blocks: Vec::new(),
         content: paragraph.plain_text(),
         inlines: prepare_inlines(&paragraph.inlines),
@@ -357,7 +373,10 @@ fn collect_section_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<Strin
         if let PreparedBlock::Section(section) = block {
             let section_ref = SectionRef {
                 id: section.id.clone(),
-                title: section.title.clone(),
+                title: section
+                    .reftext
+                    .clone()
+                    .unwrap_or_else(|| section.title.clone()),
             };
             for key in section_ref_keys(&section.id, &section.title) {
                 refs.entry(key).or_insert_with(|| section_ref.clone());
@@ -367,17 +386,55 @@ fn collect_section_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<Strin
     }
 }
 
+fn collect_block_refs(blocks: &[PreparedBlock]) -> BTreeMap<String, BlockRef> {
+    let mut refs = BTreeMap::new();
+    collect_block_refs_into(blocks, &mut refs);
+    refs
+}
+
+fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String, BlockRef>) {
+    for block in blocks {
+        match block {
+            PreparedBlock::Preamble(preamble) => collect_block_refs_into(&preamble.blocks, refs),
+            PreparedBlock::Paragraph(paragraph) => {
+                if let Some(id) = &paragraph.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: paragraph
+                                .reftext
+                                .clone()
+                                .or_else(|| paragraph.title.clone()),
+                        });
+                }
+            }
+            PreparedBlock::Section(section) => {
+                refs.entry(normalize_section_ref_key(&section.id))
+                    .or_insert(BlockRef {
+                        id: section.id.clone(),
+                        title: section
+                            .reftext
+                            .clone()
+                            .or_else(|| Some(section.title.clone())),
+                    });
+                collect_block_refs_into(&section.blocks, refs);
+            }
+        }
+    }
+}
+
 fn resolve_xrefs_in_blocks(
     blocks: &mut [PreparedBlock],
     section_refs: &BTreeMap<String, SectionRef>,
+    block_refs: &BTreeMap<String, BlockRef>,
 ) {
     for block in blocks {
         match block {
             PreparedBlock::Preamble(preamble) => {
-                resolve_xrefs_in_blocks(&mut preamble.blocks, section_refs)
+                resolve_xrefs_in_blocks(&mut preamble.blocks, section_refs, block_refs)
             }
             PreparedBlock::Paragraph(paragraph) => {
-                resolve_xrefs_in_inlines(&mut paragraph.inlines, section_refs);
+                resolve_xrefs_in_inlines(&mut paragraph.inlines, section_refs, block_refs);
                 paragraph.content = paragraph
                     .inlines
                     .iter()
@@ -386,7 +443,7 @@ fn resolve_xrefs_in_blocks(
                     .join("");
             }
             PreparedBlock::Section(section) => {
-                resolve_xrefs_in_blocks(&mut section.blocks, section_refs)
+                resolve_xrefs_in_blocks(&mut section.blocks, section_refs, block_refs)
             }
         }
     }
@@ -395,11 +452,14 @@ fn resolve_xrefs_in_blocks(
 fn resolve_xrefs_in_inlines(
     inlines: &mut [PreparedInline],
     section_refs: &BTreeMap<String, SectionRef>,
+    block_refs: &BTreeMap<String, BlockRef>,
 ) {
     for inline in inlines {
         match inline {
             PreparedInline::Text(_) | PreparedInline::Link(_) => {}
-            PreparedInline::Span(span) => resolve_xrefs_in_inlines(&mut span.inlines, section_refs),
+            PreparedInline::Span(span) => {
+                resolve_xrefs_in_inlines(&mut span.inlines, section_refs, block_refs)
+            }
             PreparedInline::Xref(xref) => {
                 if let Some(section_ref) = resolve_section_ref(&xref.target, section_refs) {
                     xref.href = format!("#{}", section_ref.id);
@@ -410,10 +470,20 @@ fn resolve_xrefs_in_inlines(
                             value: section_ref.title.clone(),
                         })];
                     }
+                } else if let Some(block_ref) = resolve_block_ref(&xref.target, block_refs) {
+                    xref.href = format!("#{}", block_ref.id);
+                    if xref.inlines.len() == 1
+                        && matches!(xref.inlines.first(), Some(PreparedInline::Text(text)) if text.value == xref.target)
+                        && let Some(title) = &block_ref.title
+                    {
+                        xref.inlines = vec![PreparedInline::Text(TextInline {
+                            value: title.clone(),
+                        })];
+                    }
                 } else {
                     xref.href = xref_href(&xref.target);
                 }
-                resolve_xrefs_in_inlines(&mut xref.inlines, section_refs);
+                resolve_xrefs_in_inlines(&mut xref.inlines, section_refs, block_refs);
             }
         }
     }
@@ -427,6 +497,16 @@ fn resolve_section_ref<'a>(
         return None;
     }
     section_refs.get(&normalize_section_ref_key(target))
+}
+
+fn resolve_block_ref<'a>(
+    target: &str,
+    block_refs: &'a BTreeMap<String, BlockRef>,
+) -> Option<&'a BlockRef> {
+    if target.contains(".adoc") {
+        return None;
+    }
+    block_refs.get(&normalize_section_ref_key(target))
 }
 
 fn section_ref_keys(id: &str, title: &str) -> Vec<String> {
@@ -551,31 +631,45 @@ mod tests {
             title: Some(Heading {
                 level: 0,
                 title: "Document Title".into(),
+                id: None,
+                reftext: None,
             }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Preamble paragraph.".into())],
                     lines: vec!["Preamble paragraph.".into()],
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section A".into(),
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Section body.".into())],
                     lines: vec!["Section body.".into()],
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Heading(Heading {
                     level: 2,
                     title: "Section A Child".into(),
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Nested body.".into())],
                     lines: vec!["Nested body.".into()],
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section B".into(),
+                    id: None,
+                    reftext: None,
                 }),
             ],
         };
@@ -629,6 +723,8 @@ mod tests {
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("first line\nsecond line".into())],
                 lines: vec!["first line".into(), "second line".into()],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -653,10 +749,14 @@ mod tests {
             title: Some(Heading {
                 level: 0,
                 title: "Document Title".into(),
+                id: None,
+                reftext: None,
             }),
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("hello".into())],
                 lines: vec!["hello".into()],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -685,6 +785,8 @@ mod tests {
                     }),
                     Inline::Text(" after".into()),
                 ],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -714,6 +816,8 @@ mod tests {
                         window: None,
                     }),
                 ],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -748,6 +852,8 @@ mod tests {
                         explicit_text: true,
                     }),
                 ],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -773,6 +879,8 @@ mod tests {
             title: Some(Heading {
                 level: 0,
                 title: "Sample Document".into(),
+                id: None,
+                reftext: None,
             }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
@@ -787,10 +895,14 @@ mod tests {
                         }),
                         Inline::Text(".".into()),
                     ],
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
+                    id: None,
+                    reftext: None,
                 }),
             ],
         };
@@ -811,6 +923,59 @@ mod tests {
             xref.inlines,
             vec![PreparedInline::Text(TextInline {
                 value: "First Section".into(),
+            })]
+        );
+    }
+
+    #[test]
+    fn uses_explicit_section_anchor_for_id_and_xref_resolution() {
+        let document = Document {
+            title: None,
+            blocks: vec![
+                Block::Paragraph(Paragraph {
+                    lines: vec!["See <<install>>.".into()],
+                    inlines: vec![
+                        Inline::Text("See ".into()),
+                        Inline::Xref(InlineXref {
+                            target: "install".into(),
+                            text: vec![Inline::Text("install".into())],
+                            shorthand: true,
+                            explicit_text: false,
+                        }),
+                        Inline::Text(".".into()),
+                    ],
+                    id: None,
+                    reftext: None,
+                }),
+                Block::Heading(Heading {
+                    level: 1,
+                    title: "First Section".into(),
+                    id: Some("install".into()),
+                    reftext: Some("Installation".into()),
+                }),
+            ],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref");
+        };
+        let PreparedBlock::Section(section) = &prepared.blocks[1] else {
+            panic!("expected section");
+        };
+
+        assert_eq!(section.id, "install");
+        assert_eq!(xref.href, "#install");
+        assert_eq!(
+            xref.inlines,
+            vec![PreparedInline::Text(TextInline {
+                value: "Installation".into(),
             })]
         );
     }

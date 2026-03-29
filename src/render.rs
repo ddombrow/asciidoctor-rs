@@ -30,7 +30,7 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
             }
             html.push_str("</div>\n</div>\n");
         }
-        PreparedBlock::Paragraph(paragraph) => render_paragraph(html, &paragraph.inlines),
+        PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -53,9 +53,13 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
     }
 }
 
-fn render_paragraph(html: &mut String, inlines: &[PreparedInline]) {
-    html.push_str("<div class=\"paragraph\">\n<p>");
-    render_inlines(html, inlines);
+fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBlock) {
+    html.push_str("<div class=\"paragraph\"");
+    if let Some(id) = &paragraph.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n<p>");
+    render_inlines(html, &paragraph.inlines);
     html.push_str("</p>\n</div>\n");
 }
 
@@ -129,15 +133,21 @@ mod tests {
             title: Some(Heading {
                 level: 0,
                 title: "Document Title".into(),
+                id: None,
+                reftext: None,
             }),
             blocks: vec![
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section One".into(),
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("first line\nsecond line".into())],
                     lines: vec!["first line".into(), "second line".into()],
+                    id: None,
+                    reftext: None,
                 }),
             ],
         };
@@ -170,10 +180,14 @@ mod tests {
             title: Some(Heading {
                 level: 0,
                 title: "Fish & Chips".into(),
+                id: None,
+                reftext: None,
             }),
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("<tag> \"quoted\" and 'apostrophe'".into())],
                 lines: vec!["<tag> \"quoted\" and 'apostrophe'".into()],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -189,15 +203,21 @@ mod tests {
             title: Some(Heading {
                 level: 0,
                 title: "Doc".into(),
+                id: None,
+                reftext: None,
             }),
             blocks: vec![
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section A".into(),
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Heading(Heading {
                     level: 2,
                     title: "Section B".into(),
+                    id: None,
+                    reftext: None,
                 }),
             ],
         };
@@ -231,6 +251,8 @@ mod tests {
                     }),
                     Inline::Text(" after".into()),
                 ],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -246,6 +268,8 @@ mod tests {
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec![r"\*not strong* and \_not emphasis_".into()],
                 inlines: vec![Inline::Text("*not strong* and _not emphasis_".into())],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -276,6 +300,8 @@ mod tests {
                         window: None,
                     }),
                 ],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -297,6 +323,8 @@ mod tests {
                     bare: false,
                     window: Some("_blank".into()),
                 })],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -321,6 +349,8 @@ mod tests {
                         explicit_text: true,
                     }),
                 ],
+                id: None,
+                reftext: None,
             })],
         };
 
@@ -334,6 +364,8 @@ mod tests {
             title: Some(Heading {
                 level: 0,
                 title: "Sample Document".into(),
+                id: None,
+                reftext: None,
             }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
@@ -348,15 +380,35 @@ mod tests {
                         }),
                         Inline::Text(".".into()),
                     ],
+                    id: None,
+                    reftext: None,
                 }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
+                    id: None,
+                    reftext: None,
                 }),
             ],
         };
 
         let html = render_html(&document);
         assert!(html.contains("<a href=\"#_first_section\">First Section</a>"));
+    }
+
+    #[test]
+    fn renders_paragraph_anchor_ids() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["Hello".into()],
+                inlines: vec![Inline::Text("Hello".into())],
+                id: Some("intro".into()),
+                reftext: Some("Introduction".into()),
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<div class=\"paragraph\" id=\"intro\">"));
     }
 }
