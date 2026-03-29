@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>asciidoctor-rs browser workbench</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3efe4;
+        --panel: #fffaf0;
+        --panel-strong: #f8f2e3;
+        --ink: #1f1c16;
+        --muted: #6f6454;
+        --accent: #8a4b2a;
+        --accent-soft: #e7c9b4;
+        --border: #d8c7ae;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top left, rgba(138, 75, 42, 0.12), transparent 28%),
+          linear-gradient(180deg, #f7f2e8 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+
+      main {
+        min-height: 100vh;
+        padding: 24px;
+      }
+
+      .shell {
+        max-width: 1400px;
+        margin: 0 auto;
+        display: grid;
+        gap: 20px;
+      }
+
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 16px;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 3.4rem);
+        line-height: 0.95;
+        letter-spacing: -0.03em;
+      }
+
+      .hero p {
+        margin: 10px 0 0;
+        max-width: 720px;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+
+      .status {
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--muted);
+        font: 600 0.9rem/1.1 "Segoe UI", sans-serif;
+        white-space: nowrap;
+      }
+
+      .status[data-kind="ready"] {
+        color: #245d35;
+        border-color: #9ec8aa;
+        background: #eef9f0;
+      }
+
+      .status[data-kind="error"] {
+        color: #8b1e1e;
+        border-color: #d9a2a2;
+        background: #fff0f0;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(320px, 0.9fr) minmax(320px, 1.1fr);
+        gap: 20px;
+      }
+
+      .panel {
+        background: rgba(255, 250, 240, 0.88);
+        backdrop-filter: blur(4px);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 18px 50px rgba(76, 47, 29, 0.08);
+        overflow: hidden;
+      }
+
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel-strong);
+      }
+
+      .panel-header h2 {
+        margin: 0;
+        font-size: 1rem;
+        font-family: "Segoe UI", sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: var(--accent);
+        color: white;
+        font: 600 0.95rem/1 "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--accent-soft);
+      }
+
+      .hint {
+        color: var(--muted);
+        font: 0.85rem/1.4 "Segoe UI", sans-serif;
+      }
+
+      textarea,
+      pre {
+        margin: 0;
+        width: 100%;
+        min-height: 560px;
+        border: 0;
+        background: transparent;
+        color: var(--ink);
+        padding: 18px;
+        font: 0.95rem/1.5 "Cascadia Code", Consolas, monospace;
+      }
+
+      textarea {
+        resize: vertical;
+      }
+
+      .preview-wrap {
+        padding: 22px;
+      }
+
+      .preview-frame {
+        width: 100%;
+        min-height: 640px;
+        border: 1px solid #eadfcb;
+        border-radius: 16px;
+        border: 1px solid #eadfcb;
+        background: white;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      }
+
+      @media (max-width: 1000px) {
+        .hero {
+          flex-direction: column;
+          align-items: start;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        textarea,
+        pre {
+          min-height: 320px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="shell">
+        <section class="hero">
+          <div>
+            <h1>asciidoctor-rs Workbench</h1>
+            <p>
+              Inspect the current WASM output in a real browser. Edit the AsciiDoc source, render
+              it, and compare the prepared JSON with the visual preview.
+            </p>
+          </div>
+          <div class="status" data-kind="loading" data-status>Initializing WASM module...</div>
+        </section>
+
+        <section class="grid">
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Source</h2>
+                <div class="hint">Press Ctrl+Enter to render.</div>
+              </div>
+              <div class="actions">
+                <button class="secondary" id="load-sample" type="button">Load Sample</button>
+                <button id="render" type="button">Render</button>
+              </div>
+            </div>
+            <textarea id="source" spellcheck="false"></textarea>
+          </article>
+
+          <div class="shell" style="max-width: none;">
+            <article class="panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Preview</h2>
+                  <div class="hint">Rendered from the prepared WASM value.</div>
+                </div>
+              </div>
+              <div class="preview-wrap">
+                <iframe
+                  id="preview-frame"
+                  class="preview-frame"
+                  title="Asciidoctor Preview"
+                ></iframe>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Prepared JSON</h2>
+                  <div class="hint">Exact browser-facing shape for interop debugging.</div>
+                </div>
+              </div>
+              <pre id="json-output"></pre>
+            </article>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/site/app.js"></script>
+  </body>
+</html>

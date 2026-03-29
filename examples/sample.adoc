@@ -1,0 +1,11 @@
+= Sample Document
+
+An introductory paragraph for the sample document.
+
+== First Section
+
+This section gives the parser a level-1 heading to recognize.
+
+=== Nested Section
+
+This subsection is here so we can grow section handling next.

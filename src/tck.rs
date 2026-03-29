@@ -1,0 +1,510 @@
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AsgDocument {
+    pub name: &'static str,
+    #[serde(rename = "type")]
+    pub node_type: &'static str,
+    pub attributes: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<AsgHeader>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<AsgBlock>,
+    pub location: [Position; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AsgHeader {
+    pub title: Vec<InlineText>,
+    pub location: [Position; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AsgBlock {
+    pub name: &'static str,
+    #[serde(rename = "type")]
+    pub node_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<Vec<InlineText>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inlines: Option<Vec<InlineText>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocks: Option<Vec<AsgBlock>>,
+    pub location: [Position; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InlineText {
+    pub name: &'static str,
+    #[serde(rename = "type")]
+    pub node_type: &'static str,
+    pub value: String,
+    pub location: [Position; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Position {
+    pub line: usize,
+    pub col: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TckRequest {
+    pub contents: String,
+    pub path: Option<String>,
+    #[serde(rename = "type")]
+    pub request_type: String,
+}
+
+pub fn render_tck_json(input: &str) -> serde_json::Result<String> {
+    let document = parse_tck_document(input);
+    serde_json::to_string_pretty(&document)
+}
+
+pub fn render_tck_inline_json(input: &str) -> serde_json::Result<String> {
+    serde_json::to_string_pretty(&parse_tck_inlines(input))
+}
+
+pub fn render_tck_json_from_request(request_json: &str) -> Result<String, String> {
+    let request: TckRequest = serde_json::from_str(request_json)
+        .map_err(|error| format!("invalid TCK request: {error}"))?;
+
+    match request.request_type.as_str() {
+        "block" => render_tck_json(&request.contents)
+            .map_err(|error| format!("failed to serialize TCK ASG: {error}")),
+        "inline" => render_tck_inline_json(&request.contents)
+            .map_err(|error| format!("failed to serialize TCK inline ASG: {error}")),
+        other => Err(format!("unsupported TCK request type: {other}")),
+    }
+}
+
+pub fn parse_tck_document(input: &str) -> AsgDocument {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut index = 0;
+    let mut attributes = BTreeMap::new();
+    let mut header = None;
+
+    if let Some((title, title_range, consumed)) = parse_heading_line(&lines, 0, 1) {
+        if title.level == 0 {
+            let mut header_end = title_range[1].clone();
+            index = consumed;
+
+            while index < lines.len() {
+                let line = lines[index];
+                if line.trim().is_empty() {
+                    index += 1;
+                    break;
+                }
+
+                if let Some((name, value, end_col)) = parse_attribute_entry(line) {
+                    attributes.insert(name, value);
+                    header_end = Position {
+                        line: index + 1,
+                        col: end_col,
+                    };
+                    index += 1;
+                    continue;
+                }
+
+                break;
+            }
+
+            header = Some(AsgHeader {
+                title: vec![InlineText {
+                    name: "text",
+                    node_type: "string",
+                    value: title.title,
+                    location: [
+                        Position {
+                            line: title_range[0].line,
+                            col: title_range[0].col + 2,
+                        },
+                        title_range[1].clone(),
+                    ],
+                }],
+                location: [title_range[0].clone(), header_end],
+            });
+        }
+    }
+
+    let (blocks, end) = parse_blocks(&lines[index..], index + 1, None);
+    let start = header
+        .as_ref()
+        .map(|header| header.location[0].clone())
+        .or_else(|| blocks.first().map(|block| block.location[0].clone()))
+        .unwrap_or(Position { line: 1, col: 1 });
+    let end = header
+        .as_ref()
+        .map(|header| header.location[1].clone())
+        .into_iter()
+        .chain(end)
+        .last()
+        .unwrap_or_else(|| start.clone());
+
+    AsgDocument {
+        name: "document",
+        node_type: "block",
+        attributes,
+        header,
+        blocks,
+        location: [start, end],
+    }
+}
+
+pub fn parse_tck_inlines(input: &str) -> Vec<InlineText> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+
+    let line_count = input.lines().count().max(1);
+    let end_col = input
+        .lines()
+        .last()
+        .map(|line| line.len())
+        .unwrap_or_else(|| input.len())
+        .max(1);
+
+    vec![InlineText {
+        name: "text",
+        node_type: "string",
+        value: input.to_owned(),
+        location: [
+            Position { line: 1, col: 1 },
+            Position {
+                line: line_count,
+                col: end_col,
+            },
+        ],
+    }]
+}
+
+fn parse_blocks(
+    lines: &[&str],
+    line_offset: usize,
+    stop_at_level: Option<u8>,
+) -> (Vec<AsgBlock>, Option<Position>) {
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    let mut paragraph_start = None::<usize>;
+    let mut paragraph_lines = Vec::new();
+    let mut last_end = None;
+
+    while index < lines.len() {
+        let absolute_index = line_offset + index - 1;
+        let line = lines[index];
+
+        if let Some((heading, heading_range, consumed_lines)) =
+            parse_heading_line(lines, index, line_offset)
+        {
+            if let Some(level) = stop_at_level {
+                if heading.level <= level {
+                    break;
+                }
+            }
+
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+
+            let child_start = index + consumed_lines;
+            let (child_blocks, child_end) = parse_blocks(
+                &lines[child_start..],
+                line_offset + child_start,
+                Some(heading.level),
+            );
+
+            let end = child_end.unwrap_or_else(|| heading_range[1].clone());
+            blocks.push(AsgBlock {
+                name: "section",
+                node_type: "block",
+                title: Some(vec![InlineText {
+                    name: "text",
+                    node_type: "string",
+                    value: heading.title,
+                    location: [
+                        Position {
+                            line: heading_range[0].line,
+                            col: heading_range[0].col + heading.marker_len + 1,
+                        },
+                        heading_range[1].clone(),
+                    ],
+                }]),
+                level: Some(heading.level),
+                inlines: None,
+                blocks: Some(child_blocks),
+                location: [heading_range[0].clone(), end.clone()],
+            });
+            last_end = Some(end);
+
+            index = child_start
+                + count_consumed_lines(&lines[child_start..], stop_at_level, heading.level);
+            continue;
+        }
+
+        if line.trim().is_empty() {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            index += 1;
+            continue;
+        }
+
+        if paragraph_start.is_none() {
+            paragraph_start = Some(absolute_index);
+        }
+        paragraph_lines.push(line.to_owned());
+        index += 1;
+    }
+
+    flush_paragraph(
+        &mut blocks,
+        &mut paragraph_start,
+        &mut paragraph_lines,
+        line_offset,
+        &mut last_end,
+    );
+
+    (blocks, last_end)
+}
+
+fn count_consumed_lines(lines: &[&str], stop_at_level: Option<u8>, current_level: u8) -> usize {
+    let mut index = 0;
+    while index < lines.len() {
+        if let Some((heading, _, _)) = parse_heading_line(lines, index, 1) {
+            if heading.level <= stop_at_level.unwrap_or(current_level) {
+                break;
+            }
+        }
+        index += 1;
+    }
+    index
+}
+
+fn flush_paragraph(
+    blocks: &mut Vec<AsgBlock>,
+    paragraph_start: &mut Option<usize>,
+    paragraph_lines: &mut Vec<String>,
+    _line_offset: usize,
+    last_end: &mut Option<Position>,
+) {
+    let Some(start_index) = paragraph_start.take() else {
+        return;
+    };
+
+    let value = paragraph_lines.join("\n");
+    let start = Position {
+        line: start_index + 1,
+        col: 1,
+    };
+    let end = Position {
+        line: start_index + paragraph_lines.len(),
+        col: paragraph_lines.last().map(|line| line.len()).unwrap_or(1),
+    };
+    blocks.push(AsgBlock {
+        name: "paragraph",
+        node_type: "block",
+        title: None,
+        level: None,
+        inlines: Some(vec![InlineText {
+            name: "text",
+            node_type: "string",
+            value,
+            location: [start.clone(), end.clone()],
+        }]),
+        blocks: None,
+        location: [start, end.clone()],
+    });
+    *last_end = Some(end);
+    paragraph_lines.clear();
+}
+
+fn parse_attribute_entry(line: &str) -> Option<(String, String, usize)> {
+    let stripped = line.strip_prefix(':')?;
+    let separator = stripped.find(':')?;
+    let name = stripped[..separator].trim();
+    let value = stripped[separator + 1..].trim_start().to_owned();
+    if name.is_empty() {
+        return None;
+    }
+    Some((name.to_owned(), value, line.len()))
+}
+
+fn parse_heading_line(
+    lines: &[&str],
+    index: usize,
+    line_offset: usize,
+) -> Option<(HeadingParse, [Position; 2], usize)> {
+    parse_atx_heading_line(lines[index], line_offset + index)
+        .map(|(heading, range)| (heading, range, 1))
+        .or_else(|| parse_setext_heading_line(lines, index, line_offset))
+}
+
+fn parse_atx_heading_line(line: &str, line_no: usize) -> Option<(HeadingParse, [Position; 2])> {
+    let marker = line.chars().next()?;
+    if marker != '=' && marker != '#' {
+        return None;
+    }
+
+    let marker_len = line.chars().take_while(|&ch| ch == marker).count();
+    let remainder = &line[marker_len..];
+    if !remainder.starts_with(' ') {
+        return None;
+    }
+
+    let title = remainder
+        .trim()
+        .trim_end_matches(marker)
+        .trim_end()
+        .to_owned();
+    if title.is_empty() {
+        return None;
+    }
+
+    Some((
+        HeadingParse {
+            level: (marker_len - 1) as u8,
+            title,
+            marker_len,
+        },
+        [
+            Position {
+                line: line_no,
+                col: 1,
+            },
+            Position {
+                line: line_no,
+                col: line.len(),
+            },
+        ],
+    ))
+}
+
+fn parse_setext_heading_line(
+    lines: &[&str],
+    index: usize,
+    line_offset: usize,
+) -> Option<(HeadingParse, [Position; 2], usize)> {
+    let title_line = *lines.get(index)?;
+    let underline = lines.get(index + 1)?.trim();
+    let marker = underline.chars().next()?;
+    if (marker != '=' && marker != '-') || !underline.chars().all(|ch| ch == marker) {
+        return None;
+    }
+
+    Some((
+        HeadingParse {
+            level: if marker == '=' { 0 } else { 1 },
+            title: title_line.trim().to_owned(),
+            marker_len: 1,
+        },
+        [
+            Position {
+                line: line_offset + index,
+                col: 1,
+            },
+            Position {
+                line: line_offset + index,
+                col: title_line.len(),
+            },
+        ],
+        2,
+    ))
+}
+
+#[derive(Debug)]
+struct HeadingParse {
+    level: u8,
+    title: String,
+    marker_len: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tck::{parse_tck_document, parse_tck_inlines, render_tck_json_from_request};
+
+    #[test]
+    fn renders_tck_document_with_header_and_paragraph() {
+        let document = parse_tck_document("= Document Title\n\nbody");
+        let json = serde_json::to_string_pretty(&document).expect("json");
+
+        assert!(json.contains("\"header\""));
+        assert!(json.contains("\"value\": \"Document Title\""));
+        assert!(json.contains("\"name\": \"paragraph\""));
+        assert!(json.contains("\"value\": \"body\""));
+    }
+
+    #[test]
+    fn renders_tck_section_structure() {
+        let document = parse_tck_document("== Section Title\n\nparagraph");
+        let json = serde_json::to_string_pretty(&document).expect("json");
+
+        assert!(json.contains("\"name\": \"section\""));
+        assert!(json.contains("\"level\": 1"));
+        assert!(json.contains("\"value\": \"Section Title\""));
+        assert!(json.contains("\"value\": \"paragraph\""));
+    }
+
+    #[test]
+    fn preserves_document_line_numbers_for_nested_sections() {
+        let document = parse_tck_document("= Title\n\n== First\n\n=== Nested\n\nbody");
+        let section = document.blocks.first().expect("top-level section");
+        let nested = section
+            .blocks
+            .as_ref()
+            .and_then(|blocks| blocks.get(0))
+            .expect("nested section");
+
+        assert_eq!(nested.location[0].line, 5);
+        assert_eq!(
+            nested
+                .title
+                .as_ref()
+                .and_then(|title| title.first())
+                .expect("nested title")
+                .location[0]
+                .line,
+            5
+        );
+    }
+
+    #[test]
+    fn accepts_tck_request_envelope() {
+        let request = r#"{"contents":"A paragraph that consists of a single line.","path":"/tmp/in.adoc","type":"block"}"#;
+        let json = render_tck_json_from_request(request).expect("request should work");
+
+        assert!(json.contains("\"name\": \"document\""));
+        assert!(json.contains("\"name\": \"paragraph\""));
+    }
+
+    #[test]
+    fn parses_simple_inline_text() {
+        let inlines = parse_tck_inlines("hello");
+
+        assert_eq!(inlines.len(), 1);
+        assert_eq!(inlines[0].value, "hello");
+        assert_eq!(inlines[0].location[0].line, 1);
+        assert_eq!(inlines[0].location[1].col, 5);
+    }
+
+    #[test]
+    fn accepts_inline_tck_request_envelope() {
+        let request = r#"{"contents":"hello","path":"/tmp/in.adoc","type":"inline"}"#;
+        let json = render_tck_json_from_request(request).expect("request should work");
+
+        assert!(json.contains("\"name\": \"text\""));
+        assert!(json.contains("\"value\": \"hello\""));
+    }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "asciidoctor-rs-browser-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm:test": "node tests/browser/build-wasm.mjs",
+    "preview:browser": "npm run build:wasm:test && node tests/browser/server.mjs",
+    "test:browser": "npm run build:wasm:test && playwright test",
+    "test:browser:headed": "npm run build:wasm:test && playwright test --headed",
+    "test:tck:smoke": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-tck-smoke.ps1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.1"
+  }
+}

@@ -1,0 +1,222 @@
+import init, {
+  prepare_document_json,
+  prepare_document_value
+} from "../pkg/asciidoctor_rs.js";
+
+const sample = `= Sample Document
+
+An introductory paragraph for the sample document.
+
+== First Section
+
+This section gives the parser a level-1 heading to recognize.
+
+=== Nested Section
+
+This subsection is here so we can grow section handling next.
+`;
+
+const statusEl = document.querySelector("[data-status]");
+const sourceEl = document.querySelector("#source");
+const jsonEl = document.querySelector("#json-output");
+const previewFrameEl = document.querySelector("#preview-frame");
+const renderButton = document.querySelector("#render");
+const sampleButton = document.querySelector("#load-sample");
+
+window.__asciidoctorState = "loading";
+updateStatus("loading", "Initializing WASM module...");
+
+window.__asciidoctorReady = init()
+  .then(() => {
+    window.__prepareDocumentJson = prepare_document_json;
+    window.__prepareDocumentValue = prepare_document_value;
+    window.__asciidoctorState = "ready";
+    updateStatus("ready", "WASM module ready");
+    sourceEl.value = sample;
+    renderSource(sample);
+  })
+  .catch((error) => {
+    window.__asciidoctorState = "error";
+    window.__asciidoctorError = error instanceof Error ? error.message : String(error);
+    updateStatus("error", `Initialization failed: ${window.__asciidoctorError}`);
+    throw error;
+  });
+
+renderButton.addEventListener("click", () => {
+  renderSource(sourceEl.value);
+});
+
+sampleButton.addEventListener("click", () => {
+  sourceEl.value = sample;
+  renderSource(sample);
+});
+
+sourceEl.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    renderSource(sourceEl.value);
+  }
+});
+
+function renderSource(source) {
+  if (window.__asciidoctorState !== "ready") {
+    return;
+  }
+
+  try {
+    const json = prepare_document_json(source);
+    const document = prepare_document_value(source);
+
+    jsonEl.textContent = json;
+    renderPreview(document);
+    updateStatus("ready", "Rendered successfully");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    jsonEl.textContent = message;
+    renderPreviewError(message);
+    updateStatus("error", message);
+  }
+}
+
+function renderDocument(document) {
+  const title = document.title ? `<h1>${escapeHtml(document.title)}</h1>` : "";
+  const blocks = renderBlocks(document.blocks ?? []);
+
+  return `
+    <div id="header">
+      ${title}
+    </div>
+    <div id="content">
+      ${blocks}
+    </div>
+  `;
+}
+
+function renderBlocks(blocks, sectionLevel = 0) {
+  return blocks.map((block) => renderBlock(block, sectionLevel)).join("");
+}
+
+function renderBlock(block, parentSectionLevel = 0) {
+  if (block.type === "preamble") {
+    return `
+      <div id="preamble">
+        <div class="sectionbody">
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+        </div>
+      </div>
+    `;
+  }
+
+  if (block.type === "paragraph") {
+    return `
+      <div class="paragraph">
+        <p>${escapeHtml(block.content ?? "")}</p>
+        </div>
+    `;
+  }
+
+  if (block.type === "section") {
+    const level = Math.min((block.level ?? 1) + 1, 6);
+    const sectionClass = `sect${block.level ?? Math.max(parentSectionLevel + 1, 1)}`;
+    const blocks = renderBlocks(block.blocks ?? [], block.level ?? parentSectionLevel + 1);
+    const number =
+      block.numbered && block.num
+        ? `<span class="section-num">${escapeHtml(block.num)}</span>`
+        : "";
+    return `
+      <div class="${sectionClass}">
+        <h${level}>${number}${escapeHtml(block.title ?? "")}</h${level}>
+        <div class="sectionbody">
+          ${blocks}
+        </div>
+      </div>
+    `;
+  }
+
+  return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;
+}
+
+function renderPreview(document) {
+  const doc = previewFrameEl.contentDocument;
+  if (!doc) {
+    throw new Error("Preview frame is not available");
+  }
+
+  doc.open();
+  doc.write(`<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <link rel="stylesheet" href="/site/asciidoctor.css" />
+      <style>
+        body {
+          margin: 0;
+          padding: 0;
+          background: white;
+        }
+
+        .page-shell {
+          background: white;
+          min-height: 100vh;
+        }
+
+        .page-shell > #header,
+        .page-shell > #content,
+        .page-shell > #footnotes,
+        .page-shell > #footer {
+          width: auto;
+          max-width: none;
+        }
+
+        .page-shell > #content {
+          padding-bottom: 2rem;
+        }
+      </style>
+    </head>
+    <body class="article">
+      <div class="page-shell">
+        ${renderDocument(document)}
+      </div>
+    </body>
+  </html>`);
+  doc.close();
+}
+
+function renderPreviewError(message) {
+  const doc = previewFrameEl.contentDocument;
+  if (!doc) {
+    return;
+  }
+
+  doc.open();
+  doc.write(`<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <style>
+        body {
+          margin: 0;
+          padding: 20px;
+          font-family: "Segoe UI", sans-serif;
+          background: #fff0f0;
+          color: #8b1e1e;
+        }
+      </style>
+    </head>
+    <body>${escapeHtml(message)}</body>
+  </html>`);
+  doc.close();
+}
+
+function updateStatus(kind, message) {
+  statusEl.dataset.kind = kind;
+  statusEl.textContent = message;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
