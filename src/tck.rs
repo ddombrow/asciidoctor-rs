@@ -3,6 +3,9 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::ast::{Inline, InlineForm, InlineVariant};
+use crate::inline::parse_spanned_inlines;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AsgDocument {
     pub name: &'static str,
@@ -32,7 +35,7 @@ pub struct AsgBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub inlines: Option<Vec<InlineText>>,
+    pub inlines: Option<Vec<AsgInline>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Vec<AsgBlock>>,
     pub location: [Position; 2],
@@ -44,6 +47,24 @@ pub struct InlineText {
     #[serde(rename = "type")]
     pub node_type: &'static str,
     pub value: String,
+    pub location: [Position; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum AsgInline {
+    Text(InlineText),
+    Span(InlineSpanNode),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InlineSpanNode {
+    pub name: &'static str,
+    #[serde(rename = "type")]
+    pub node_type: &'static str,
+    pub variant: &'static str,
+    pub form: &'static str,
+    pub inlines: Vec<AsgInline>,
     pub location: [Position; 2],
 }
 
@@ -156,31 +177,8 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
     }
 }
 
-pub fn parse_tck_inlines(input: &str) -> Vec<InlineText> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-
-    let line_count = input.lines().count().max(1);
-    let end_col = input
-        .lines()
-        .last()
-        .map(|line| line.len())
-        .unwrap_or_else(|| input.len())
-        .max(1);
-
-    vec![InlineText {
-        name: "text",
-        node_type: "string",
-        value: input.to_owned(),
-        location: [
-            Position { line: 1, col: 1 },
-            Position {
-                line: line_count,
-                col: end_col,
-            },
-        ],
-    }]
+pub fn parse_tck_inlines(input: &str) -> Vec<AsgInline> {
+    parse_tck_inlines_at(input, 1, 1)
 }
 
 fn parse_blocks(
@@ -318,12 +316,7 @@ fn flush_paragraph(
         node_type: "block",
         title: None,
         level: None,
-        inlines: Some(vec![InlineText {
-            name: "text",
-            node_type: "string",
-            value,
-            location: [start.clone(), end.clone()],
-        }]),
+        inlines: Some(parse_tck_inlines_at(&value, start.line, start.col)),
         blocks: None,
         location: [start, end.clone()],
     });
@@ -431,6 +424,137 @@ struct HeadingParse {
     marker_len: usize,
 }
 
+fn parse_tck_inlines_at(input: &str, start_line: usize, start_col: usize) -> Vec<AsgInline> {
+    let line_starts = compute_line_starts(input);
+    parse_spanned_inlines(input)
+        .into_iter()
+        .map(|inline| {
+            map_inline(
+                &inline.inline,
+                inline.start,
+                inline.end,
+                input,
+                &line_starts,
+                start_line,
+                start_col,
+            )
+        })
+        .collect()
+}
+
+fn map_inline(
+    inline: &Inline,
+    start: usize,
+    end: usize,
+    source: &str,
+    line_starts: &[usize],
+    base_line: usize,
+    base_col: usize,
+) -> AsgInline {
+    match inline {
+        Inline::Text(value) => AsgInline::Text(InlineText {
+            name: "text",
+            node_type: "string",
+            value: value.clone(),
+            location: [
+                offset_to_position(start, line_starts, base_line, base_col),
+                offset_to_end_position(end, line_starts, base_line, base_col),
+            ],
+        }),
+        Inline::Span(span) => {
+            let child_source = &source[start..end];
+            let child_line_starts = compute_line_starts(child_source);
+            let child_base = offset_to_position(
+                start + span_delimiter_len(span.form),
+                line_starts,
+                base_line,
+                base_col,
+            );
+
+            AsgInline::Span(InlineSpanNode {
+                name: "span",
+                node_type: "inline",
+                variant: match span.variant {
+                    InlineVariant::Strong => "strong",
+                    InlineVariant::Emphasis => "emphasis",
+                },
+                form: match span.form {
+                    InlineForm::Constrained => "constrained",
+                    InlineForm::Unconstrained => "unconstrained",
+                },
+                inlines: parse_spanned_inlines(
+                    &child_source[span_delimiter_len(span.form)
+                        ..child_source.len() - span_delimiter_len(span.form)],
+                )
+                .into_iter()
+                .map(|child| {
+                    map_inline(
+                        &child.inline,
+                        child.start,
+                        child.end,
+                        &child_source[span_delimiter_len(span.form)
+                            ..child_source.len() - span_delimiter_len(span.form)],
+                        &child_line_starts,
+                        child_base.line,
+                        child_base.col,
+                    )
+                })
+                .collect(),
+                location: [
+                    offset_to_position(start, line_starts, base_line, base_col),
+                    offset_to_end_position(end, line_starts, base_line, base_col),
+                ],
+            })
+        }
+    }
+}
+
+fn span_delimiter_len(form: InlineForm) -> usize {
+    match form {
+        InlineForm::Constrained => 1,
+        InlineForm::Unconstrained => 2,
+    }
+}
+
+fn compute_line_starts(source: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (index, ch) in source.chars().enumerate() {
+        if ch == '\n' {
+            starts.push(index + 1);
+        }
+    }
+    starts
+}
+
+fn offset_to_position(
+    offset: usize,
+    line_starts: &[usize],
+    base_line: usize,
+    base_col: usize,
+) -> Position {
+    let line_index = line_starts
+        .iter()
+        .rposition(|&start| start <= offset)
+        .unwrap_or(0);
+    Position {
+        line: base_line + line_index,
+        col: if line_index == 0 {
+            base_col + (offset - line_starts[line_index])
+        } else {
+            offset - line_starts[line_index] + 1
+        },
+    }
+}
+
+fn offset_to_end_position(
+    offset: usize,
+    line_starts: &[usize],
+    base_line: usize,
+    base_col: usize,
+) -> Position {
+    offset_to_position(offset.saturating_sub(1), line_starts, base_line, base_col)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tck::{parse_tck_document, parse_tck_inlines, render_tck_json_from_request};
@@ -494,9 +618,12 @@ mod tests {
         let inlines = parse_tck_inlines("hello");
 
         assert_eq!(inlines.len(), 1);
-        assert_eq!(inlines[0].value, "hello");
-        assert_eq!(inlines[0].location[0].line, 1);
-        assert_eq!(inlines[0].location[1].col, 5);
+        let super::AsgInline::Text(text) = &inlines[0] else {
+            panic!("expected text inline");
+        };
+        assert_eq!(text.value, "hello");
+        assert_eq!(text.location[0].line, 1);
+        assert_eq!(text.location[1].col, 5);
     }
 
     #[test]
@@ -506,5 +633,14 @@ mod tests {
 
         assert!(json.contains("\"name\": \"text\""));
         assert!(json.contains("\"value\": \"hello\""));
+    }
+
+    #[test]
+    fn renders_strong_span_for_inline_tck_requests() {
+        let request = r#"{"contents":"*s*","path":"/tmp/in.adoc","type":"inline"}"#;
+        let json = render_tck_json_from_request(request).expect("request should work");
+
+        assert!(json.contains("\"variant\": \"strong\""));
+        assert!(json.contains("\"form\": \"constrained\""));
     }
 }

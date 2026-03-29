@@ -1,4 +1,4 @@
-use crate::prepare::{DocumentBlock, PreparedBlock, prepare_document};
+use crate::prepare::{DocumentBlock, PreparedBlock, PreparedInline, prepare_document};
 
 pub fn render_html(document: &crate::ast::Document) -> String {
     render_prepared_html(&prepare_document(document))
@@ -30,7 +30,7 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
             }
             html.push_str("</div>\n</div>\n");
         }
-        PreparedBlock::Paragraph(paragraph) => render_paragraph(html, &paragraph.content),
+        PreparedBlock::Paragraph(paragraph) => render_paragraph(html, &paragraph.inlines),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -53,11 +53,28 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
     }
 }
 
-fn render_paragraph(html: &mut String, content: &str) {
-    let content = escape_html(content);
-    html.push_str(&format!(
-        "<div class=\"paragraph\">\n<p>{content}</p>\n</div>\n"
-    ));
+fn render_paragraph(html: &mut String, inlines: &[PreparedInline]) {
+    html.push_str("<div class=\"paragraph\">\n<p>");
+    render_inlines(html, inlines);
+    html.push_str("</p>\n</div>\n");
+}
+
+fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
+    for inline in inlines {
+        match inline {
+            PreparedInline::Text(text) => html.push_str(&escape_html(&text.value)),
+            PreparedInline::Span(span) => {
+                let tag = match span.variant.as_str() {
+                    "strong" => "strong",
+                    "emphasis" => "em",
+                    _ => "span",
+                };
+                html.push_str(&format!("<{tag}>"));
+                render_inlines(html, &span.inlines);
+                html.push_str(&format!("</{tag}>"));
+            }
+        }
+    }
 }
 
 fn escape_html(input: &str) -> String {
@@ -79,7 +96,9 @@ fn escape_html(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Block, Document, Heading, Paragraph};
+    use crate::ast::{
+        Block, Document, Heading, Inline, InlineForm, InlineSpan, InlineVariant, Paragraph,
+    };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
 
@@ -96,6 +115,7 @@ mod tests {
                     title: "Section One".into(),
                 }),
                 Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("first line\nsecond line".into())],
                     lines: vec!["first line".into(), "second line".into()],
                 }),
             ],
@@ -131,6 +151,7 @@ mod tests {
                 title: "Fish & Chips".into(),
             }),
             blocks: vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("<tag> \"quoted\" and 'apostrophe'".into())],
                 lines: vec!["<tag> \"quoted\" and 'apostrophe'".into()],
             })],
         };
@@ -166,5 +187,34 @@ mod tests {
         assert!(html.contains("<div class=\"sect1\" id=\"_section_a\">"));
         assert!(html.contains("<div class=\"sect2\" id=\"_section_b\">"));
         assert!(html.contains("<h3>Section B</h3>"));
+    }
+
+    #[test]
+    fn renders_strong_and_emphasis_inline_markup() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["before *strong* and _emphasis_ after".into()],
+                inlines: vec![
+                    Inline::Text("before ".into()),
+                    Inline::Span(InlineSpan {
+                        variant: InlineVariant::Strong,
+                        form: InlineForm::Constrained,
+                        inlines: vec![Inline::Text("strong".into())],
+                    }),
+                    Inline::Text(" and ".into()),
+                    Inline::Span(InlineSpan {
+                        variant: InlineVariant::Emphasis,
+                        form: InlineForm::Constrained,
+                        inlines: vec![Inline::Text("emphasis".into())],
+                    }),
+                    Inline::Text(" after".into()),
+                ],
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<p>before <strong>strong</strong> and <em>emphasis</em> after</p>"));
     }
 }

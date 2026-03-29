@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{Block, Document, Paragraph};
+use crate::ast::{Block, Document, Inline, InlineForm, InlineVariant, Paragraph};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,6 +52,7 @@ pub struct ParagraphBlock {
     pub id: Option<String>,
     pub blocks: Vec<PreparedBlock>,
     pub content: String,
+    pub inlines: Vec<PreparedInline>,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,6 +64,26 @@ pub struct ParagraphBlock {
     pub level: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PreparedInline {
+    Text(TextInline),
+    Span(SpanInline),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextInline {
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpanInline {
+    pub variant: String,
+    pub form: String,
+    pub inlines: Vec<PreparedInline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,7 +177,7 @@ fn prepare_blocks(
     let mut seen_section = false;
 
     while index < blocks.len() {
-        match &blocks[index] {
+        match &blocks[index] {     
             Block::Paragraph(paragraph) => {
                 let paragraph = PreparedBlock::Paragraph(prepare_paragraph(paragraph));
                 if wrap_document_preamble && !seen_section {
@@ -223,7 +244,8 @@ fn prepare_paragraph(paragraph: &Paragraph) -> ParagraphBlock {
     ParagraphBlock {
         id: None,
         blocks: Vec::new(),
-        content: paragraph.lines.join("\n"),
+        content: paragraph.plain_text(),
+        inlines: prepare_inlines(&paragraph.inlines),
         attributes: BTreeMap::new(),
         content_model: Some(ContentModel::Simple),
         line_number: None,
@@ -232,6 +254,22 @@ fn prepare_paragraph(paragraph: &Paragraph) -> ParagraphBlock {
         level: 0,
         title: None,
     }
+}
+
+fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
+    inlines
+        .iter()
+        .map(|inline| match inline {
+            Inline::Text(text) => PreparedInline::Text(TextInline {
+                value: text.clone(),
+            }),
+            Inline::Span(span) => PreparedInline::Span(SpanInline {
+                variant: inline_variant_name(span.variant).into(),
+                form: inline_form_name(span.form).into(),
+                inlines: prepare_inlines(&span.inlines),
+            }),
+        })
+        .collect()
 }
 
 fn prepare_preamble(blocks: Vec<PreparedBlock>) -> CompoundBlock {
@@ -309,9 +347,25 @@ fn slugify(title: &str) -> String {
     if slug == "_" { "_section".into() } else { slug }
 }
 
+fn inline_variant_name(variant: InlineVariant) -> &'static str {
+    match variant {
+        InlineVariant::Strong => "strong",
+        InlineVariant::Emphasis => "emphasis",
+    }
+}
+
+fn inline_form_name(form: InlineForm) -> &'static str {
+    match form {
+        InlineForm::Constrained => "constrained",
+        InlineForm::Unconstrained => "unconstrained",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Block, Document, Heading, Paragraph};
+    use crate::ast::{
+        Block, Document, Heading, Inline, InlineForm, InlineSpan, InlineVariant, Paragraph,
+    };
     use crate::prepare::{
         ContentModel, PreparedBlock, prepare_document, prepared_document_to_json,
     };
@@ -325,6 +379,7 @@ mod tests {
             }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("Preamble paragraph.".into())],
                     lines: vec!["Preamble paragraph.".into()],
                 }),
                 Block::Heading(Heading {
@@ -332,6 +387,7 @@ mod tests {
                     title: "Section A".into(),
                 }),
                 Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("Section body.".into())],
                     lines: vec!["Section body.".into()],
                 }),
                 Block::Heading(Heading {
@@ -339,6 +395,7 @@ mod tests {
                     title: "Section A Child".into(),
                 }),
                 Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("Nested body.".into())],
                     lines: vec!["Nested body.".into()],
                 }),
                 Block::Heading(Heading {
@@ -395,6 +452,7 @@ mod tests {
         let document = Document {
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("first line\nsecond line".into())],
                 lines: vec!["first line".into(), "second line".into()],
             })],
         };
@@ -410,6 +468,7 @@ mod tests {
         };
 
         assert_eq!(paragraph.content, "first line\nsecond line");
+        assert_eq!(paragraph.inlines.len(), 1);
         assert_eq!(paragraph.content_model, Some(ContentModel::Simple));
     }
 
@@ -421,6 +480,7 @@ mod tests {
                 title: "Document Title".into(),
             }),
             blocks: vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("hello".into())],
                 lines: vec!["hello".into()],
             })],
         };
@@ -433,5 +493,34 @@ mod tests {
         assert!(json.contains("\"contentModel\""));
         assert!(json.contains("\"footnotes\": []"));
         assert!(json.contains("\"authors\": []"));
+    }
+
+    #[test]
+    fn prepares_inline_spans_for_wasm_facing_output() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["before *strong* after".into()],
+                inlines: vec![
+                    Inline::Text("before ".into()),
+                    Inline::Span(InlineSpan {
+                        variant: InlineVariant::Strong,
+                        form: InlineForm::Constrained,
+                        inlines: vec![Inline::Text("strong".into())],
+                    }),
+                    Inline::Text(" after".into()),
+                ],
+            })],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+
+        assert_eq!(paragraph.inlines.len(), 3);
     }
 }

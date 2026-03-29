@@ -1,4 +1,5 @@
 use crate::ast::{Block, Document, Heading, Paragraph};
+use crate::inline::parse_inlines;
 
 pub fn parse_document(input: &str) -> Document {
     let lines: Vec<&str> = input.lines().collect();
@@ -43,8 +44,10 @@ fn flush_paragraph(blocks: &mut Vec<Block>, current_paragraph: &mut Vec<String>)
         return;
     }
 
+    let lines = std::mem::take(current_paragraph);
     blocks.push(Block::Paragraph(Paragraph {
-        lines: std::mem::take(current_paragraph),
+        inlines: parse_inlines(&lines.join("\n")),
+        lines,
     }));
 }
 
@@ -113,7 +116,7 @@ fn parse_setext_heading(lines: &[&str], index: usize) -> Option<(Heading, usize)
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Block, Heading, Paragraph};
+    use crate::ast::{Block, Heading, Inline, InlineForm, InlineVariant, Paragraph};
     use crate::parser::parse_document;
 
     #[test]
@@ -124,9 +127,11 @@ mod tests {
             document.blocks,
             vec![
                 Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("first line\nsecond line".into())],
                     lines: vec!["first line".into(), "second line".into()],
                 }),
                 Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("third line".into())],
                     lines: vec!["third line".into()],
                 }),
             ]
@@ -153,6 +158,7 @@ mod tests {
                     title: "Section One".into(),
                 }),
                 Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("content".into())],
                     lines: vec!["content".into()],
                 }),
             ]
@@ -200,8 +206,30 @@ mod tests {
         assert_eq!(
             document.blocks,
             vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("=#= My Title".into())],
                 lines: vec!["=#= My Title".into()],
             })]
         );
+    }
+
+    #[test]
+    fn parses_inline_markup_inside_paragraphs() {
+        let document = parse_document("before *strong* and _emphasis_ after");
+        let Block::Paragraph(paragraph) = &document.blocks[0] else {
+            panic!("expected paragraph");
+        };
+
+        assert_eq!(paragraph.inlines.len(), 5);
+        let Inline::Span(strong) = &paragraph.inlines[1] else {
+            panic!("expected strong span");
+        };
+        assert_eq!(strong.variant, InlineVariant::Strong);
+        assert_eq!(strong.form, InlineForm::Constrained);
+
+        let Inline::Span(emphasis) = &paragraph.inlines[3] else {
+            panic!("expected emphasis span");
+        };
+        assert_eq!(emphasis.variant, InlineVariant::Emphasis);
+        assert_eq!(emphasis.form, InlineForm::Constrained);
     }
 }
