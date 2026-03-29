@@ -24,7 +24,7 @@ test("exports prepared document as JSON", async ({ page }) => {
       id: "_first_section",
       title: "First Section",
       level: 1,
-      num: "1",
+      num: "",
       sections: []
     }
   ]);
@@ -37,4 +37,15 @@ test("exports prepared document as a JS value", async ({ page }) => {
   expect(document.blocks[0].type).toBe("section");
   expect(document.blocks[0].title).toBe("First Section");
   expect(document.blocks[0].blocks[0].content).toBe("Hello from the browser.");
+});
+
+test("preview renders strong and emphasis inline markup", async ({ page }) => {
+  const source = "= Sample Document\n\nA *bold* and _emphasis_ example.\n";
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("strong")).toHaveText("bold");
+  await expect(frame.locator("em")).toHaveText("emphasis");
 });

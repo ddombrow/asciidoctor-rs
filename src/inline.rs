@@ -101,12 +101,22 @@ fn parse_unconstrained_span(
     marker: char,
     variant: InlineVariant,
 ) -> Option<(SpannedInline, usize)> {
+    let opener = chars.get(start + 2)?;
+    if opener.is_whitespace() || *opener == marker {
+        return None;
+    }
+
     let mut end = start + 2;
     while end + 1 < chars.len() {
         if chars[end] == marker && chars[end + 1] == marker {
             let inner = &chars[start + 2..end];
-            if inner.is_empty() || inner.first()?.is_whitespace() || inner.last()?.is_whitespace() {
-                return None;
+            if inner.is_empty()
+                || inner.first()?.is_whitespace()
+                || inner.last()?.is_whitespace()
+                || inner.last() == Some(&marker)
+            {
+                end += 1;
+                continue;
             }
 
             return Some((
@@ -138,7 +148,11 @@ fn parse_constrained_span(
     marker: char,
     variant: InlineVariant,
 ) -> Option<(SpannedInline, usize)> {
-    if start > 0 && chars[start - 1].is_alphanumeric() {
+    let opener = *chars.get(start + 1)?;
+    if (start > 0 && chars[start - 1].is_alphanumeric())
+        || opener.is_whitespace()
+        || opener == marker
+    {
         return None;
     }
 
@@ -150,6 +164,7 @@ fn parse_constrained_span(
             if inner.is_empty()
                 || inner.first()?.is_whitespace()
                 || inner.last()?.is_whitespace()
+                || inner.last() == Some(&marker)
                 || next.is_some_and(|ch| ch.is_alphanumeric())
             {
                 end += 1;
@@ -180,7 +195,7 @@ fn parse_constrained_span(
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Inline, InlineForm, InlineVariant};
+    use crate::ast::{Inline, InlineForm, InlineSpan, InlineVariant};
     use crate::inline::parse_inlines;
 
     #[test]
@@ -216,6 +231,65 @@ mod tests {
         assert_eq!(
             parse_inlines(r"\_not emphasis_"),
             vec![Inline::Text("_not emphasis_".into())]
+        );
+    }
+
+    #[test]
+    fn does_not_parse_constrained_spans_inside_words() {
+        assert_eq!(
+            parse_inlines("foo*bar*baz"),
+            vec![Inline::Text("foo*bar*baz".into())]
+        );
+        assert_eq!(
+            parse_inlines("foo_bar_baz"),
+            vec![Inline::Text("foo_bar_baz".into())]
+        );
+    }
+
+    #[test]
+    fn does_not_parse_spans_with_whitespace_at_edges() {
+        assert_eq!(
+            parse_inlines("* not strong*"),
+            vec![Inline::Text("* not strong*".into())]
+        );
+        assert_eq!(
+            parse_inlines("*not strong *"),
+            vec![Inline::Text("*not strong *".into())]
+        );
+        assert_eq!(
+            parse_inlines("** not strong**"),
+            vec![Inline::Text("** not strong**".into())]
+        );
+        assert_eq!(
+            parse_inlines("__not emphasis __"),
+            vec![Inline::Text("__not emphasis __".into())]
+        );
+    }
+
+    #[test]
+    fn leaves_unmatched_delimiters_as_literal_text() {
+        assert_eq!(parse_inlines("****"), vec![Inline::Text("****".into())]);
+        assert_eq!(
+            parse_inlines("**x***"),
+            vec![
+                Inline::Span(InlineSpan {
+                    variant: InlineVariant::Strong,
+                    form: InlineForm::Unconstrained,
+                    inlines: vec![Inline::Text("x".into())],
+                }),
+                Inline::Text("*".into()),
+            ]
+        );
+        assert_eq!(
+            parse_inlines("***x**"),
+            vec![
+                Inline::Text("*".into()),
+                Inline::Span(InlineSpan {
+                    variant: InlineVariant::Strong,
+                    form: InlineForm::Unconstrained,
+                    inlines: vec![Inline::Text("x".into())],
+                }),
+            ]
         );
     }
 }

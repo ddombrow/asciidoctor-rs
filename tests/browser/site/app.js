@@ -109,7 +109,7 @@ function renderBlock(block, parentSectionLevel = 0) {
   if (block.type === "paragraph") {
     return `
       <div class="paragraph">
-        <p>${escapeHtml(block.content ?? "")}</p>
+        <p>${renderInlines(block.inlines ?? [])}</p>
         </div>
     `;
   }
@@ -133,6 +133,28 @@ function renderBlock(block, parentSectionLevel = 0) {
   }
 
   return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;
+}
+
+function renderInlines(inlines) {
+  return inlines
+    .map((inline) => {
+      if (inline.type === "text") {
+        return escapeHtml(inline.value ?? "");
+      }
+
+      if (inline.type === "span") {
+        const tag =
+          inline.variant === "strong"
+            ? "strong"
+            : inline.variant === "emphasis"
+              ? "em"
+              : "span";
+        return `<${tag}>${renderInlines(inline.inlines ?? [])}</${tag}>`;
+      }
+
+      return escapeHtml(JSON.stringify(inline));
+    })
+    .join("");
 }
 
 function renderPreview(document) {
