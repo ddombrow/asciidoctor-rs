@@ -181,6 +181,10 @@ function renderInlines(inlines) {
         return `<a href="${escapeHtml(inline.href ?? inline.target ?? "")}">${renderInlines(inline.inlines ?? [])}</a>`;
       }
 
+      if (inline.type === "anchor") {
+        return `<a id="${escapeHtml(inline.id ?? "")}"></a>`;
+      }
+
       return escapeHtml(JSON.stringify(inline));
     })
     .join("");

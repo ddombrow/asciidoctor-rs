@@ -578,6 +578,31 @@ fn map_inline(
                 offset_to_end_position(end, line_starts, base_line, base_col),
             ],
         }),
+        Inline::Anchor(anchor) => AsgInline::Span(InlineSpanNode {
+            name: "anchor",
+            node_type: "inline",
+            variant: "anchor",
+            form: "point",
+            inlines: anchor
+                .reftext
+                .as_ref()
+                .map(|reftext| {
+                    vec![AsgInline::Text(InlineText {
+                        name: "text",
+                        node_type: "string",
+                        value: reftext.clone(),
+                        location: [
+                            offset_to_position(start, line_starts, base_line, base_col),
+                            offset_to_end_position(end, line_starts, base_line, base_col),
+                        ],
+                    })]
+                })
+                .unwrap_or_default(),
+            location: [
+                offset_to_position(start, line_starts, base_line, base_col),
+                offset_to_end_position(end, line_starts, base_line, base_col),
+            ],
+        }),
     }
 }
 

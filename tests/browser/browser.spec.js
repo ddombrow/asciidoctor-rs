@@ -128,3 +128,15 @@ test("preview resolves explicit section anchors", async ({ page }) => {
   await expect(link).toHaveAttribute("href", "#install");
   await expect(frame.locator("#install")).toHaveCount(1);
 });
+
+test("preview resolves inline anchors", async ({ page }) => {
+  const source =
+    "= Sample Document\n\nSee <<bookmark-a>> and [[bookmark-a,Marked Spot]]look here.\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const link = frame.locator("a[href=\"#bookmark-a\"]").first();
+  await expect(link).toHaveText("Marked Spot");
+  await expect(frame.locator("#bookmark-a")).toHaveCount(1);
+});

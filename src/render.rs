@@ -97,6 +97,9 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 render_inlines(html, &xref.inlines);
                 html.push_str("</a>");
             }
+            PreparedInline::Anchor(anchor) => {
+                html.push_str(&format!("<a id=\"{}\"></a>", escape_html(&anchor.id)));
+            }
         }
     }
 }
@@ -121,8 +124,8 @@ fn escape_html(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
-        InlineXref, Paragraph,
+        Block, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan,
+        InlineVariant, InlineXref, Paragraph,
     };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
@@ -410,5 +413,27 @@ mod tests {
 
         let html = render_html(&document);
         assert!(html.contains("<div class=\"paragraph\" id=\"intro\">"));
+    }
+
+    #[test]
+    fn renders_inline_anchor_points() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["[[bookmark-a]]look here".into()],
+                inlines: vec![
+                    Inline::Anchor(InlineAnchor {
+                        id: "bookmark-a".into(),
+                        reftext: None,
+                    }),
+                    Inline::Text("look here".into()),
+                ],
+                id: None,
+                reftext: None,
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<a id=\"bookmark-a\"></a>look here"));
     }
 }

@@ -1,4 +1,6 @@
-use crate::ast::{Inline, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref};
+use crate::ast::{
+    Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpannedInline {
@@ -41,7 +43,18 @@ fn parse_spanned_inlines_with_base(chars: &[char], base: usize) -> Vec<SpannedIn
             }
         }
 
-        if let Some((xref, consumed)) = parse_xref(chars, index, base) {
+        if let Some((anchor, consumed)) = parse_inline_anchor(chars, index, base) {
+            if let Some(start) = text_start.take() {
+                result.push(SpannedInline {
+                    inline: Inline::Text(std::mem::take(&mut text)),
+                    start: base + start,
+                    end: base + index,
+                });
+            }
+
+            result.push(anchor);
+            index += consumed;
+        } else if let Some((xref, consumed)) = parse_xref(chars, index, base) {
             if let Some(start) = text_start.take() {
                 result.push(SpannedInline {
                     inline: Inline::Text(std::mem::take(&mut text)),
@@ -129,6 +142,108 @@ fn parse_link(chars: &[char], start: usize, base: usize) -> Option<(SpannedInlin
 
 fn parse_xref(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
     parse_xref_macro(chars, start, base).or_else(|| parse_xref_shorthand(chars, start, base))
+}
+
+fn parse_inline_anchor(
+    chars: &[char],
+    start: usize,
+    base: usize,
+) -> Option<(SpannedInline, usize)> {
+    parse_inline_anchor_macro(chars, start, base)
+        .or_else(|| parse_inline_anchor_brackets(chars, start, base))
+}
+
+fn parse_inline_anchor_macro(
+    chars: &[char],
+    start: usize,
+    base: usize,
+) -> Option<(SpannedInline, usize)> {
+    const PREFIX: &str = "anchor:";
+    if !starts_with(chars, start, PREFIX) {
+        return None;
+    }
+
+    let mut target_end = start + PREFIX.len();
+    while target_end < chars.len() && chars[target_end] != '[' && !chars[target_end].is_whitespace()
+    {
+        target_end += 1;
+    }
+
+    if target_end >= chars.len() || chars[target_end] != '[' || target_end == start + PREFIX.len() {
+        return None;
+    }
+
+    let (text_start, text_end, consumed) = parse_bracket_text(chars, target_end)?;
+    let id = chars[start + PREFIX.len()..target_end]
+        .iter()
+        .collect::<String>();
+    if !is_valid_anchor_id(&id) {
+        return None;
+    }
+
+    let reftext = chars[text_start..text_end]
+        .iter()
+        .collect::<String>()
+        .trim()
+        .to_owned();
+
+    Some((
+        SpannedInline {
+            inline: Inline::Anchor(InlineAnchor {
+                id,
+                reftext: if reftext.is_empty() {
+                    None
+                } else {
+                    Some(reftext)
+                },
+            }),
+            start: base + start,
+            end: base + consumed,
+        },
+        consumed - start,
+    ))
+}
+
+fn parse_inline_anchor_brackets(
+    chars: &[char],
+    start: usize,
+    base: usize,
+) -> Option<(SpannedInline, usize)> {
+    if chars.get(start) != Some(&'[') || chars.get(start + 1) != Some(&'[') {
+        return None;
+    }
+
+    let mut end = start + 2;
+    while end + 1 < chars.len() {
+        if chars[end] == ']' && chars[end + 1] == ']' {
+            let inner = chars[start + 2..end].iter().collect::<String>();
+            let mut parts = inner.splitn(2, ',');
+            let id = parts.next()?.trim();
+            if id.is_empty() || !is_valid_anchor_id(id) {
+                return None;
+            }
+            let reftext = parts
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+
+            return Some((
+                SpannedInline {
+                    inline: Inline::Anchor(InlineAnchor {
+                        id: id.to_owned(),
+                        reftext,
+                    }),
+                    start: base + start,
+                    end: base + end + 2,
+                },
+                end + 2 - start,
+            ));
+        }
+        end += 1;
+    }
+
+    None
 }
 
 fn parse_xref_macro(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
@@ -373,6 +488,11 @@ struct LinkAttrs {
     window: Option<String>,
 }
 
+fn is_valid_anchor_id(id: &str) -> bool {
+    id.chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':' | '.'))
+}
+
 fn parse_link_attrs(chars: &[char]) -> LinkAttrs {
     let raw = chars.iter().collect::<String>();
     if raw.is_empty() {
@@ -516,7 +636,9 @@ fn parse_constrained_span(
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Inline, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref};
+    use crate::ast::{
+        Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref,
+    };
     use crate::inline::parse_inlines;
 
     #[test]
@@ -726,6 +848,34 @@ mod tests {
                 shorthand: false,
                 explicit_text: true,
             })]
+        );
+    }
+
+    #[test]
+    fn parses_inline_anchor_brackets() {
+        assert_eq!(
+            parse_inlines("[[bookmark-a]]Inline"),
+            vec![
+                Inline::Anchor(InlineAnchor {
+                    id: "bookmark-a".into(),
+                    reftext: None,
+                }),
+                Inline::Text("Inline".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_inline_anchor_macro() {
+        assert_eq!(
+            parse_inlines("anchor:bookmark-c[Label]Use"),
+            vec![
+                Inline::Anchor(InlineAnchor {
+                    id: "bookmark-c".into(),
+                    reftext: Some("Label".into()),
+                }),
+                Inline::Text("Use".into()),
+            ]
         );
     }
 }

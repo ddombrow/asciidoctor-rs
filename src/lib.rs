@@ -8,15 +8,15 @@ pub mod tck;
 pub mod wasm;
 
 pub use ast::{
-    Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
-    InlineXref, Paragraph,
+    Block, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan,
+    InlineVariant, InlineXref, Paragraph,
 };
 pub use inline::{SpannedInline, parse_inlines, parse_spanned_inlines};
 pub use parser::parse_document;
 pub use prepare::{
-    Author, CompoundBlock, DocumentBlock, DocumentSection, Footnote, LinkInline, ParagraphBlock,
-    PreparedBlock, PreparedInline, SectionBlock, SpanInline, TextInline, XrefInline,
-    prepare_document, prepared_document_to_json,
+    AnchorInline, Author, CompoundBlock, DocumentBlock, DocumentSection, Footnote, LinkInline,
+    ParagraphBlock, PreparedBlock, PreparedInline, SectionBlock, SpanInline, TextInline,
+    XrefInline, prepare_document, prepared_document_to_json,
 };
 pub use render::{render_html, render_prepared_html};
 pub use tck::{

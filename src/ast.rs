@@ -32,6 +32,7 @@ pub enum Inline {
     Span(InlineSpan),
     Link(InlineLink),
     Xref(InlineXref),
+    Anchor(InlineAnchor),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +56,12 @@ pub struct InlineXref {
     pub text: Vec<Inline>,
     pub shorthand: bool,
     pub explicit_text: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineAnchor {
+    pub id: String,
+    pub reftext: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +98,7 @@ impl Inline {
                 .map(Self::plain_text)
                 .collect::<Vec<_>>()
                 .join(""),
+            Self::Anchor(_) => String::new(),
         }
     }
 }
