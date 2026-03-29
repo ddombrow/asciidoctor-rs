@@ -217,4 +217,19 @@ mod tests {
 
         assert!(html.contains("<p>before <strong>strong</strong> and <em>emphasis</em> after</p>"));
     }
+
+    #[test]
+    fn renders_escaped_markup_as_literal_text() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec![r"\*not strong* and \_not emphasis_".into()],
+                inlines: vec![Inline::Text("*not strong* and _not emphasis_".into())],
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<p>*not strong* and _not emphasis_</p>"));
+    }
 }

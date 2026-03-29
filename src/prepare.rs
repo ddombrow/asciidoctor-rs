@@ -177,7 +177,7 @@ fn prepare_blocks(
     let mut seen_section = false;
 
     while index < blocks.len() {
-        match &blocks[index] {     
+        match &blocks[index] {
             Block::Paragraph(paragraph) => {
                 let paragraph = PreparedBlock::Paragraph(prepare_paragraph(paragraph));
                 if wrap_document_preamble && !seen_section {

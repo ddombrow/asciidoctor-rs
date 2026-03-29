@@ -643,4 +643,14 @@ mod tests {
         assert!(json.contains("\"variant\": \"strong\""));
         assert!(json.contains("\"form\": \"constrained\""));
     }
+
+    #[test]
+    fn keeps_escaped_markup_as_text_in_tck_inline_requests() {
+        let request = r#"{"contents":"\\*not strong*","path":"/tmp/in.adoc","type":"inline"}"#;
+        let json = render_tck_json_from_request(request).expect("request should work");
+
+        assert!(json.contains("\"name\": \"text\""));
+        assert!(json.contains("\"value\": \"*not strong*\""));
+        assert!(!json.contains("\"variant\": \"strong\""));
+    }
 }

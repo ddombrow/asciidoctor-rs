@@ -21,36 +21,62 @@ pub fn parse_spanned_inlines(input: &str) -> Vec<SpannedInline> {
 
 fn parse_spanned_inlines_with_base(chars: &[char], base: usize) -> Vec<SpannedInline> {
     let mut result = Vec::new();
-    let mut text_start = 0;
+    let mut text_start = None::<usize>;
+    let mut text = String::new();
     let mut index = 0;
 
     while index < chars.len() {
+        if chars[index] == '\\' {
+            if let Some(escaped) = chars
+                .get(index + 1)
+                .copied()
+                .filter(|ch| is_escapable_char(*ch))
+            {
+                if text_start.is_none() {
+                    text_start = Some(index);
+                }
+                text.push(escaped);
+                index += 2;
+                continue;
+            }
+        }
+
         if let Some((span, consumed)) = parse_span(chars, index, base) {
-            if text_start < index {
+            if let Some(start) = text_start.take() {
                 result.push(SpannedInline {
-                    inline: Inline::Text(chars[text_start..index].iter().collect()),
-                    start: base + text_start,
+                    inline: Inline::Text(std::mem::take(&mut text)),
+                    start: base + start,
                     end: base + index,
                 });
             }
 
             result.push(span);
             index += consumed;
-            text_start = index;
         } else {
+            if text_start.is_none() {
+                text_start = Some(index);
+            }
+            text.push(chars[index]);
             index += 1;
         }
     }
 
-    if text_start < chars.len() {
+    if let Some(start) = text_start {
         result.push(SpannedInline {
-            inline: Inline::Text(chars[text_start..].iter().collect()),
-            start: base + text_start,
+            inline: Inline::Text(text),
+            start: base + start,
             end: base + chars.len(),
         });
     }
 
     result
+}
+
+fn is_escapable_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\\' | '*' | '_' | '`' | '[' | ']' | '{' | '}' | '<' | '>'
+    )
 }
 
 fn parse_span(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
@@ -179,5 +205,17 @@ mod tests {
         let inlines = parse_inlines("before__focus__after");
 
         assert_eq!(inlines.len(), 3);
+    }
+
+    #[test]
+    fn keeps_escaped_markup_delimiters_as_literal_text() {
+        assert_eq!(
+            parse_inlines(r"\*not strong*"),
+            vec![Inline::Text("*not strong*".into())]
+        );
+        assert_eq!(
+            parse_inlines(r"\_not emphasis_"),
+            vec![Inline::Text("_not emphasis_".into())]
+        );
     }
 }

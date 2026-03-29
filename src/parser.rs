@@ -232,4 +232,17 @@ mod tests {
         assert_eq!(emphasis.variant, InlineVariant::Emphasis);
         assert_eq!(emphasis.form, InlineForm::Constrained);
     }
+
+    #[test]
+    fn keeps_escaped_markup_literal_inside_paragraphs() {
+        let document = parse_document(r"\*not strong* and \_not emphasis_");
+        let Block::Paragraph(paragraph) = &document.blocks[0] else {
+            panic!("expected paragraph");
+        };
+
+        assert_eq!(
+            paragraph.inlines,
+            vec![Inline::Text("*not strong* and _not emphasis_".into())]
+        );
+    }
 }
