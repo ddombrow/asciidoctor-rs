@@ -149,8 +149,71 @@ fn parse_inline_anchor(
     start: usize,
     base: usize,
 ) -> Option<(SpannedInline, usize)> {
-    parse_inline_anchor_macro(chars, start, base)
+    parse_phrase_anchor(chars, start, base)
+        .or_else(|| parse_inline_anchor_macro(chars, start, base))
         .or_else(|| parse_inline_anchor_brackets(chars, start, base))
+}
+
+fn parse_phrase_anchor(
+    chars: &[char],
+    start: usize,
+    base: usize,
+) -> Option<(SpannedInline, usize)> {
+    if !starts_with(chars, start, "[#") {
+        return None;
+    }
+
+    let mut attr_end = start + 2;
+    while attr_end < chars.len() && chars[attr_end] != ']' {
+        attr_end += 1;
+    }
+    if attr_end >= chars.len() || chars.get(attr_end + 1) != Some(&'#') {
+        return None;
+    }
+
+    let inner = chars[start + 2..attr_end].iter().collect::<String>();
+    let mut parts = inner.split(',').map(str::trim);
+    let id = parts.next()?;
+    if id.is_empty() || !is_valid_anchor_id(id) {
+        return None;
+    }
+
+    let reftext = parts
+        .find_map(|part| {
+            part.strip_prefix("reftext=")
+                .map(|value| value.trim().trim_matches('"').to_owned())
+        })
+        .filter(|value| !value.is_empty());
+
+    let mut text_end = attr_end + 2;
+    while text_end < chars.len() {
+        if chars[text_end] == '#' {
+            let source = chars[attr_end + 2..text_end].iter().collect::<String>();
+            let inlines = parse_spanned_inlines_with_base(
+                &source.chars().collect::<Vec<_>>(),
+                base + attr_end + 2,
+            )
+            .into_iter()
+            .map(|inline| inline.inline)
+            .collect();
+
+            return Some((
+                SpannedInline {
+                    inline: Inline::Anchor(InlineAnchor {
+                        id: id.to_owned(),
+                        reftext,
+                        inlines,
+                    }),
+                    start: base + start,
+                    end: base + text_end + 1,
+                },
+                text_end + 1 - start,
+            ));
+        }
+        text_end += 1;
+    }
+
+    None
 }
 
 fn parse_inline_anchor_macro(
@@ -196,6 +259,7 @@ fn parse_inline_anchor_macro(
                 } else {
                     Some(reftext)
                 },
+                inlines: Vec::new(),
             }),
             start: base + start,
             end: base + consumed,
@@ -233,6 +297,7 @@ fn parse_inline_anchor_brackets(
                     inline: Inline::Anchor(InlineAnchor {
                         id: id.to_owned(),
                         reftext,
+                        inlines: Vec::new(),
                     }),
                     start: base + start,
                     end: base + end + 2,
@@ -859,6 +924,7 @@ mod tests {
                 Inline::Anchor(InlineAnchor {
                     id: "bookmark-a".into(),
                     reftext: None,
+                    inlines: Vec::new(),
                 }),
                 Inline::Text("Inline".into()),
             ]
@@ -873,9 +939,22 @@ mod tests {
                 Inline::Anchor(InlineAnchor {
                     id: "bookmark-c".into(),
                     reftext: Some("Label".into()),
+                    inlines: Vec::new(),
                 }),
                 Inline::Text("Use".into()),
             ]
+        );
+    }
+
+    #[test]
+    fn parses_phrase_applied_inline_anchor() {
+        assert_eq!(
+            parse_inlines("[#bookmark-b]#visible text#"),
+            vec![Inline::Anchor(InlineAnchor {
+                id: "bookmark-b".into(),
+                reftext: None,
+                inlines: vec![Inline::Text("visible text".into())],
+            })]
         );
     }
 }

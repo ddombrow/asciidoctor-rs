@@ -99,6 +99,7 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
             }
             PreparedInline::Anchor(anchor) => {
                 html.push_str(&format!("<a id=\"{}\"></a>", escape_html(&anchor.id)));
+                render_inlines(html, &anchor.inlines);
             }
         }
     }
@@ -425,6 +426,7 @@ mod tests {
                     Inline::Anchor(InlineAnchor {
                         id: "bookmark-a".into(),
                         reftext: None,
+                        inlines: Vec::new(),
                     }),
                     Inline::Text("look here".into()),
                 ],
@@ -435,5 +437,25 @@ mod tests {
 
         let html = render_html(&document);
         assert!(html.contains("<a id=\"bookmark-a\"></a>look here"));
+    }
+
+    #[test]
+    fn renders_phrase_applied_inline_anchor_text() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["[#bookmark-b]#visible text#".into()],
+                inlines: vec![Inline::Anchor(InlineAnchor {
+                    id: "bookmark-b".into(),
+                    reftext: None,
+                    inlines: vec![Inline::Text("visible text".into())],
+                })],
+                id: None,
+                reftext: None,
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<a id=\"bookmark-b\"></a>visible text"));
     }
 }

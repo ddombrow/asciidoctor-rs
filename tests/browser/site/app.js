@@ -182,7 +182,7 @@ function renderInlines(inlines) {
       }
 
       if (inline.type === "anchor") {
-        return `<a id="${escapeHtml(inline.id ?? "")}"></a>`;
+        return `<a id="${escapeHtml(inline.id ?? "")}"></a>${renderInlines(inline.inlines ?? [])}`;
       }
 
       return escapeHtml(JSON.stringify(inline));

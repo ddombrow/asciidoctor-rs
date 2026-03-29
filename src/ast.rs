@@ -62,6 +62,7 @@ pub struct InlineXref {
 pub struct InlineAnchor {
     pub id: String,
     pub reftext: Option<String>,
+    pub inlines: Vec<Inline>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +99,12 @@ impl Inline {
                 .map(Self::plain_text)
                 .collect::<Vec<_>>()
                 .join(""),
-            Self::Anchor(_) => String::new(),
+            Self::Anchor(anchor) => anchor
+                .inlines
+                .iter()
+                .map(Self::plain_text)
+                .collect::<Vec<_>>()
+                .join(""),
         }
     }
 }

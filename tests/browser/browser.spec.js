@@ -140,3 +140,16 @@ test("preview resolves inline anchors", async ({ page }) => {
   await expect(link).toHaveText("Marked Spot");
   await expect(frame.locator("#bookmark-a")).toHaveCount(1);
 });
+
+test("preview renders phrase-applied inline anchors", async ({ page }) => {
+  const source =
+    "= Sample Document\n\nSee <<bookmark-b>> and [#bookmark-b]#visible text#.\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const link = frame.locator("a[href=\"#bookmark-b\"]").first();
+  await expect(link).toHaveText("visible text");
+  await expect(frame.locator("#bookmark-b")).toHaveCount(1);
+  await expect(frame.locator("p")).toContainText("See visible text and visible text.");
+});

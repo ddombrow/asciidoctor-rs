@@ -115,6 +115,7 @@ pub struct AnchorInline {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reftext: Option<String>,
+    pub inlines: Vec<PreparedInline>,
 }
 
 #[derive(Debug, Clone)]
@@ -336,6 +337,7 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
             Inline::Anchor(anchor) => PreparedInline::Anchor(AnchorInline {
                 id: anchor.id.clone(),
                 reftext: anchor.reftext.clone(),
+                inlines: prepare_inlines(&anchor.inlines),
             }),
         })
         .collect()
@@ -441,11 +443,20 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
     for inline in inlines {
         match inline {
             PreparedInline::Anchor(anchor) => {
+                let anchor_text = anchor
+                    .inlines
+                    .iter()
+                    .map(prepared_inline_plain_text)
+                    .collect::<Vec<_>>()
+                    .join("");
                 refs.entry(normalize_section_ref_key(&anchor.id))
                     .or_insert(BlockRef {
                         id: anchor.id.clone(),
-                        title: anchor.reftext.clone(),
+                        title: anchor.reftext.clone().or_else(|| {
+                            (!anchor_text.is_empty()).then_some(anchor_text.clone())
+                        }),
                     });
+                collect_inline_anchor_refs(&anchor.inlines, refs);
             }
             PreparedInline::Span(span) => collect_inline_anchor_refs(&span.inlines, refs),
             PreparedInline::Link(link) => collect_inline_anchor_refs(&link.inlines, refs),
@@ -488,7 +499,10 @@ fn resolve_xrefs_in_inlines(
 ) {
     for inline in inlines {
         match inline {
-            PreparedInline::Text(_) | PreparedInline::Link(_) | PreparedInline::Anchor(_) => {}
+            PreparedInline::Text(_) | PreparedInline::Link(_) => {}
+            PreparedInline::Anchor(anchor) => {
+                resolve_xrefs_in_inlines(&mut anchor.inlines, section_refs, block_refs)
+            }
             PreparedInline::Span(span) => {
                 resolve_xrefs_in_inlines(&mut span.inlines, section_refs, block_refs)
             }
@@ -629,7 +643,12 @@ fn prepared_inline_plain_text(inline: &PreparedInline) -> String {
             .map(prepared_inline_plain_text)
             .collect::<Vec<_>>()
             .join(""),
-        PreparedInline::Anchor(_) => String::new(),
+        PreparedInline::Anchor(anchor) => anchor
+            .inlines
+            .iter()
+            .map(prepared_inline_plain_text)
+            .collect::<Vec<_>>()
+            .join(""),
     }
 }
 
@@ -1031,6 +1050,7 @@ mod tests {
                     Inline::Anchor(crate::ast::InlineAnchor {
                         id: "bookmark-a".into(),
                         reftext: Some("Marked Spot".into()),
+                        inlines: Vec::new(),
                     }),
                     Inline::Text("look here".into()),
                 ],
@@ -1055,6 +1075,61 @@ mod tests {
             xref.inlines,
             vec![PreparedInline::Text(TextInline {
                 value: "Marked Spot".into(),
+            })]
+        );
+    }
+
+    #[test]
+    fn preserves_phrase_anchor_text_and_uses_it_for_xrefs() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["See <<bookmark-b>> and [#bookmark-b]#visible text#".into()],
+                inlines: vec![
+                    Inline::Text("See ".into()),
+                    Inline::Xref(InlineXref {
+                        target: "bookmark-b".into(),
+                        text: vec![Inline::Text("bookmark-b".into())],
+                        shorthand: true,
+                        explicit_text: false,
+                    }),
+                    Inline::Text(" and ".into()),
+                    Inline::Anchor(crate::ast::InlineAnchor {
+                        id: "bookmark-b".into(),
+                        reftext: None,
+                        inlines: vec![Inline::Text("visible text".into())],
+                    }),
+                ],
+                id: None,
+                reftext: None,
+            })],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref");
+        };
+        let PreparedInline::Anchor(anchor) = &paragraph.inlines[3] else {
+            panic!("expected anchor");
+        };
+
+        assert_eq!(xref.href, "#bookmark-b");
+        assert_eq!(
+            xref.inlines,
+            vec![PreparedInline::Text(TextInline {
+                value: "visible text".into(),
+            })]
+        );
+        assert_eq!(
+            anchor.inlines,
+            vec![PreparedInline::Text(TextInline {
+                value: "visible text".into(),
             })]
         );
     }
