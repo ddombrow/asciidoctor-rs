@@ -92,3 +92,27 @@ test("preview renders special links with window targets", async ({ page }) => {
   await expect(links.nth(1)).toHaveAttribute("target", "_blank");
   await expect(links.nth(1)).toHaveAttribute("href", "/home.html");
 });
+
+test("preview renders xrefs", async ({ page }) => {
+  const source = "= Sample Document\n\nSee <<First Section>>.\n\n== First Section\n\nHello.\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const link = frame.locator("a").first();
+  await expect(link).toHaveText("First Section");
+  await expect(link).toHaveAttribute("href", "#_first_section");
+  await expect(frame.locator("#_first_section")).toHaveCount(1);
+});
+
+test("preview renders generated section ids for direct xrefs", async ({ page }) => {
+  const source = "= Sample Document\n\nSee <<_first_section>>.\n\n== First Section\n\nHello.\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const link = frame.locator("a").first();
+  await expect(link).toHaveText("First Section");
+  await expect(link).toHaveAttribute("href", "#_first_section");
+  await expect(frame.locator("#_first_section")).toHaveCount(1);
+});

@@ -138,8 +138,9 @@ function renderBlock(block, parentSectionLevel = 0) {
       block.numbered && block.num
         ? `<span class="section-num">${escapeHtml(block.num)}</span>`
         : "";
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     return `
-      <div class="${sectionClass}">
+      <div class="${sectionClass}"${id}>
         <h${level}>${number}${escapeHtml(block.title ?? "")}</h${level}>
         <div class="sectionbody">
           ${blocks}
@@ -173,6 +174,10 @@ function renderInlines(inlines) {
         const target = inline.window ? ` target="${escapeHtml(inline.window)}"` : "";
         const rel = inline.window === "_blank" ? ' rel="noopener"' : "";
         return `<a href="${escapeHtml(inline.target ?? "")}"${bare}${target}${rel}>${renderInlines(inline.inlines ?? [])}</a>`;
+      }
+
+      if (inline.type === "xref") {
+        return `<a href="${escapeHtml(inline.href ?? inline.target ?? "")}">${renderInlines(inline.inlines ?? [])}</a>`;
       }
 
       return escapeHtml(JSON.stringify(inline));

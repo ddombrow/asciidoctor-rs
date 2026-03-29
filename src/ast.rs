@@ -27,6 +27,7 @@ pub enum Inline {
     Text(String),
     Span(InlineSpan),
     Link(InlineLink),
+    Xref(InlineXref),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +43,14 @@ pub struct InlineLink {
     pub text: Vec<Inline>,
     pub bare: bool,
     pub window: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineXref {
+    pub target: String,
+    pub text: Vec<Inline>,
+    pub shorthand: bool,
+    pub explicit_text: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +76,12 @@ impl Inline {
                 .collect::<Vec<_>>()
                 .join(""),
             Self::Link(link) => link
+                .text
+                .iter()
+                .map(Self::plain_text)
+                .collect::<Vec<_>>()
+                .join(""),
+            Self::Xref(xref) => xref
                 .text
                 .iter()
                 .map(Self::plain_text)

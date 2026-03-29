@@ -88,6 +88,11 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 render_inlines(html, &link.inlines);
                 html.push_str("</a>");
             }
+            PreparedInline::Xref(xref) => {
+                html.push_str(&format!("<a href=\"{}\">", escape_html(&xref.href)));
+                render_inlines(html, &xref.inlines);
+                html.push_str("</a>");
+            }
         }
     }
 }
@@ -113,7 +118,7 @@ fn escape_html(input: &str) -> String {
 mod tests {
     use crate::ast::{
         Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
-        Paragraph,
+        InlineXref, Paragraph,
     };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
@@ -299,5 +304,59 @@ mod tests {
         assert!(html.contains(
             "<a href=\"https://example.org\" target=\"_blank\" rel=\"noopener\">example</a>"
         ));
+    }
+
+    #[test]
+    fn renders_xrefs() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["See <<install,Installation>>".into()],
+                inlines: vec![
+                    Inline::Text("See ".into()),
+                    Inline::Xref(InlineXref {
+                        target: "install".into(),
+                        text: vec![Inline::Text("Installation".into())],
+                        shorthand: true,
+                        explicit_text: true,
+                    }),
+                ],
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<a href=\"#install\">Installation</a>"));
+    }
+
+    #[test]
+    fn renders_xrefs_with_resolved_section_ids() {
+        let document = Document {
+            title: Some(Heading {
+                level: 0,
+                title: "Sample Document".into(),
+            }),
+            blocks: vec![
+                Block::Paragraph(Paragraph {
+                    lines: vec!["See <<First Section>>.".into()],
+                    inlines: vec![
+                        Inline::Text("See ".into()),
+                        Inline::Xref(InlineXref {
+                            target: "First Section".into(),
+                            text: vec![Inline::Text("First Section".into())],
+                            shorthand: true,
+                            explicit_text: false,
+                        }),
+                        Inline::Text(".".into()),
+                    ],
+                }),
+                Block::Heading(Heading {
+                    level: 1,
+                    title: "First Section".into(),
+                }),
+            ],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<a href=\"#_first_section\">First Section</a>"));
     }
 }

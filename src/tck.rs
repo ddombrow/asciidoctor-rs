@@ -542,6 +542,42 @@ fn map_inline(
                 offset_to_end_position(end, line_starts, base_line, base_col),
             ],
         }),
+        Inline::Xref(xref) => AsgInline::Span(InlineSpanNode {
+            name: "xref",
+            node_type: "inline",
+            variant: "xref",
+            form: if xref.shorthand { "shorthand" } else { "macro" },
+            inlines: xref
+                .text
+                .iter()
+                .enumerate()
+                .map(|(idx, child)| {
+                    let child_text = child.plain_text();
+                    let child_start = xref
+                        .text
+                        .iter()
+                        .take(idx)
+                        .map(Inline::plain_text)
+                        .collect::<String>()
+                        .len();
+                    map_inline(
+                        child,
+                        child_start,
+                        child_start + child_text.len(),
+                        &xref.text.iter().map(Inline::plain_text).collect::<String>(),
+                        &compute_line_starts(
+                            &xref.text.iter().map(Inline::plain_text).collect::<String>(),
+                        ),
+                        base_line,
+                        base_col,
+                    )
+                })
+                .collect(),
+            location: [
+                offset_to_position(start, line_starts, base_line, base_col),
+                offset_to_end_position(end, line_starts, base_line, base_col),
+            ],
+        }),
     }
 }
 

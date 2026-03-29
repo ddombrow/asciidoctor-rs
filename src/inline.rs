@@ -1,4 +1,4 @@
-use crate::ast::{Inline, InlineForm, InlineLink, InlineSpan, InlineVariant};
+use crate::ast::{Inline, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpannedInline {
@@ -41,7 +41,18 @@ fn parse_spanned_inlines_with_base(chars: &[char], base: usize) -> Vec<SpannedIn
             }
         }
 
-        if let Some((link, consumed)) = parse_link(chars, index, base) {
+        if let Some((xref, consumed)) = parse_xref(chars, index, base) {
+            if let Some(start) = text_start.take() {
+                result.push(SpannedInline {
+                    inline: Inline::Text(std::mem::take(&mut text)),
+                    start: base + start,
+                    end: base + index,
+                });
+            }
+
+            result.push(xref);
+            index += consumed;
+        } else if let Some((link, consumed)) = parse_link(chars, index, base) {
             if let Some(start) = text_start.take() {
                 result.push(SpannedInline {
                     inline: Inline::Text(std::mem::take(&mut text)),
@@ -116,6 +127,109 @@ fn parse_link(chars: &[char], start: usize, base: usize) -> Option<(SpannedInlin
     parse_link_macro(chars, start, base).or_else(|| parse_raw_url(chars, start, base))
 }
 
+fn parse_xref(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
+    parse_xref_macro(chars, start, base).or_else(|| parse_xref_shorthand(chars, start, base))
+}
+
+fn parse_xref_macro(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
+    const PREFIX: &str = "xref:";
+    if !starts_with(chars, start, PREFIX) {
+        return None;
+    }
+
+    let mut target_end = start + PREFIX.len();
+    while target_end < chars.len() && chars[target_end] != '[' && !chars[target_end].is_whitespace()
+    {
+        target_end += 1;
+    }
+
+    if target_end >= chars.len() || chars[target_end] != '[' || target_end == start + PREFIX.len() {
+        return None;
+    }
+
+    let (text_start, text_end, consumed) = parse_bracket_text(chars, target_end)?;
+    let target = chars[start + PREFIX.len()..target_end]
+        .iter()
+        .collect::<String>();
+    let text_source = chars[text_start..text_end].iter().collect::<String>();
+    let text = if text_source.is_empty() {
+        vec![Inline::Text(target.clone())]
+    } else {
+        parse_spanned_inlines_with_base(&text_source.chars().collect::<Vec<_>>(), base + text_start)
+            .into_iter()
+            .map(|inline| inline.inline)
+            .collect()
+    };
+
+    Some((
+        SpannedInline {
+            inline: Inline::Xref(InlineXref {
+                target,
+                text,
+                shorthand: false,
+                explicit_text: !text_source.is_empty(),
+            }),
+            start: base + start,
+            end: base + consumed,
+        },
+        consumed - start,
+    ))
+}
+
+fn parse_xref_shorthand(
+    chars: &[char],
+    start: usize,
+    base: usize,
+) -> Option<(SpannedInline, usize)> {
+    if chars.get(start) != Some(&'<') || chars.get(start + 1) != Some(&'<') {
+        return None;
+    }
+
+    let mut end = start + 2;
+    while end + 1 < chars.len() {
+        if chars[end] == '>' && chars[end + 1] == '>' {
+            let inner = chars[start + 2..end].iter().collect::<String>();
+            if inner.trim().is_empty() {
+                return None;
+            }
+            let mut parts = inner.splitn(2, ',');
+            let target = parts.next()?.trim().to_owned();
+            if target.is_empty() {
+                return None;
+            }
+            let text_source = parts.next().map(str::trim).filter(|part| !part.is_empty());
+            let text = if let Some(text_source) = text_source {
+                parse_spanned_inlines_with_base(
+                    &text_source.chars().collect::<Vec<_>>(),
+                    base + start + 2 + inner.find(text_source).unwrap_or(0),
+                )
+                .into_iter()
+                .map(|inline| inline.inline)
+                .collect()
+            } else {
+                vec![Inline::Text(target.clone())]
+            };
+
+            return Some((
+                SpannedInline {
+                    inline: Inline::Xref(InlineXref {
+                        target,
+                        text,
+                        shorthand: true,
+                        explicit_text: text_source.is_some(),
+                    }),
+                    start: base + start,
+                    end: base + end + 2,
+                },
+                end + 2 - start,
+            ));
+        }
+        end += 1;
+    }
+
+    None
+}
+
 fn parse_link_macro(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
     const PREFIX: &str = "link:";
     if !starts_with(chars, start, PREFIX) {
@@ -137,10 +251,7 @@ fn parse_link_macro(chars: &[char], start: usize, base: usize) -> Option<(Spanne
         .iter()
         .collect::<String>();
     let attrs = parse_link_attrs(&chars[text_start..text_end]);
-    let text_source = attrs
-        .text
-        .as_deref()
-        .unwrap_or(target.as_str());
+    let text_source = attrs.text.as_deref().unwrap_or(target.as_str());
     let text_inlines = if text_source.is_empty() {
         vec![Inline::Text(target.clone())]
     } else {
@@ -205,9 +316,9 @@ fn parse_raw_url(chars: &[char], start: usize, base: usize) -> Option<(SpannedIn
                     .collect::<Vec<_>>(),
                 base + text_start,
             )
-                .into_iter()
-                .map(|inline| inline.inline)
-                .collect()
+            .into_iter()
+            .map(|inline| inline.inline)
+            .collect()
         };
         let window = attrs.window;
         end = consumed;
@@ -405,7 +516,7 @@ fn parse_constrained_span(
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Inline, InlineForm, InlineLink, InlineSpan, InlineVariant};
+    use crate::ast::{Inline, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref};
     use crate::inline::parse_inlines;
 
     #[test]
@@ -588,6 +699,32 @@ mod tests {
                 text: vec![Inline::Text("Home".into())],
                 bare: false,
                 window: Some("_blank".into()),
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_shorthand_xrefs() {
+        assert_eq!(
+            parse_inlines("<<install,Installation>>"),
+            vec![Inline::Xref(InlineXref {
+                target: "install".into(),
+                text: vec![Inline::Text("Installation".into())],
+                shorthand: true,
+                explicit_text: true,
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_xref_macro() {
+        assert_eq!(
+            parse_inlines("xref:install[Installation]"),
+            vec![Inline::Xref(InlineXref {
+                target: "install".into(),
+                text: vec![Inline::Text("Installation".into())],
+                shorthand: false,
+                explicit_text: true,
             })]
         );
     }

@@ -72,6 +72,7 @@ pub enum PreparedInline {
     Text(TextInline),
     Span(SpanInline),
     Link(LinkInline),
+    Xref(XrefInline),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +95,21 @@ pub struct LinkInline {
     pub inlines: Vec<PreparedInline>,
     pub bare: bool,
     pub window: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XrefInline {
+    pub target: String,
+    pub href: String,
+    pub inlines: Vec<PreparedInline>,
+    pub shorthand: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SectionRef {
+    id: String,
+    title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,7 +171,9 @@ pub struct Author {
 
 pub fn prepare_document(document: &Document) -> DocumentBlock {
     let mut next_section_ids = Vec::new();
-    let blocks = prepare_blocks(&document.blocks, true, &mut next_section_ids);
+    let mut blocks = prepare_blocks(&document.blocks, true, &mut next_section_ids);
+    let section_refs = collect_section_refs(&blocks);
+    resolve_xrefs_in_blocks(&mut blocks, &section_refs);
     let sections = collect_sections(&blocks);
 
     DocumentBlock {
@@ -284,6 +302,12 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
                 bare: link.bare,
                 window: link.window.clone(),
             }),
+            Inline::Xref(xref) => PreparedInline::Xref(XrefInline {
+                target: xref.target.clone(),
+                href: xref.target.clone(),
+                inlines: prepare_inlines(&xref.text),
+                shorthand: xref.shorthand,
+            }),
         })
         .collect()
 }
@@ -320,6 +344,107 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             PreparedBlock::Preamble(_) | PreparedBlock::Paragraph(_) => None,
         })
         .collect()
+}
+
+fn collect_section_refs(blocks: &[PreparedBlock]) -> BTreeMap<String, SectionRef> {
+    let mut refs = BTreeMap::new();
+    collect_section_refs_into(blocks, &mut refs);
+    refs
+}
+
+fn collect_section_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String, SectionRef>) {
+    for block in blocks {
+        if let PreparedBlock::Section(section) = block {
+            let section_ref = SectionRef {
+                id: section.id.clone(),
+                title: section.title.clone(),
+            };
+            for key in section_ref_keys(&section.id, &section.title) {
+                refs.entry(key).or_insert_with(|| section_ref.clone());
+            }
+            collect_section_refs_into(&section.blocks, refs);
+        }
+    }
+}
+
+fn resolve_xrefs_in_blocks(
+    blocks: &mut [PreparedBlock],
+    section_refs: &BTreeMap<String, SectionRef>,
+) {
+    for block in blocks {
+        match block {
+            PreparedBlock::Preamble(preamble) => {
+                resolve_xrefs_in_blocks(&mut preamble.blocks, section_refs)
+            }
+            PreparedBlock::Paragraph(paragraph) => {
+                resolve_xrefs_in_inlines(&mut paragraph.inlines, section_refs);
+                paragraph.content = paragraph
+                    .inlines
+                    .iter()
+                    .map(prepared_inline_plain_text)
+                    .collect::<Vec<_>>()
+                    .join("");
+            }
+            PreparedBlock::Section(section) => {
+                resolve_xrefs_in_blocks(&mut section.blocks, section_refs)
+            }
+        }
+    }
+}
+
+fn resolve_xrefs_in_inlines(
+    inlines: &mut [PreparedInline],
+    section_refs: &BTreeMap<String, SectionRef>,
+) {
+    for inline in inlines {
+        match inline {
+            PreparedInline::Text(_) | PreparedInline::Link(_) => {}
+            PreparedInline::Span(span) => resolve_xrefs_in_inlines(&mut span.inlines, section_refs),
+            PreparedInline::Xref(xref) => {
+                if let Some(section_ref) = resolve_section_ref(&xref.target, section_refs) {
+                    xref.href = format!("#{}", section_ref.id);
+                    if xref.inlines.len() == 1
+                        && matches!(xref.inlines.first(), Some(PreparedInline::Text(text)) if text.value == xref.target)
+                    {
+                        xref.inlines = vec![PreparedInline::Text(TextInline {
+                            value: section_ref.title.clone(),
+                        })];
+                    }
+                } else {
+                    xref.href = xref_href(&xref.target);
+                }
+                resolve_xrefs_in_inlines(&mut xref.inlines, section_refs);
+            }
+        }
+    }
+}
+
+fn resolve_section_ref<'a>(
+    target: &str,
+    section_refs: &'a BTreeMap<String, SectionRef>,
+) -> Option<&'a SectionRef> {
+    if target.contains(".adoc") {
+        return None;
+    }
+    section_refs.get(&normalize_section_ref_key(target))
+}
+
+fn section_ref_keys(id: &str, title: &str) -> Vec<String> {
+    let slug = slugify(title);
+    let mut keys = vec![
+        normalize_section_ref_key(id),
+        normalize_section_ref_key(id.trim_start_matches('_')),
+        normalize_section_ref_key(title),
+        normalize_section_ref_key(&slug),
+        normalize_section_ref_key(slug.trim_start_matches('_')),
+    ];
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn normalize_section_ref_key(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_ascii_lowercase()
 }
 
 fn next_section_id(section_ids: &mut Vec<u32>, level: u8, title: &str) -> String {
@@ -363,6 +488,38 @@ fn slugify(title: &str) -> String {
     if slug == "_" { "_section".into() } else { slug }
 }
 
+fn xref_href(target: &str) -> String {
+    if target.starts_with('#') || target.contains(".adoc") {
+        target.to_owned()
+    } else {
+        format!("#{target}")
+    }
+}
+
+fn prepared_inline_plain_text(inline: &PreparedInline) -> String {
+    match inline {
+        PreparedInline::Text(text) => text.value.clone(),
+        PreparedInline::Span(span) => span
+            .inlines
+            .iter()
+            .map(prepared_inline_plain_text)
+            .collect::<Vec<_>>()
+            .join(""),
+        PreparedInline::Link(link) => link
+            .inlines
+            .iter()
+            .map(prepared_inline_plain_text)
+            .collect::<Vec<_>>()
+            .join(""),
+        PreparedInline::Xref(xref) => xref
+            .inlines
+            .iter()
+            .map(prepared_inline_plain_text)
+            .collect::<Vec<_>>()
+            .join(""),
+    }
+}
+
 fn inline_variant_name(variant: InlineVariant) -> &'static str {
     match variant {
         InlineVariant::Strong => "strong",
@@ -381,10 +538,11 @@ fn inline_form_name(form: InlineForm) -> &'static str {
 mod tests {
     use crate::ast::{
         Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
-        Paragraph,
+        InlineXref, Paragraph,
     };
     use crate::prepare::{
-        ContentModel, PreparedBlock, PreparedInline, prepare_document, prepared_document_to_json,
+        ContentModel, PreparedBlock, PreparedInline, TextInline, prepare_document,
+        prepared_document_to_json,
     };
 
     #[test]
@@ -573,5 +731,87 @@ mod tests {
         };
         assert_eq!(link.target, "https://example.org");
         assert_eq!(link.window, None);
+    }
+
+    #[test]
+    fn prepares_xrefs_for_wasm_facing_output() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["See <<install,Installation>>".into()],
+                inlines: vec![
+                    Inline::Text("See ".into()),
+                    Inline::Xref(InlineXref {
+                        target: "install".into(),
+                        text: vec![Inline::Text("Installation".into())],
+                        shorthand: true,
+                        explicit_text: true,
+                    }),
+                ],
+            })],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref inline");
+        };
+        assert_eq!(xref.target, "install");
+        assert_eq!(xref.href, "#install");
+        assert!(xref.shorthand);
+    }
+
+    #[test]
+    fn resolves_xrefs_to_prepared_section_ids_and_titles() {
+        let document = Document {
+            title: Some(Heading {
+                level: 0,
+                title: "Sample Document".into(),
+            }),
+            blocks: vec![
+                Block::Paragraph(Paragraph {
+                    lines: vec!["See <<First Section>>.".into()],
+                    inlines: vec![
+                        Inline::Text("See ".into()),
+                        Inline::Xref(InlineXref {
+                            target: "First Section".into(),
+                            text: vec![Inline::Text("First Section".into())],
+                            shorthand: true,
+                            explicit_text: false,
+                        }),
+                        Inline::Text(".".into()),
+                    ],
+                }),
+                Block::Heading(Heading {
+                    level: 1,
+                    title: "First Section".into(),
+                }),
+            ],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref");
+        };
+
+        assert_eq!(xref.href, "#_first_section");
+        assert_eq!(
+            xref.inlines,
+            vec![PreparedInline::Text(TextInline {
+                value: "First Section".into(),
+            })]
+        );
     }
 }
