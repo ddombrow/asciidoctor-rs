@@ -22,6 +22,7 @@ const jsonEl = document.querySelector("#json-output");
 const previewFrameEl = document.querySelector("#preview-frame");
 const renderButton = document.querySelector("#render");
 const sampleButton = document.querySelector("#load-sample");
+let renderTimer = null;
 
 window.__asciidoctorState = "loading";
 updateStatus("loading", "Initializing WASM module...");
@@ -55,6 +56,21 @@ sourceEl.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
     renderSource(sourceEl.value);
   }
+});
+
+sourceEl.addEventListener("input", () => {
+  if (window.__asciidoctorState !== "ready") {
+    return;
+  }
+
+  if (renderTimer !== null) {
+    clearTimeout(renderTimer);
+  }
+
+  renderTimer = window.setTimeout(() => {
+    renderTimer = null;
+    renderSource(sourceEl.value);
+  }, 120);
 });
 
 function renderSource(source) {

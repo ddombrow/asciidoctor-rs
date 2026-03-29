@@ -49,3 +49,14 @@ test("preview renders strong and emphasis inline markup", async ({ page }) => {
   await expect(frame.locator("strong")).toHaveText("bold");
   await expect(frame.locator("em")).toHaveText("emphasis");
 });
+
+test("preview rerenders as the source changes", async ({ page }) => {
+  await page.fill("#source", "= Sample Document\n\nbefore\n");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("p")).toHaveText("before");
+
+  await page.fill("#source", "= Sample Document\n\nA *bold* change\n");
+  await expect(frame.locator("strong")).toHaveText("bold");
+  await expect(frame.locator("p")).toHaveText("A bold change");
+});
