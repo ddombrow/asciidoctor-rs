@@ -78,3 +78,11 @@ The browser build currently expects a locally downloaded `wasm-bindgen` binary. 
 ```powershell
 npm run install:wasm-bindgen
 ```
+
+`npm run build:wasm:test` prefers an offline Cargo build when the crate cache is already warm, and
+automatically retries online if required WASM crates have not been downloaded yet. To force strict
+offline mode, set `ASCIIDOCTOR_RS_WASM_BUILD_OFFLINE=1`.
+
+The browser preview uses the upstream Asciidoctor font and stylesheet assets:
+`https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700`
+and `https://cdn.jsdelivr.net/gh/asciidoctor/asciidoctor@2.0/data/stylesheets/asciidoctor-default.css`.

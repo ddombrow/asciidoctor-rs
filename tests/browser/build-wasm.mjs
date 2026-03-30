@@ -24,35 +24,69 @@ if (!existsSync(wasmBindgenExe)) {
   );
 }
 
-run(
-  "cargo",
-  ["build", "--offline", "--target", "wasm32-unknown-unknown", "--features", "wasm"],
-  "Rust WASM build failed"
-);
+buildRustWasm();
 
-run(
+runOrThrow(
   wasmBindgenExe,
   ["--target", "web", "--out-dir", outDir, targetWasm],
   "wasm-bindgen generation failed"
 );
 
 const siteDir = resolve(root, "tests", "browser", "site");
-const upstreamCss = resolve(root, "..", "asciidoctor", "src", "stylesheets", "asciidoctor.css");
 mkdirSync(siteDir, { recursive: true });
 cpSync(resolve(root, "examples", "sample.adoc"), resolve(siteDir, "sample.adoc"));
-cpSync(upstreamCss, resolve(siteDir, "asciidoctor.css"));
 
-function run(command, args, errorMessage) {
+function buildRustWasm() {
+  const buildArgs = ["--target", "wasm32-unknown-unknown", "--features", "wasm"];
+  const offlineOnly = process.env.ASCIIDOCTOR_RS_WASM_BUILD_OFFLINE === "1";
+  const offlineResult = run("cargo", ["build", "--offline", ...buildArgs]);
+
+  if (offlineResult.status === 0) {
+    return;
+  }
+
+  if (offlineOnly || !isMissingOfflineDependency(offlineResult.stderr)) {
+    throw new Error("Rust WASM build failed");
+  }
+
+  console.warn("Offline Cargo build is missing cached crates. Retrying with network access...");
+  const onlineResult = run("cargo", ["build", ...buildArgs]);
+  if (onlineResult.status !== 0) {
+    throw new Error("Rust WASM build failed");
+  }
+}
+
+function run(command, args) {
   const resolvedCommand =
     process.platform === "win32" && command === "cargo" ? "cargo.exe" : command;
   const result = spawnSync(resolvedCommand, args, {
     cwd: root,
-    stdio: "inherit"
+    encoding: "utf8"
   });
 
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+
+  return result;
+}
+
+function runOrThrow(command, args, errorMessage) {
+  const result = run(command, args);
   if (result.status !== 0) {
     throw new Error(errorMessage);
   }
+}
+
+function isMissingOfflineDependency(stderr) {
+  return (
+    stderr.includes("attempting to make an HTTP request, but --offline was specified") ||
+    stderr.includes("failed to download")
+  );
 }
 
 function resolveWasmBindgenExe(rootDir, version) {

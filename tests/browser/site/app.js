@@ -3,6 +3,11 @@ import init, {
   prepare_document_value
 } from "../pkg/asciidoctor_rs.js";
 
+const asciidoctorStylesheetHref =
+  "https://cdn.jsdelivr.net/gh/asciidoctor/asciidoctor@2.0/data/stylesheets/asciidoctor-default.css";
+const asciidoctorFontsHref =
+  "https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700";
+
 const sample = `= Sample Document
 
 An introductory paragraph for the sample document.
@@ -201,7 +206,8 @@ function renderPreview(document) {
   <html lang="en">
     <head>
       <meta charset="utf-8" />
-      <link rel="stylesheet" href="/site/asciidoctor.css" />
+      <link rel="stylesheet" href="${asciidoctorFontsHref}" />
+      <link rel="stylesheet" href="${asciidoctorStylesheetHref}" />
       <style>
         body {
           margin: 0;
