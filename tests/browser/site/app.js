@@ -91,7 +91,7 @@ function renderSource(source) {
     const json = prepare_document_json(source);
     const document = prepare_document_value(source);
 
-    jsonEl.textContent = json;
+    renderJson(json);
     renderPreview(document);
     updateStatus("ready", "Rendered successfully");
   } catch (error) {
@@ -100,6 +100,30 @@ function renderSource(source) {
     renderPreviewError(message);
     updateStatus("error", message);
   }
+}
+
+function renderJson(json) {
+  const lines = json
+    .split("\n")
+    .map((line) => `<span class="json-line">${highlightJsonLine(line)}</span>`)
+    .join("");
+  jsonEl.innerHTML = lines;
+}
+
+function highlightJsonLine(line) {
+  const escaped = escapeHtml(line);
+  return escaped
+    .replace(
+      /(&quot;(?:\\.|[^&]|&(?!quot;))*?&quot;)(\s*:)?/g,
+      (_, stringToken, colon) =>
+        colon
+          ? `<span class="json-key">${stringToken}</span><span class="json-punc">${colon}</span>`
+          : `<span class="json-string">${stringToken}</span>`
+    )
+    .replace(/\b(true|false)\b/g, '<span class="json-boolean">$1</span>')
+    .replace(/\bnull\b/g, '<span class="json-null">$&</span>')
+    .replace(/(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/g, '<span class="json-number">$1</span>')
+    .replace(/([{}[\],])/g, '<span class="json-punc">$1</span>');
 }
 
 function renderDocument(document) {
