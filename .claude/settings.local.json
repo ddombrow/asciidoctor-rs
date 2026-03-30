@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -rn \"#\\\\[test\\\\]\" /c/Users/ddomb/src/asciidoctor-rs/src/*.rs)",
+      "Bash(cargo test:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo build:*)"
+    ]
+  }
+}
