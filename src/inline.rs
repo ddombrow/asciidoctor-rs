@@ -126,6 +126,7 @@ fn parse_span(chars: &[char], start: usize, base: usize) -> Option<(SpannedInlin
     let variant = match marker {
         '*' => InlineVariant::Strong,
         '_' => InlineVariant::Emphasis,
+        '`' => InlineVariant::Monospace,
         _ => return None,
     };
 
@@ -728,6 +729,36 @@ mod tests {
         let inlines = parse_inlines("before__focus__after");
 
         assert_eq!(inlines.len(), 3);
+    }
+
+    #[test]
+    fn parses_constrained_monospace_text() {
+        let inlines = parse_inlines("`cargo test`");
+        let [Inline::Span(span)] = &inlines[..] else {
+            panic!("expected monospace span");
+        };
+
+        assert_eq!(span.variant, InlineVariant::Monospace);
+        assert_eq!(span.form, InlineForm::Constrained);
+        assert_eq!(span.inlines, vec![Inline::Text("cargo test".into())]);
+    }
+
+    #[test]
+    fn parses_unconstrained_monospace_inside_words() {
+        let inlines = parse_inlines("re``link``ed");
+
+        assert_eq!(
+            inlines,
+            vec![
+                Inline::Text("re".into()),
+                Inline::Span(InlineSpan {
+                    variant: InlineVariant::Monospace,
+                    form: InlineForm::Unconstrained,
+                    inlines: vec![Inline::Text("link".into())],
+                }),
+                Inline::Text("ed".into()),
+            ]
+        );
     }
 
     #[test]

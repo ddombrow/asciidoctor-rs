@@ -153,3 +153,15 @@ test("preview renders phrase-applied inline anchors", async ({ page }) => {
   await expect(frame.locator("#bookmark-b")).toHaveCount(1);
   await expect(frame.locator("p")).toContainText("See visible text and visible text.");
 });
+
+test("preview renders monospace inline markup", async ({ page }) => {
+  const source = "= Sample Document\n\nRun `cargo test` to verify and re``link`` packages.\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const codes = frame.locator("code");
+  await expect(codes).toHaveCount(2);
+  await expect(codes.nth(0)).toHaveText("cargo test");
+  await expect(codes.nth(1)).toHaveText("link");
+});

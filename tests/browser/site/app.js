@@ -4,8 +4,12 @@ import init, {
 } from "../pkg/asciidoctor_rs.js";
 
 const asciidoctorStylesheetHref =
+  "/site/vendor/asciidoctor-default.css";
+const asciidoctorStylesheetFallbackHref =
   "https://cdn.jsdelivr.net/gh/asciidoctor/asciidoctor@2.0/data/stylesheets/asciidoctor-default.css";
 const asciidoctorFontsHref =
+  "/site/vendor/google-fonts.css";
+const asciidoctorFontsFallbackHref =
   "https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700";
 
 const sample = `= Sample Document
@@ -171,6 +175,8 @@ function renderInlines(inlines) {
             ? "strong"
             : inline.variant === "emphasis"
               ? "em"
+              : inline.variant === "monospace"
+                ? "code"
               : "span";
         return `<${tag}>${renderInlines(inline.inlines ?? [])}</${tag}>`;
       }
@@ -206,8 +212,8 @@ function renderPreview(document) {
   <html lang="en">
     <head>
       <meta charset="utf-8" />
-      <link rel="stylesheet" href="${asciidoctorFontsHref}" />
-      <link rel="stylesheet" href="${asciidoctorStylesheetHref}" />
+      <link rel="stylesheet" href="${asciidoctorFontsHref}" onerror="this.onerror=null;this.href='${asciidoctorFontsFallbackHref}'" />
+      <link rel="stylesheet" href="${asciidoctorStylesheetHref}" onerror="this.onerror=null;this.href='${asciidoctorStylesheetFallbackHref}'" />
       <style>
         body {
           margin: 0;

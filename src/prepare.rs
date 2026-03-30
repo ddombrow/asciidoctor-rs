@@ -452,9 +452,10 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
                 refs.entry(normalize_section_ref_key(&anchor.id))
                     .or_insert(BlockRef {
                         id: anchor.id.clone(),
-                        title: anchor.reftext.clone().or_else(|| {
-                            (!anchor_text.is_empty()).then_some(anchor_text.clone())
-                        }),
+                        title: anchor
+                            .reftext
+                            .clone()
+                            .or_else(|| (!anchor_text.is_empty()).then_some(anchor_text.clone())),
                     });
                 collect_inline_anchor_refs(&anchor.inlines, refs);
             }
@@ -656,6 +657,7 @@ fn inline_variant_name(variant: InlineVariant) -> &'static str {
     match variant {
         InlineVariant::Strong => "strong",
         InlineVariant::Emphasis => "emphasis",
+        InlineVariant::Monospace => "monospace",
     }
 }
 

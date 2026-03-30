@@ -71,6 +71,7 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 let tag = match span.variant.as_str() {
                     "strong" => "strong",
                     "emphasis" => "em",
+                    "monospace" => "code",
                     _ => "span",
                 };
                 html.push_str(&format!("<{tag}>"));
@@ -263,6 +264,30 @@ mod tests {
         let html = render_html(&document);
 
         assert!(html.contains("<p>before <strong>strong</strong> and <em>emphasis</em> after</p>"));
+    }
+
+    #[test]
+    fn renders_monospace_inline_markup() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["Run `cargo test` now".into()],
+                inlines: vec![
+                    Inline::Text("Run ".into()),
+                    Inline::Span(InlineSpan {
+                        variant: InlineVariant::Monospace,
+                        form: InlineForm::Constrained,
+                        inlines: vec![Inline::Text("cargo test".into())],
+                    }),
+                    Inline::Text(" now".into()),
+                ],
+                id: None,
+                reftext: None,
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<p>Run <code>cargo test</code> now</p>"));
     }
 
     #[test]

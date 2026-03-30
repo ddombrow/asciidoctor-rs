@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "install:wasm-bindgen": "node scripts/install-wasm-bindgen.mjs",
+    "sync:preview-assets": "node scripts/sync-preview-assets.mjs",
     "build:wasm:test": "node tests/browser/build-wasm.mjs",
     "preview:browser": "npm run build:wasm:test && node tests/browser/server.mjs",
     "test:browser": "npm run build:wasm:test && playwright test",

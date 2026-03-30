@@ -69,6 +69,7 @@ pub struct InlineAnchor {
 pub enum InlineVariant {
     Strong,
     Emphasis,
+    Monospace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

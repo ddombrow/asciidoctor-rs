@@ -477,6 +477,7 @@ fn map_inline(
                 variant: match span.variant {
                     InlineVariant::Strong => "strong",
                     InlineVariant::Emphasis => "emphasis",
+                    InlineVariant::Monospace => "monospace",
                 },
                 form: match span.form {
                     InlineForm::Constrained => "constrained",
