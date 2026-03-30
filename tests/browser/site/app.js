@@ -183,6 +183,25 @@ function renderBlock(block, parentSectionLevel = 0) {
     `;
   }
 
+  if (block.type === "unordered_list") {
+    const items = (block.items ?? [])
+      .map(
+        (item) => `
+          <li>
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel)}
+          </li>
+        `
+      )
+      .join("");
+    return `
+      <div class="ulist">
+        <ul>
+          ${items}
+        </ul>
+      </div>
+    `;
+  }
+
   return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;
 }
 

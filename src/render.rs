@@ -31,6 +31,7 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
             html.push_str("</div>\n</div>\n");
         }
         PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
+        PreparedBlock::UnorderedList(list) => render_unordered_list(html, list),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -51,6 +52,18 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
             html.push_str("</div>\n</div>\n");
         }
     }
+}
+
+fn render_unordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
+    html.push_str("<div class=\"ulist\">\n<ul>\n");
+    for item in &list.items {
+        html.push_str("<li>\n");
+        for block in &item.blocks {
+            render_block(html, block);
+        }
+        html.push_str("</li>\n");
+    }
+    html.push_str("</ul>\n</div>\n");
 }
 
 fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBlock) {
@@ -127,7 +140,7 @@ fn escape_html(input: &str) -> String {
 mod tests {
     use crate::ast::{
         Block, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan,
-        InlineVariant, InlineXref, Paragraph,
+        InlineVariant, InlineXref, ListItem, Paragraph, UnorderedList,
     };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
@@ -482,5 +495,28 @@ mod tests {
 
         let html = render_html(&document);
         assert!(html.contains("<a id=\"bookmark-b\"></a>visible text"));
+    }
+
+    #[test]
+    fn renders_unordered_lists() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::UnorderedList(UnorderedList {
+                items: vec![ListItem {
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        lines: vec!["first item".into()],
+                        inlines: vec![Inline::Text("first item".into())],
+                        id: None,
+                        reftext: None,
+                    })],
+                }],
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<div class=\"ulist\">"));
+        assert!(html.contains("<ul>"));
+        assert!(html.contains("<li>"));
+        assert!(html.contains("<p>first item</p>"));
     }
 }

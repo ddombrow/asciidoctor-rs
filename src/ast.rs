@@ -8,6 +8,7 @@ pub struct Document {
 pub enum Block {
     Heading(Heading),
     Paragraph(Paragraph),
+    UnorderedList(UnorderedList),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +25,16 @@ pub struct Paragraph {
     pub inlines: Vec<Inline>,
     pub id: Option<String>,
     pub reftext: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnorderedList {
+    pub items: Vec<ListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListItem {
+    pub blocks: Vec<Block>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

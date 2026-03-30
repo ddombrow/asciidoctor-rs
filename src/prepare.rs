@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{Block, Document, Inline, InlineForm, InlineVariant, Paragraph};
+use crate::ast::{Block, Document, Inline, InlineForm, InlineVariant, Paragraph, UnorderedList};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +43,7 @@ pub enum PreparedBlock {
     Preamble(CompoundBlock),
     Paragraph(ParagraphBlock),
     Section(SectionBlock),
+    UnorderedList(ListBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +67,22 @@ pub struct ParagraphBlock {
     pub level: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListBlock {
+    pub items: Vec<ListItemBlock>,
+    pub attributes: BTreeMap<String, String>,
+    pub content_model: Option<ContentModel>,
+    pub level: u8,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListItemBlock {
+    pub blocks: Vec<PreparedBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,6 +253,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::UnorderedList(list) => {
+                let list = PreparedBlock::UnorderedList(prepare_unordered_list(list));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(list);
+                } else {
+                    prepared.push(list);
+                }
+                index += 1;
+            }
             Block::Heading(heading) => {
                 if wrap_document_preamble && !seen_section && !preamble_blocks.is_empty() {
                     prepared.push(PreparedBlock::Preamble(prepare_preamble(std::mem::take(
@@ -310,6 +336,22 @@ fn prepare_paragraph(paragraph: &Paragraph) -> ParagraphBlock {
     }
 }
 
+fn prepare_unordered_list(list: &UnorderedList) -> ListBlock {
+    ListBlock {
+        items: list
+            .items
+            .iter()
+            .map(|item| ListItemBlock {
+                blocks: prepare_blocks(&item.blocks, false, &mut Vec::new()),
+            })
+            .collect(),
+        attributes: BTreeMap::new(),
+        content_model: Some(ContentModel::Compound),
+        level: 0,
+        name: "ulist".into(),
+    }
+}
+
 fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
     inlines
         .iter()
@@ -372,7 +414,9 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
                 num: section.num.clone(),
                 sections: collect_sections(&section.blocks),
             }),
-            PreparedBlock::Preamble(_) | PreparedBlock::Paragraph(_) => None,
+            PreparedBlock::Preamble(_)
+            | PreparedBlock::Paragraph(_)
+            | PreparedBlock::UnorderedList(_) => None,
         })
         .collect()
 }
@@ -423,6 +467,11 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                         });
                 }
                 collect_inline_anchor_refs(&paragraph.inlines, refs);
+            }
+            PreparedBlock::UnorderedList(list) => {
+                for item in &list.items {
+                    collect_block_refs_into(&item.blocks, refs);
+                }
             }
             PreparedBlock::Section(section) => {
                 refs.entry(normalize_section_ref_key(&section.id))
@@ -485,6 +534,11 @@ fn resolve_xrefs_in_blocks(
                     .map(prepared_inline_plain_text)
                     .collect::<Vec<_>>()
                     .join("");
+            }
+            PreparedBlock::UnorderedList(list) => {
+                for item in &mut list.items {
+                    resolve_xrefs_in_blocks(&mut item.blocks, section_refs, block_refs);
+                }
             }
             PreparedBlock::Section(section) => {
                 resolve_xrefs_in_blocks(&mut section.blocks, section_refs, block_refs)
@@ -672,7 +726,7 @@ fn inline_form_name(form: InlineForm) -> &'static str {
 mod tests {
     use crate::ast::{
         Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
-        InlineXref, Paragraph,
+        InlineXref, ListItem, Paragraph, UnorderedList,
     };
     use crate::prepare::{
         ContentModel, PreparedBlock, PreparedInline, TextInline, prepare_document,
@@ -1134,5 +1188,33 @@ mod tests {
                 value: "visible text".into(),
             })]
         );
+    }
+
+    #[test]
+    fn prepares_unordered_lists() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::UnorderedList(UnorderedList {
+                items: vec![ListItem {
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        inlines: vec![Inline::Text("first item".into())],
+                        lines: vec!["first item".into()],
+                        id: None,
+                        reftext: None,
+                    })],
+                }],
+            })],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::UnorderedList(list) = &preamble.blocks[0] else {
+            panic!("expected unordered list");
+        };
+
+        assert_eq!(list.name, "ulist");
+        assert_eq!(list.items.len(), 1);
     }
 }

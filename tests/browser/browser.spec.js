@@ -165,3 +165,15 @@ test("preview renders monospace inline markup", async ({ page }) => {
   await expect(codes.nth(0)).toHaveText("cargo test");
   await expect(codes.nth(1)).toHaveText("link");
 });
+
+test("preview renders unordered lists", async ({ page }) => {
+  const source = "= Sample Document\n\n* first item\n- second item\n";
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const items = frame.locator("ul > li");
+  await expect(items).toHaveCount(2);
+  await expect(items.nth(0)).toContainText("first item");
+  await expect(items.nth(1)).toContainText("second item");
+});

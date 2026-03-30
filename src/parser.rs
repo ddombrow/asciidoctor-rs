@@ -1,4 +1,4 @@
-use crate::ast::{Block, Document, Heading, Paragraph};
+use crate::ast::{Block, Document, Heading, ListItem, Paragraph, UnorderedList};
 use crate::inline::parse_inlines;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +48,18 @@ pub fn parse_document(input: &str) -> Document {
             continue;
         }
 
+        if let Some((list, consumed_lines)) = parse_unordered_list(&lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            pending_anchor = None;
+            blocks.push(Block::UnorderedList(list));
+            index += consumed_lines;
+            continue;
+        }
+
         if line.trim().is_empty() {
             flush_paragraph(
                 &mut blocks,
@@ -72,6 +84,54 @@ pub fn parse_document(input: &str) -> Document {
     );
 
     Document { title, blocks }
+}
+
+fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
+    let mut items = Vec::new();
+    let mut consumed = 0;
+
+    while index + consumed < lines.len() {
+        let line = lines[index + consumed];
+        let Some(content) = parse_unordered_list_item(line) else {
+            break;
+        };
+
+        items.push(ListItem {
+            blocks: vec![Block::Paragraph(Paragraph {
+                inlines: parse_inlines(content),
+                lines: vec![content.to_owned()],
+                id: None,
+                reftext: None,
+            })],
+        });
+        consumed += 1;
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some((UnorderedList { items }, consumed))
+    }
+}
+
+fn parse_unordered_list_item(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let marker = trimmed.chars().next()?;
+    if marker != '*' && marker != '-' {
+        return None;
+    }
+
+    let remainder = &trimmed[marker.len_utf8()..];
+    if !remainder.starts_with(char::is_whitespace) {
+        return None;
+    }
+
+    let content = remainder.trim();
+    if content.is_empty() {
+        return None;
+    }
+
+    Some(content)
 }
 
 fn flush_paragraph(
@@ -237,7 +297,9 @@ fn is_valid_anchor_id(id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Block, Heading, Inline, InlineForm, InlineVariant, Paragraph};
+    use crate::ast::{
+        Block, Heading, Inline, InlineForm, InlineVariant, ListItem, Paragraph, UnorderedList,
+    };
     use crate::parser::parse_document;
 
     #[test]
@@ -411,6 +473,35 @@ mod tests {
                 lines: vec!["Hello".into()],
                 id: Some("intro".into()),
                 reftext: Some("Introduction".into()),
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_unordered_lists() {
+        let document = parse_document("* first item\n- second item");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::UnorderedList(UnorderedList {
+                items: vec![
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("first item".into())],
+                            lines: vec!["first item".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("second item".into())],
+                            lines: vec!["second item".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                ],
             })]
         );
     }
