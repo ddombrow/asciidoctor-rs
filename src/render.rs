@@ -32,6 +32,7 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
         }
         PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
         PreparedBlock::UnorderedList(list) => render_unordered_list(html, list),
+        PreparedBlock::OrderedList(list) => render_ordered_list(html, list),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -64,6 +65,18 @@ fn render_unordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
         html.push_str("</li>\n");
     }
     html.push_str("</ul>\n</div>\n");
+}
+
+fn render_ordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
+    html.push_str("<div class=\"olist arabic\">\n<ol class=\"arabic\">\n");
+    for item in &list.items {
+        html.push_str("<li>\n");
+        for block in &item.blocks {
+            render_block(html, block);
+        }
+        html.push_str("</li>\n");
+    }
+    html.push_str("</ol>\n</div>\n");
 }
 
 fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBlock) {
@@ -140,7 +153,7 @@ fn escape_html(input: &str) -> String {
 mod tests {
     use crate::ast::{
         Block, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan,
-        InlineVariant, InlineXref, ListItem, Paragraph, UnorderedList,
+        InlineVariant, InlineXref, ListItem, OrderedList, Paragraph, UnorderedList,
     };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
@@ -495,6 +508,94 @@ mod tests {
 
         let html = render_html(&document);
         assert!(html.contains("<a id=\"bookmark-b\"></a>visible text"));
+    }
+
+    #[test]
+    fn renders_empty_header_div_when_no_title() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["hello".into()],
+                inlines: vec![Inline::Text("hello".into())],
+                id: None,
+                reftext: None,
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div id=\"header\">\n</div>"));
+        assert!(!html.contains("<h1>"));
+    }
+
+    #[test]
+    fn renders_preamble_with_correct_html_structure() {
+        let document = Document {
+            title: Some(Heading {
+                level: 0,
+                title: "My Doc".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: vec![
+                Block::Paragraph(Paragraph {
+                    lines: vec!["Intro paragraph.".into()],
+                    inlines: vec![Inline::Text("Intro paragraph.".into())],
+                    id: None,
+                    reftext: None,
+                }),
+                Block::Heading(Heading {
+                    level: 1,
+                    title: "Section One".into(),
+                    id: None,
+                    reftext: None,
+                }),
+            ],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div id=\"preamble\">"));
+        assert!(html.contains("<div class=\"sectionbody\">"));
+        assert!(html.contains("<p>Intro paragraph.</p>"));
+        // preamble closes before the section starts
+        let preamble_end = html.find("</div>\n</div>").unwrap();
+        let section_start = html.find("<div class=\"sect1\"").unwrap();
+        assert!(preamble_end < section_start);
+    }
+
+    #[test]
+    fn renders_ordered_lists() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::OrderedList(OrderedList {
+                items: vec![
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            lines: vec!["first item".into()],
+                            inlines: vec![Inline::Text("first item".into())],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            lines: vec!["second item".into()],
+                            inlines: vec![Inline::Text("second item".into())],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                ],
+            })],
+        };
+
+        let html = render_html(&document);
+        assert!(html.contains("<div class=\"olist arabic\">"));
+        assert!(html.contains("<ol class=\"arabic\">"));
+        assert!(html.contains("<li>"));
+        assert!(html.contains("<p>first item</p>"));
+        assert!(html.contains("<p>second item</p>"));
     }
 
     #[test]

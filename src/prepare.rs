@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{Block, Document, Inline, InlineForm, InlineVariant, Paragraph, UnorderedList};
+use crate::ast::{Block, Document, Inline, InlineForm, InlineVariant, OrderedList, Paragraph, UnorderedList};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +44,7 @@ pub enum PreparedBlock {
     Paragraph(ParagraphBlock),
     Section(SectionBlock),
     UnorderedList(ListBlock),
+    OrderedList(ListBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +263,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::OrderedList(list) => {
+                let list = PreparedBlock::OrderedList(prepare_ordered_list(list));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(list);
+                } else {
+                    prepared.push(list);
+                }
+                index += 1;
+            }
             Block::Heading(heading) => {
                 if wrap_document_preamble && !seen_section && !preamble_blocks.is_empty() {
                     prepared.push(PreparedBlock::Preamble(prepare_preamble(std::mem::take(
@@ -352,6 +362,22 @@ fn prepare_unordered_list(list: &UnorderedList) -> ListBlock {
     }
 }
 
+fn prepare_ordered_list(list: &OrderedList) -> ListBlock {
+    ListBlock {
+        items: list
+            .items
+            .iter()
+            .map(|item| ListItemBlock {
+                blocks: prepare_blocks(&item.blocks, false, &mut Vec::new()),
+            })
+            .collect(),
+        attributes: BTreeMap::new(),
+        content_model: Some(ContentModel::Compound),
+        level: 0,
+        name: "olist".into(),
+    }
+}
+
 fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
     inlines
         .iter()
@@ -416,7 +442,8 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             }),
             PreparedBlock::Preamble(_)
             | PreparedBlock::Paragraph(_)
-            | PreparedBlock::UnorderedList(_) => None,
+            | PreparedBlock::UnorderedList(_)
+            | PreparedBlock::OrderedList(_) => None,
         })
         .collect()
 }
@@ -468,7 +495,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                 }
                 collect_inline_anchor_refs(&paragraph.inlines, refs);
             }
-            PreparedBlock::UnorderedList(list) => {
+            PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => {
                 for item in &list.items {
                     collect_block_refs_into(&item.blocks, refs);
                 }
@@ -535,7 +562,7 @@ fn resolve_xrefs_in_blocks(
                     .collect::<Vec<_>>()
                     .join("");
             }
-            PreparedBlock::UnorderedList(list) => {
+            PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => {
                 for item in &mut list.items {
                     resolve_xrefs_in_blocks(&mut item.blocks, section_refs, block_refs);
                 }
@@ -1188,6 +1215,120 @@ mod tests {
                 value: "visible text".into(),
             })]
         );
+    }
+
+    #[test]
+    fn sets_has_header_true_when_title_present() {
+        let document = Document {
+            title: Some(Heading {
+                level: 0,
+                title: "My Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: vec![],
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(prepared.title, "My Title");
+        assert!(prepared.has_header);
+        assert!(!prepared.no_header);
+    }
+
+    #[test]
+    fn sets_no_header_true_when_no_title() {
+        let document = Document {
+            title: None,
+            blocks: vec![],
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(prepared.title, "");
+        assert!(!prepared.has_header);
+        assert!(prepared.no_header);
+    }
+
+    #[test]
+    fn does_not_create_preamble_when_no_content_precedes_first_section() {
+        let document = Document {
+            title: Some(Heading {
+                level: 0,
+                title: "Doc".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: vec![
+                Block::Heading(Heading {
+                    level: 1,
+                    title: "First Section".into(),
+                    id: None,
+                    reftext: None,
+                }),
+                Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("Section body.".into())],
+                    lines: vec!["Section body.".into()],
+                    id: None,
+                    reftext: None,
+                }),
+            ],
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(prepared.blocks.len(), 1);
+        let PreparedBlock::Section(section) = &prepared.blocks[0] else {
+            panic!("expected section, not preamble");
+        };
+        assert_eq!(section.title, "First Section");
+    }
+
+    #[test]
+    fn wraps_multiple_blocks_before_first_section_in_preamble() {
+        let document = Document {
+            title: Some(Heading {
+                level: 0,
+                title: "Doc".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: vec![
+                Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("First preamble paragraph.".into())],
+                    lines: vec!["First preamble paragraph.".into()],
+                    id: None,
+                    reftext: None,
+                }),
+                Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("Second preamble paragraph.".into())],
+                    lines: vec!["Second preamble paragraph.".into()],
+                    id: None,
+                    reftext: None,
+                }),
+                Block::Heading(Heading {
+                    level: 1,
+                    title: "Section One".into(),
+                    id: None,
+                    reftext: None,
+                }),
+            ],
+        };
+
+        let prepared = prepare_document(&document);
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble as first block");
+        };
+        assert_eq!(preamble.blocks.len(), 2);
+        let PreparedBlock::Paragraph(p1) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(p1.content, "First preamble paragraph.");
+        let PreparedBlock::Paragraph(p2) = &preamble.blocks[1] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(p2.content, "Second preamble paragraph.");
     }
 
     #[test]

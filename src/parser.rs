@@ -1,4 +1,4 @@
-use crate::ast::{Block, Document, Heading, ListItem, Paragraph, UnorderedList};
+use crate::ast::{Block, Document, Heading, ListItem, OrderedList, Paragraph, UnorderedList};
 use crate::inline::parse_inlines;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +56,18 @@ pub fn parse_document(input: &str) -> Document {
             );
             pending_anchor = None;
             blocks.push(Block::UnorderedList(list));
+            index += consumed_lines;
+            continue;
+        }
+
+        if let Some((list, consumed_lines)) = parse_ordered_list(&lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            pending_anchor = None;
+            blocks.push(Block::OrderedList(list));
             index += consumed_lines;
             continue;
         }
@@ -122,6 +134,53 @@ fn parse_unordered_list_item(line: &str) -> Option<&str> {
     }
 
     let remainder = &trimmed[marker.len_utf8()..];
+    if !remainder.starts_with(char::is_whitespace) {
+        return None;
+    }
+
+    let content = remainder.trim();
+    if content.is_empty() {
+        return None;
+    }
+
+    Some(content)
+}
+
+fn parse_ordered_list(lines: &[&str], index: usize) -> Option<(OrderedList, usize)> {
+    let mut items = Vec::new();
+    let mut consumed = 0;
+
+    while index + consumed < lines.len() {
+        let line = lines[index + consumed];
+        let Some(content) = parse_ordered_list_item(line) else {
+            break;
+        };
+
+        items.push(ListItem {
+            blocks: vec![Block::Paragraph(Paragraph {
+                inlines: parse_inlines(content),
+                lines: vec![content.to_owned()],
+                id: None,
+                reftext: None,
+            })],
+        });
+        consumed += 1;
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some((OrderedList { items }, consumed))
+    }
+}
+
+fn parse_ordered_list_item(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with('.') {
+        return None;
+    }
+
+    let remainder = &trimmed[1..];
     if !remainder.starts_with(char::is_whitespace) {
         return None;
     }
@@ -298,7 +357,8 @@ fn is_valid_anchor_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, Heading, Inline, InlineForm, InlineVariant, ListItem, Paragraph, UnorderedList,
+        Block, Heading, Inline, InlineForm, InlineVariant, ListItem, OrderedList, Paragraph,
+        UnorderedList,
     };
     use crate::parser::parse_document;
 
@@ -473,6 +533,83 @@ mod tests {
                 lines: vec!["Hello".into()],
                 id: Some("intro".into()),
                 reftext: Some("Introduction".into()),
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_ordered_lists() {
+        let document = parse_document(". first item\n. second item");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::OrderedList(OrderedList {
+                items: vec![
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("first item".into())],
+                            lines: vec!["first item".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("second item".into())],
+                            lines: vec!["second item".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                ],
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_document_title_without_sections() {
+        let document = parse_document("= My Title\n\nA paragraph.");
+
+        assert_eq!(
+            document.title,
+            Some(Heading {
+                level: 0,
+                title: "My Title".into(),
+                id: None,
+                reftext: None,
+            })
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("A paragraph.".into())],
+                lines: vec!["A paragraph.".into()],
+                id: None,
+                reftext: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn does_not_treat_second_level_zero_heading_as_title() {
+        let document = parse_document("= First Title\n\n= Second Title");
+
+        assert_eq!(
+            document.title,
+            Some(Heading {
+                level: 0,
+                title: "First Title".into(),
+                id: None,
+                reftext: None,
+            })
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Heading(Heading {
+                level: 0,
+                title: "Second Title".into(),
+                id: None,
+                reftext: None,
             })]
         );
     }

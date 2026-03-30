@@ -9,6 +9,7 @@ pub enum Block {
     Heading(Heading),
     Paragraph(Paragraph),
     UnorderedList(UnorderedList),
+    OrderedList(OrderedList),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +30,11 @@ pub struct Paragraph {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnorderedList {
+    pub items: Vec<ListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderedList {
     pub items: Vec<ListItem>,
 }
 

@@ -38,6 +38,22 @@ pub struct AsgBlock {
     pub inlines: Option<Vec<AsgInline>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Vec<AsgBlock>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marker: Option<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<AsgListItem>,
+    pub location: [Position; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AsgListItem {
+    pub name: &'static str,
+    #[serde(rename = "type")]
+    pub node_type: &'static str,
+    pub marker: &'static str,
+    pub principal: Vec<AsgInline>,
     pub location: [Position; 2],
 }
 
@@ -239,12 +255,69 @@ fn parse_blocks(
                 level: Some(heading.level),
                 inlines: None,
                 blocks: Some(child_blocks),
+                variant: None,
+                marker: None,
+                items: vec![],
                 location: [heading_range[0].clone(), end.clone()],
             });
             last_end = Some(end);
 
             index = child_start
                 + count_consumed_lines(&lines[child_start..], stop_at_level, heading.level);
+            continue;
+        }
+
+        if let Some(_) = parse_ordered_list_item_line(line) {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+
+            let mut items = Vec::new();
+            let mut list_end = None;
+            let mut list_index = index;
+
+            while list_index < lines.len() {
+                let list_line = lines[list_index];
+                let Some(content) = parse_ordered_list_item_line(list_line) else {
+                    break;
+                };
+                let item_line_no = line_offset + list_index;
+                let content_col = list_line.len() - content.len() + 1;
+                let item_end_col = list_line.trim_end().len();
+                let item_start = Position { line: item_line_no, col: 1 };
+                let item_end = Position { line: item_line_no, col: item_end_col };
+                let principal = parse_tck_inlines_at(content, item_line_no, content_col);
+                items.push(AsgListItem {
+                    name: "listItem",
+                    node_type: "block",
+                    marker: ".",
+                    principal,
+                    location: [item_start, item_end.clone()],
+                });
+                list_end = Some(item_end);
+                list_index += 1;
+            }
+
+            let list_start = Position { line: line_offset + index, col: 1 };
+            let list_end = list_end.unwrap_or_else(|| list_start.clone());
+            blocks.push(AsgBlock {
+                name: "list",
+                node_type: "block",
+                title: None,
+                level: None,
+                inlines: None,
+                blocks: None,
+                variant: Some("ordered"),
+                marker: Some("."),
+                items,
+                location: [list_start, list_end.clone()],
+            });
+            last_end = Some(list_end);
+            index = list_index;
             continue;
         }
 
@@ -318,10 +391,29 @@ fn flush_paragraph(
         level: None,
         inlines: Some(parse_tck_inlines_at(&value, start.line, start.col)),
         blocks: None,
+        variant: None,
+        marker: None,
+        items: vec![],
         location: [start, end.clone()],
     });
     *last_end = Some(end);
     paragraph_lines.clear();
+}
+
+fn parse_ordered_list_item_line(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with('.') {
+        return None;
+    }
+    let remainder = &trimmed[1..];
+    if !remainder.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let content = remainder.trim();
+    if content.is_empty() {
+        return None;
+    }
+    Some(content)
 }
 
 fn parse_attribute_entry(line: &str) -> Option<(String, String, usize)> {
@@ -656,6 +748,18 @@ fn offset_to_end_position(
 #[cfg(test)]
 mod tests {
     use crate::tck::{parse_tck_document, parse_tck_inlines, render_tck_json_from_request};
+
+    #[test]
+    fn renders_ordered_list_block() {
+        let document = parse_tck_document(". item one");
+        let json = serde_json::to_string_pretty(&document).expect("json");
+
+        assert!(json.contains("\"name\": \"list\""));
+        assert!(json.contains("\"variant\": \"ordered\""));
+        assert!(json.contains("\"marker\": \".\""));
+        assert!(json.contains("\"name\": \"listItem\""));
+        assert!(json.contains("\"value\": \"item one\""));
+    }
 
     #[test]
     fn renders_tck_document_with_header_and_paragraph() {

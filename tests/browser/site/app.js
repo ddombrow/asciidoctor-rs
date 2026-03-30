@@ -202,6 +202,25 @@ function renderBlock(block, parentSectionLevel = 0) {
     `;
   }
 
+  if (block.type === "ordered_list") {
+    const items = (block.items ?? [])
+      .map(
+        (item) => `
+          <li>
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel)}
+          </li>
+        `
+      )
+      .join("");
+    return `
+      <div class="olist arabic">
+        <ol class="arabic">
+          ${items}
+        </ol>
+      </div>
+    `;
+  }
+
   return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;
 }
 
