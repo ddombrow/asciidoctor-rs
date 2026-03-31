@@ -20,6 +20,8 @@ pub struct DocumentBlock {
     pub has_header: bool,
     pub no_header: bool,
     pub attributes: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<Revision>,
     pub blocks: Vec<PreparedBlock>,
     pub content_model: Option<ContentModel>,
     pub footnotes: Vec<Footnote>,
@@ -207,6 +209,17 @@ pub struct Author {
     pub email: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Revision {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remark: Option<String>,
+}
+
 pub fn prepare_document(document: &Document) -> DocumentBlock {
     let mut next_section_ids = Vec::new();
     let mut blocks = prepare_blocks(&document.blocks, true, &mut next_section_ids);
@@ -225,6 +238,7 @@ pub fn prepare_document(document: &Document) -> DocumentBlock {
         has_header: document.title.is_some(),
         no_header: document.title.is_none(),
         attributes: document.attributes.clone(),
+        revision: prepare_revision(document),
         blocks,
         content_model: Some(ContentModel::Compound),
         footnotes: Vec::new(),
@@ -257,6 +271,40 @@ fn prepare_authors(document: &Document) -> Vec<Author> {
         name,
         email,
     }]
+}
+
+fn prepare_revision(document: &Document) -> Option<Revision> {
+    let number = document
+        .attributes
+        .get("revnumber")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let date = document
+        .attributes
+        .get("revdate")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let remark = document
+        .attributes
+        .get("revremark")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    if number.is_none() && date.is_none() && remark.is_none() {
+        None
+    } else {
+        Some(Revision {
+            number,
+            date,
+            remark,
+        })
+    }
 }
 
 fn prepare_blocks(
@@ -927,6 +975,37 @@ mod tests {
     }
 
     #[test]
+    fn carries_revision_attributes_into_prepared_revision() {
+        let document = Document {
+            attributes: [
+                ("revnumber".to_owned(), "1.2".to_owned()),
+                ("revdate".to_owned(), "2026-03-31".to_owned()),
+                ("revremark".to_owned(), "Draft".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.revision,
+            Some(crate::prepare::Revision {
+                number: Some("1.2".into()),
+                date: Some("2026-03-31".into()),
+                remark: Some("Draft".into()),
+            })
+        );
+    }
+
+    #[test]
     fn carries_email_attribute_into_prepared_authors() {
         let document = Document {
             attributes: [("email".to_owned(), "jane@example.com".to_owned())]
@@ -1053,6 +1132,34 @@ mod tests {
 
         assert!(json.contains("\"email\": \"jane@example.com\""));
         assert!(json.contains("\"name\": \"Jane Doe\""));
+    }
+
+    #[test]
+    fn serializes_revision_attributes_into_revision_metadata() {
+        let document = Document {
+            attributes: [
+                ("revnumber".to_owned(), "1.2".to_owned()),
+                ("revdate".to_owned(), "2026-03-31".to_owned()),
+                ("revremark".to_owned(), "Draft".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+        let json = prepared_document_to_json(&prepared).expect("json serialization");
+
+        assert!(json.contains("\"revision\": {"));
+        assert!(json.contains("\"number\": \"1.2\""));
+        assert!(json.contains("\"date\": \"2026-03-31\""));
+        assert!(json.contains("\"remark\": \"Draft\""));
     }
 
     #[test]

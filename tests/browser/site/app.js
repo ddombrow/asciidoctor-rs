@@ -141,8 +141,7 @@ function renderDocument(document) {
 }
 
 function renderHeadMetadata(document) {
-  return (document.authors ?? [])
-    .flatMap((author) => {
+  const authorTags = (document.authors ?? []).flatMap((author) => {
       const tags = [];
       if (author?.name) {
         tags.push(`<meta name="author" content="${escapeHtml(author.name)}" />`);
@@ -151,8 +150,19 @@ function renderHeadMetadata(document) {
         tags.push(`<meta name="email" content="${escapeHtml(author.email)}" />`);
       }
       return tags;
-    })
-    .join("\n");
+    });
+  const revisionTags = [];
+  if (document.revision?.number) {
+    revisionTags.push(`<meta name="revnumber" content="${escapeHtml(document.revision.number)}" />`);
+  }
+  if (document.revision?.date) {
+    revisionTags.push(`<meta name="revdate" content="${escapeHtml(document.revision.date)}" />`);
+  }
+  if (document.revision?.remark) {
+    revisionTags.push(`<meta name="revremark" content="${escapeHtml(document.revision.remark)}" />`);
+  }
+
+  return [...authorTags, ...revisionTags].join("\n");
 }
 
 function renderBlocks(blocks, sectionLevel = 0) {

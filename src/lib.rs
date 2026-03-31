@@ -15,7 +15,7 @@ pub use inline::{SpannedInline, parse_inlines, parse_spanned_inlines};
 pub use parser::parse_document;
 pub use prepare::{
     AnchorInline, Author, CompoundBlock, DocumentBlock, DocumentSection, Footnote, LinkInline,
-    ParagraphBlock, PreparedBlock, PreparedInline, SectionBlock, SpanInline, TextInline,
+    ParagraphBlock, PreparedBlock, PreparedInline, Revision, SectionBlock, SpanInline, TextInline,
     XrefInline, prepare_document, prepared_document_to_json,
 };
 pub use render::{render_html, render_prepared_html};

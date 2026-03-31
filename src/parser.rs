@@ -724,6 +724,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_revision_attributes_in_document_header() {
+        let document = parse_document(
+            "= Document Title\n:revnumber: 1.2\n:revdate: 2026-03-31\n:revremark: Draft\n\ncontent",
+        );
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("revdate".to_owned(), "2026-03-31".to_owned()),
+                ("revnumber".to_owned(), "1.2".to_owned()),
+                ("revremark".to_owned(), "Draft".to_owned())
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
     fn ignores_leading_header_comments_before_document_title() {
         let document = parse_document("// comment one\n// comment two\n= Document Title\n\ncontent");
 

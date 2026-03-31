@@ -130,3 +130,25 @@ fn browser_prepare_document_exposes_email_attribute() {
         Some("jane@example.com")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_revision_attributes() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\n:revnumber: 1.2\n:revdate: 2026-03-31\n:revremark: Draft\n\nHello.\n",
+    )
+    .expect("value export should succeed");
+
+    let revision = get_property(&value, "revision");
+    assert_eq!(
+        get_property(&revision, "number").as_string().as_deref(),
+        Some("1.2")
+    );
+    assert_eq!(
+        get_property(&revision, "date").as_string().as_deref(),
+        Some("2026-03-31")
+    );
+    assert_eq!(
+        get_property(&revision, "remark").as_string().as_deref(),
+        Some("Draft")
+    );
+}

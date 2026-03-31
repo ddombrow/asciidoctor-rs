@@ -92,6 +92,46 @@ test("preview writes email metadata into head", async ({ page }) => {
   });
 });
 
+test("exports revision attributes in document metadata", async ({ page }) => {
+  const source =
+    "= Sample Document\n:revnumber: 1.2\n:revdate: 2026-03-31\n:revremark: Draft\n\nHello from the browser.\n";
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.attributes).toMatchObject({
+    revnumber: "1.2",
+    revdate: "2026-03-31",
+    revremark: "Draft"
+  });
+  expect(document.revision).toEqual({
+    number: "1.2",
+    date: "2026-03-31",
+    remark: "Draft"
+  });
+});
+
+test("preview writes revision metadata into head", async ({ page }) => {
+  const source =
+    "= Sample Document\n:revnumber: 1.2\n:revdate: 2026-03-31\n:revremark: Draft\n\nHello from the browser.\n";
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const metadata = await page.locator("#preview-frame").evaluate((iframe) => ({
+    revnumber:
+      iframe.contentDocument?.querySelector('meta[name="revnumber"]')?.getAttribute("content"),
+    revdate: iframe.contentDocument?.querySelector('meta[name="revdate"]')?.getAttribute("content"),
+    revremark:
+      iframe.contentDocument?.querySelector('meta[name="revremark"]')?.getAttribute("content")
+  }));
+
+  expect(metadata).toEqual({
+    revnumber: "1.2",
+    revdate: "2026-03-31",
+    revremark: "Draft"
+  });
+});
+
 test("exports prepared document as a JS value", async ({ page }) => {
   const document = await page.evaluate((input) => window.__prepareDocumentValue(input), sample);
 
