@@ -90,6 +90,20 @@ pub struct Position {
     pub col: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TckListKind {
+    Ordered,
+    Unordered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TckListMarker<'a> {
+    kind: TckListKind,
+    level: usize,
+    marker: &'static str,
+    content: &'a str,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TckRequest {
     pub contents: String,
@@ -267,7 +281,7 @@ fn parse_blocks(
             continue;
         }
 
-        if let Some(_) = parse_ordered_list_item_line(line) {
+        if let Some(list_marker) = parse_list_item_line(line).filter(|marker| marker.level == 1) {
             flush_paragraph(
                 &mut blocks,
                 &mut paragraph_start,
@@ -282,19 +296,22 @@ fn parse_blocks(
 
             while list_index < lines.len() {
                 let list_line = lines[list_index];
-                let Some(content) = parse_ordered_list_item_line(list_line) else {
+                let Some(marker) = parse_list_item_line(list_line) else {
                     break;
                 };
+                if marker.kind != list_marker.kind || marker.level != list_marker.level {
+                    break;
+                }
                 let item_line_no = line_offset + list_index;
-                let content_col = list_line.len() - content.len() + 1;
+                let content_col = list_line.len() - marker.content.len() + 1;
                 let item_end_col = list_line.trim_end().len();
                 let item_start = Position { line: item_line_no, col: 1 };
                 let item_end = Position { line: item_line_no, col: item_end_col };
-                let principal = parse_tck_inlines_at(content, item_line_no, content_col);
+                let principal = parse_tck_inlines_at(marker.content, item_line_no, content_col);
                 items.push(AsgListItem {
                     name: "listItem",
                     node_type: "block",
-                    marker: ".",
+                    marker: marker.marker,
                     principal,
                     location: [item_start, item_end.clone()],
                 });
@@ -311,8 +328,11 @@ fn parse_blocks(
                 level: None,
                 inlines: None,
                 blocks: None,
-                variant: Some("ordered"),
-                marker: Some("."),
+                variant: Some(match list_marker.kind {
+                    TckListKind::Ordered => "ordered",
+                    TckListKind::Unordered => "unordered",
+                }),
+                marker: Some(list_marker.marker),
                 items,
                 location: [list_start, list_end.clone()],
             });
@@ -400,19 +420,56 @@ fn flush_paragraph(
     paragraph_lines.clear();
 }
 
-fn parse_ordered_list_item_line(line: &str) -> Option<&str> {
+fn parse_list_item_line(line: &str) -> Option<TckListMarker<'_>> {
     let trimmed = line.trim_start();
-    if !trimmed.starts_with('.') {
-        return None;
+    let first = trimmed.chars().next()?;
+
+    match first {
+        '*' | '-' => {
+            let level = trimmed.chars().take_while(|&ch| ch == first).count();
+            let remainder = &trimmed[level..];
+            parse_list_content(remainder).map(|content| TckListMarker {
+                kind: TckListKind::Unordered,
+                level,
+                marker: if first == '*' { "*" } else { "-" },
+                content,
+            })
+        }
+        '.' => {
+            let level = trimmed.chars().take_while(|&ch| ch == '.').count();
+            let remainder = &trimmed[level..];
+            parse_list_content(remainder).map(|content| TckListMarker {
+                kind: TckListKind::Ordered,
+                level,
+                marker: ".",
+                content,
+            })
+        }
+        ch if ch.is_ascii_digit() => {
+            let digits = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
+            let remainder = trimmed.get(digits..)?;
+            let remainder = remainder.strip_prefix('.')?;
+            parse_list_content(remainder).map(|content| TckListMarker {
+                kind: TckListKind::Ordered,
+                level: 1,
+                marker: ".",
+                content,
+            })
+        }
+        _ => None,
     }
-    let remainder = &trimmed[1..];
+}
+
+fn parse_list_content(remainder: &str) -> Option<&str> {
     if !remainder.starts_with(char::is_whitespace) {
         return None;
     }
+
     let content = remainder.trim();
     if content.is_empty() {
         return None;
     }
+
     Some(content)
 }
 
@@ -758,6 +815,27 @@ mod tests {
         assert!(json.contains("\"variant\": \"ordered\""));
         assert!(json.contains("\"marker\": \".\""));
         assert!(json.contains("\"name\": \"listItem\""));
+        assert!(json.contains("\"value\": \"item one\""));
+    }
+
+    #[test]
+    fn renders_numeric_ordered_list_block() {
+        let document = parse_tck_document("1. item one");
+        let json = serde_json::to_string_pretty(&document).expect("json");
+
+        assert!(json.contains("\"variant\": \"ordered\""));
+        assert!(json.contains("\"marker\": \".\""));
+        assert!(json.contains("\"value\": \"item one\""));
+    }
+
+    #[test]
+    fn renders_unordered_list_block() {
+        let document = parse_tck_document("* item one");
+        let json = serde_json::to_string_pretty(&document).expect("json");
+
+        assert!(json.contains("\"name\": \"list\""));
+        assert!(json.contains("\"variant\": \"unordered\""));
+        assert!(json.contains("\"marker\": \"*\""));
         assert!(json.contains("\"value\": \"item one\""));
     }
 

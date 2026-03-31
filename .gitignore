@@ -9,3 +9,5 @@
 /tests/browser/site/sample.adoc
 
 *.log
+
+/.claude/*

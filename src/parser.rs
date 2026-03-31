@@ -7,6 +7,19 @@ struct PendingAnchor {
     reftext: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListKind {
+    Unordered,
+    Ordered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ParsedListMarker<'a> {
+    kind: ListKind,
+    level: usize,
+    content: &'a str,
+}
+
 pub fn parse_document(input: &str) -> Document {
     let lines: Vec<&str> = input.lines().collect();
     let mut blocks = Vec::new();
@@ -99,88 +112,203 @@ pub fn parse_document(input: &str) -> Document {
 }
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
-    let mut items = Vec::new();
-    let mut consumed = 0;
-
-    while index + consumed < lines.len() {
-        let line = lines[index + consumed];
-        let Some(content) = parse_unordered_list_item(line) else {
-            break;
-        };
-
-        items.push(ListItem {
-            blocks: vec![Block::Paragraph(Paragraph {
-                inlines: parse_inlines(content),
-                lines: vec![content.to_owned()],
-                id: None,
-                reftext: None,
-            })],
-        });
-        consumed += 1;
-    }
-
-    if items.is_empty() {
-        None
-    } else {
-        Some((UnorderedList { items }, consumed))
-    }
-}
-
-fn parse_unordered_list_item(line: &str) -> Option<&str> {
-    let trimmed = line.trim_start();
-    let marker = trimmed.chars().next()?;
-    if marker != '*' && marker != '-' {
-        return None;
-    }
-
-    let remainder = &trimmed[marker.len_utf8()..];
-    if !remainder.starts_with(char::is_whitespace) {
-        return None;
-    }
-
-    let content = remainder.trim();
-    if content.is_empty() {
-        return None;
-    }
-
-    Some(content)
+    parse_list(lines, index, ListKind::Unordered, 1).map(|(items, consumed)| {
+        (UnorderedList { items }, consumed)
+    })
 }
 
 fn parse_ordered_list(lines: &[&str], index: usize) -> Option<(OrderedList, usize)> {
+    parse_list(lines, index, ListKind::Ordered, 1).map(|(items, consumed)| {
+        (OrderedList { items }, consumed)
+    })
+}
+
+fn parse_list(lines: &[&str], index: usize, kind: ListKind, level: usize) -> Option<(Vec<ListItem>, usize)> {
+    let marker = parse_list_marker(*lines.get(index)?)?;
+    if marker.kind != kind || marker.level != level {
+        return None;
+    }
+
     let mut items = Vec::new();
     let mut consumed = 0;
 
     while index + consumed < lines.len() {
-        let line = lines[index + consumed];
-        let Some(content) = parse_ordered_list_item(line) else {
+        let Some(next_marker) = parse_list_marker(lines[index + consumed]) else {
             break;
         };
+        if next_marker.kind != kind || next_marker.level != level {
+            break;
+        }
 
-        items.push(ListItem {
-            blocks: vec![Block::Paragraph(Paragraph {
-                inlines: parse_inlines(content),
-                lines: vec![content.to_owned()],
-                id: None,
-                reftext: None,
-            })],
-        });
-        consumed += 1;
+        let (item, item_consumed) = parse_list_item(lines, index + consumed, kind, level)?;
+        items.push(item);
+        consumed += item_consumed;
+
+        let blank_lines = count_blank_lines(&lines[index + consumed..]);
+        if blank_lines == 0 {
+            continue;
+        }
+
+        let next_index = index + consumed + blank_lines;
+        let Some(next_line) = lines.get(next_index) else {
+            break;
+        };
+        let Some(next_marker) = parse_list_marker(next_line) else {
+            break;
+        };
+        if next_marker.kind != kind || next_marker.level != level {
+            break;
+        }
+        consumed += blank_lines;
     }
 
-    if items.is_empty() {
-        None
-    } else {
-        Some((OrderedList { items }, consumed))
-    }
+    Some((items, consumed))
 }
 
-fn parse_ordered_list_item(line: &str) -> Option<&str> {
-    let trimmed = line.trim_start();
-    if !trimmed.starts_with('.') {
+fn parse_list_item(
+    lines: &[&str],
+    index: usize,
+    kind: ListKind,
+    level: usize,
+) -> Option<(ListItem, usize)> {
+    let marker = parse_list_marker(*lines.get(index)?)?;
+    if marker.kind != kind || marker.level != level {
         return None;
     }
 
-    let remainder = &trimmed[1..];
+    let mut blocks = vec![Block::Paragraph(make_paragraph(vec![marker.content.to_owned()]))];
+    let mut consumed = 1;
+
+    while index + consumed < lines.len() {
+        let line = lines[index + consumed];
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            break;
+        }
+
+        if trimmed == "+" {
+            if let Some((block, continuation_consumed)) =
+                parse_list_item_continuation_block(lines, index + consumed + 1, level)
+            {
+                blocks.push(block);
+                consumed += 1 + continuation_consumed;
+                continue;
+            }
+
+            consumed += 1;
+            break;
+        }
+
+        if let Some(next_marker) = parse_list_marker(line) {
+            if next_marker.level > level {
+                let (block, nested_consumed) =
+                    parse_list_block(lines, index + consumed, next_marker.kind, next_marker.level)?;
+                blocks.push(block);
+                consumed += nested_consumed;
+                continue;
+            }
+
+            break;
+        }
+
+        append_to_last_paragraph(&mut blocks, line.trim_start().to_owned());
+        consumed += 1;
+    }
+
+    Some((ListItem { blocks }, consumed))
+}
+
+fn parse_list_item_continuation_block(
+    lines: &[&str],
+    index: usize,
+    parent_level: usize,
+) -> Option<(Block, usize)> {
+    let blank_lines = count_blank_lines(&lines[index..]);
+    let start = index + blank_lines;
+    let line = *lines.get(start)?;
+
+    if let Some(marker) = parse_list_marker(line) {
+        if marker.level > parent_level {
+            let (block, consumed) = parse_list_block(lines, start, marker.kind, marker.level)?;
+            return Some((block, blank_lines + consumed));
+        }
+
+        return None;
+    }
+
+    let mut paragraph_lines = Vec::new();
+    let mut consumed = blank_lines;
+    let mut cursor = start;
+
+    while let Some(line) = lines.get(cursor) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "+" {
+            break;
+        }
+        if parse_list_marker(line).is_some() {
+            break;
+        }
+
+        paragraph_lines.push(line.trim_start().to_owned());
+        cursor += 1;
+        consumed += 1;
+    }
+
+    if paragraph_lines.is_empty() {
+        None
+    } else {
+        Some((Block::Paragraph(make_paragraph(paragraph_lines)), consumed))
+    }
+}
+
+fn parse_list_block(lines: &[&str], index: usize, kind: ListKind, level: usize) -> Option<(Block, usize)> {
+    let (items, consumed) = parse_list(lines, index, kind, level)?;
+    let block = match kind {
+        ListKind::Unordered => Block::UnorderedList(UnorderedList { items }),
+        ListKind::Ordered => Block::OrderedList(OrderedList { items }),
+    };
+    Some((block, consumed))
+}
+
+fn parse_list_marker(line: &str) -> Option<ParsedListMarker<'_>> {
+    let trimmed = line.trim_start();
+    let first = trimmed.chars().next()?;
+
+    match first {
+        '*' | '-' => {
+            let level = trimmed.chars().take_while(|&ch| ch == first).count();
+            let remainder = &trimmed[first.len_utf8() * level..];
+            parse_list_content(remainder).map(|content| ParsedListMarker {
+                kind: ListKind::Unordered,
+                level,
+                content,
+            })
+        }
+        '.' => {
+            let level = trimmed.chars().take_while(|&ch| ch == '.').count();
+            let remainder = &trimmed[level..];
+            parse_list_content(remainder).map(|content| ParsedListMarker {
+                kind: ListKind::Ordered,
+                level,
+                content,
+            })
+        }
+        ch if ch.is_ascii_digit() => {
+            let digits = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
+            let remainder = trimmed.get(digits..)?;
+            let remainder = remainder.strip_prefix('.')?;
+            parse_list_content(remainder).map(|content| ParsedListMarker {
+                kind: ListKind::Ordered,
+                level: 1,
+                content,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn parse_list_content(remainder: &str) -> Option<&str> {
     if !remainder.starts_with(char::is_whitespace) {
         return None;
     }
@@ -191,6 +319,29 @@ fn parse_ordered_list_item(line: &str) -> Option<&str> {
     }
 
     Some(content)
+}
+
+fn count_blank_lines(lines: &[&str]) -> usize {
+    lines.iter().take_while(|line| line.trim().is_empty()).count()
+}
+
+fn make_paragraph(lines: Vec<String>) -> Paragraph {
+    Paragraph {
+        inlines: parse_inlines(&lines.join("\n")),
+        lines,
+        id: None,
+        reftext: None,
+    }
+}
+
+fn append_to_last_paragraph(blocks: &mut Vec<Block>, line: String) {
+    if let Some(Block::Paragraph(paragraph)) = blocks.last_mut() {
+        paragraph.lines.push(line);
+        paragraph.inlines = parse_inlines(&paragraph.lines.join("\n"));
+        return;
+    }
+
+    blocks.push(Block::Paragraph(make_paragraph(vec![line])));
 }
 
 fn flush_paragraph(
@@ -567,6 +718,35 @@ mod tests {
     }
 
     #[test]
+    fn parses_numeric_ordered_lists() {
+        let document = parse_document("1. first item\n2. second item");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::OrderedList(OrderedList {
+                items: vec![
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("first item".into())],
+                            lines: vec!["first item".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("second item".into())],
+                            lines: vec!["second item".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                ],
+            })]
+        );
+    }
+
+    #[test]
     fn parses_document_title_without_sections() {
         let document = parse_document("= My Title\n\nA paragraph.");
 
@@ -629,6 +809,84 @@ mod tests {
                             id: None,
                             reftext: None,
                         })],
+                    },
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("second item".into())],
+                            lines: vec!["second item".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                ],
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_nested_lists() {
+        let document = parse_document("* parent\n** child\n* sibling");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::UnorderedList(UnorderedList {
+                items: vec![
+                    ListItem {
+                        blocks: vec![
+                            Block::Paragraph(Paragraph {
+                                inlines: vec![Inline::Text("parent".into())],
+                                lines: vec!["parent".into()],
+                                id: None,
+                                reftext: None,
+                            }),
+                            Block::UnorderedList(UnorderedList {
+                                items: vec![ListItem {
+                                    blocks: vec![Block::Paragraph(Paragraph {
+                                        inlines: vec![Inline::Text("child".into())],
+                                        lines: vec!["child".into()],
+                                        id: None,
+                                        reftext: None,
+                                    })],
+                                }],
+                            }),
+                        ],
+                    },
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            inlines: vec![Inline::Text("sibling".into())],
+                            lines: vec!["sibling".into()],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                ],
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_list_continuation_paragraphs() {
+        let document = parse_document("1. first item\n+\ncontinued paragraph\n2. second item");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::OrderedList(OrderedList {
+                items: vec![
+                    ListItem {
+                        blocks: vec![
+                            Block::Paragraph(Paragraph {
+                                inlines: vec![Inline::Text("first item".into())],
+                                lines: vec!["first item".into()],
+                                id: None,
+                                reftext: None,
+                            }),
+                            Block::Paragraph(Paragraph {
+                                inlines: vec![Inline::Text("continued paragraph".into())],
+                                lines: vec!["continued paragraph".into()],
+                                id: None,
+                                reftext: None,
+                            }),
+                        ],
                     },
                     ListItem {
                         blocks: vec![Block::Paragraph(Paragraph {

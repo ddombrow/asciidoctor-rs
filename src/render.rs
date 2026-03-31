@@ -620,4 +620,57 @@ mod tests {
         assert!(html.contains("<li>"));
         assert!(html.contains("<p>first item</p>"));
     }
+
+    #[test]
+    fn renders_nested_lists_and_item_continuations() {
+        let document = Document {
+            title: None,
+            blocks: vec![Block::OrderedList(OrderedList {
+                items: vec![
+                    ListItem {
+                        blocks: vec![
+                            Block::Paragraph(Paragraph {
+                                lines: vec!["first item".into()],
+                                inlines: vec![Inline::Text("first item".into())],
+                                id: None,
+                                reftext: None,
+                            }),
+                            Block::UnorderedList(UnorderedList {
+                                items: vec![ListItem {
+                                    blocks: vec![Block::Paragraph(Paragraph {
+                                        lines: vec!["nested item".into()],
+                                        inlines: vec![Inline::Text("nested item".into())],
+                                        id: None,
+                                        reftext: None,
+                                    })],
+                                }],
+                            }),
+                            Block::Paragraph(Paragraph {
+                                lines: vec!["continued paragraph".into()],
+                                inlines: vec![Inline::Text("continued paragraph".into())],
+                                id: None,
+                                reftext: None,
+                            }),
+                        ],
+                    },
+                    ListItem {
+                        blocks: vec![Block::Paragraph(Paragraph {
+                            lines: vec!["second item".into()],
+                            inlines: vec![Inline::Text("second item".into())],
+                            id: None,
+                            reftext: None,
+                        })],
+                    },
+                ],
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div class=\"olist arabic\">"));
+        assert!(html.contains("<div class=\"ulist\">"));
+        assert!(html.contains("<p>nested item</p>"));
+        assert!(html.contains("<p>continued paragraph</p>"));
+        assert!(html.contains("<p>second item</p>"));
+    }
 }
