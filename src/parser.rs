@@ -712,6 +712,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_email_attribute_in_document_header() {
+        let document = parse_document("= Document Title\n:email: jane@example.com\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [("email".to_owned(), "jane@example.com".to_owned())]
+                .into_iter()
+                .collect()
+        );
+    }
+
+    #[test]
     fn ignores_leading_header_comments_before_document_title() {
         let document = parse_document("// comment one\n// comment two\n= Document Title\n\ncontent");
 

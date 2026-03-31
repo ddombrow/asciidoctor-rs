@@ -234,19 +234,28 @@ pub fn prepare_document(document: &Document) -> DocumentBlock {
 }
 
 fn prepare_authors(document: &Document) -> Vec<Author> {
-    let Some(name) = document
+    let name = document
         .attributes
         .get("author")
         .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    else {
+        .map(str::to_owned);
+    let email = document
+        .attributes
+        .get("email")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    if name.is_none() && email.is_none() {
         return Vec::new();
-    };
+    }
 
     vec![Author {
-        name: Some(name.to_owned()),
-        email: None,
+        name,
+        email,
     }]
 }
 
@@ -918,6 +927,61 @@ mod tests {
     }
 
     #[test]
+    fn carries_email_attribute_into_prepared_authors() {
+        let document = Document {
+            attributes: [("email".to_owned(), "jane@example.com".to_owned())]
+                .into_iter()
+                .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.authors,
+            vec![crate::prepare::Author {
+                name: None,
+                email: Some("jane@example.com".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn merges_author_and_email_attributes_into_single_author() {
+        let document = Document {
+            attributes: [
+                ("author".to_owned(), "Jane Doe".to_owned()),
+                ("email".to_owned(), "jane@example.com".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.authors,
+            vec![crate::prepare::Author {
+                name: Some("Jane Doe".into()),
+                email: Some("jane@example.com".into()),
+            }]
+        );
+    }
+
+    #[test]
     fn serializes_document_attributes_at_top_level() {
         let document = Document {
             attributes: [
@@ -963,6 +1027,31 @@ mod tests {
 
         assert!(json.contains("\"author\": \"Jane Doe\""));
         assert!(json.contains("\"authors\": ["));
+        assert!(json.contains("\"name\": \"Jane Doe\""));
+    }
+
+    #[test]
+    fn serializes_email_attribute_into_authors_metadata() {
+        let document = Document {
+            attributes: [
+                ("author".to_owned(), "Jane Doe".to_owned()),
+                ("email".to_owned(), "jane@example.com".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+        let json = prepared_document_to_json(&prepared).expect("json serialization");
+
+        assert!(json.contains("\"email\": \"jane@example.com\""));
         assert!(json.contains("\"name\": \"Jane Doe\""));
     }
 

@@ -56,6 +56,42 @@ test("preview writes author metadata into head", async ({ page }) => {
   expect(authorMeta).toBe("Jane Doe");
 });
 
+test("exports email attribute in document metadata", async ({ page }) => {
+  const source =
+    "= Sample Document\n:author: Jane Doe\n:email: jane@example.com\n\nHello from the browser.\n";
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.attributes).toMatchObject({
+    author: "Jane Doe",
+    email: "jane@example.com"
+  });
+  expect(document.authors).toEqual([
+    {
+      name: "Jane Doe",
+      email: "jane@example.com"
+    }
+  ]);
+});
+
+test("preview writes email metadata into head", async ({ page }) => {
+  const source =
+    "= Sample Document\n:author: Jane Doe\n:email: jane@example.com\n\nHello from the browser.\n";
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const metadata = await page.locator("#preview-frame").evaluate((iframe) => ({
+    author: iframe.contentDocument?.querySelector('meta[name="author"]')?.getAttribute("content"),
+    email: iframe.contentDocument?.querySelector('meta[name="email"]')?.getAttribute("content")
+  }));
+
+  expect(metadata).toEqual({
+    author: "Jane Doe",
+    email: "jane@example.com"
+  });
+});
+
 test("exports prepared document as a JS value", async ({ page }) => {
   const document = await page.evaluate((input) => window.__prepareDocumentValue(input), sample);
 

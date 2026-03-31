@@ -103,3 +103,30 @@ fn browser_prepare_document_exposes_author_attribute() {
         Some("Jane Doe")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_email_attribute() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\n:author: Jane Doe\n:email: jane@example.com\n\nHello.\n",
+    )
+    .expect("value export should succeed");
+
+    let authors = Array::from(&get_property(&value, "authors"));
+    assert_eq!(authors.length(), 1);
+
+    let first_author = authors.get(0);
+    assert_eq!(
+        get_property(&first_author, "name").as_string().as_deref(),
+        Some("Jane Doe")
+    );
+    assert_eq!(
+        get_property(&first_author, "email").as_string().as_deref(),
+        Some("jane@example.com")
+    );
+
+    let attributes = get_property(&value, "attributes");
+    assert_eq!(
+        get_property(&attributes, "email").as_string().as_deref(),
+        Some("jane@example.com")
+    );
+}
