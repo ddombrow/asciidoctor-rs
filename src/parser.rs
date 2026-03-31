@@ -24,13 +24,11 @@ struct ParsedListMarker<'a> {
 
 pub fn parse_document(input: &str) -> Document {
     let lines: Vec<&str> = input.lines().collect();
+    let (mut title, attributes, mut index) = parse_document_header(&lines);
     let mut blocks = Vec::new();
-    let mut attributes = BTreeMap::new();
     let mut current_paragraph = Vec::new();
     let mut current_paragraph_anchor = None;
     let mut pending_anchor = None;
-    let mut title = None;
-    let mut index = 0;
 
     while index < lines.len() {
         let line = lines[index];
@@ -56,25 +54,10 @@ pub fn parse_document(input: &str) -> Document {
 
             if heading.level == 0 && title.is_none() && blocks.is_empty() {
                 title = Some(heading);
-                index += consumed_lines;
-
-                while index < lines.len() {
-                    let line = lines[index];
-                    if line.trim().is_empty() {
-                        index += 1;
-                        break;
-                    }
-
-                    let Some((name, value)) = parse_attribute_entry(line) else {
-                        break;
-                    };
-                    attributes.insert(name, value);
-                    index += 1;
-                }
             } else {
                 blocks.push(Block::Heading(heading));
-                index += consumed_lines;
             }
+            index += consumed_lines;
             continue;
         }
 
@@ -130,6 +113,44 @@ pub fn parse_document(input: &str) -> Document {
         attributes,
         blocks,
     }
+}
+
+fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, String>, usize) {
+    let mut attributes = BTreeMap::new();
+    let mut index = 0;
+
+    while index < lines.len() && is_comment_line(lines[index]) {
+        index += 1;
+    }
+
+    let title = match parse_heading(lines, index) {
+        Some((heading, consumed_lines)) if heading.level == 0 => {
+            index += consumed_lines;
+            Some(heading)
+        }
+        _ => return (None, attributes, index),
+    };
+
+    while index < lines.len() {
+        let line = lines[index];
+        if line.trim().is_empty() {
+            index += 1;
+            break;
+        }
+
+        if is_comment_line(line) {
+            index += 1;
+            continue;
+        }
+
+        let Some((name, value)) = parse_attribute_entry(line) else {
+            break;
+        };
+        attributes.insert(name, value);
+        index += 1;
+    }
+
+    (title, attributes, index)
 }
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
@@ -462,6 +483,10 @@ fn parse_attribute_entry(line: &str) -> Option<(String, String)> {
     Some((name.to_owned(), stripped[separator + 1..].trim_start().to_owned()))
 }
 
+fn is_comment_line(line: &str) -> bool {
+    line.trim_start().starts_with("//")
+}
+
 fn apply_anchor_to_heading(mut heading: Heading, anchor: Option<PendingAnchor>) -> Heading {
     if let Some(anchor) = anchor {
         heading.id = Some(anchor.id);
@@ -668,6 +693,67 @@ mod tests {
             vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("content".into())],
                 lines: vec!["content".into()],
+                id: None,
+                reftext: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn ignores_leading_header_comments_before_document_title() {
+        let document = parse_document("// comment one\n// comment two\n= Document Title\n\ncontent");
+
+        assert_eq!(
+            document.title,
+            Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            })
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("content".into())],
+                lines: vec!["content".into()],
+                id: None,
+                reftext: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn ignores_header_comments_between_title_and_attributes() {
+        let document =
+            parse_document("= Document Title\n// comment\n:toc: left\n// another\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [("toc".to_owned(), "left".to_owned())].into_iter().collect()
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("content".into())],
+                lines: vec!["content".into()],
+                id: None,
+                reftext: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn ignores_leading_header_comments_without_title() {
+        let document = parse_document("// comment one\n// comment two\nbody");
+
+        assert_eq!(document.title, None);
+        assert!(document.attributes.is_empty());
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("body".into())],
+                lines: vec!["body".into()],
                 id: None,
                 reftext: None,
             })]

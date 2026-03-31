@@ -50,3 +50,33 @@ fn browser_prepare_document_value_smoke_test() {
         Some("1")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_ignores_header_comments() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "// lead comment\n= Sample Document\n// header comment\n:toc: left\n\nHello.\n",
+    )
+    .expect("value export should succeed");
+
+    assert_eq!(
+        get_property(&value, "title").as_string().as_deref(),
+        Some("Sample Document")
+    );
+
+    let attributes = get_property(&value, "attributes");
+    assert_eq!(
+        get_property(&attributes, "toc").as_string().as_deref(),
+        Some("left")
+    );
+
+    let blocks = Array::from(&get_property(&value, "blocks"));
+    assert_eq!(blocks.length(), 1);
+
+    let preamble = blocks.get(0);
+    let preamble_blocks = Array::from(&get_property(&preamble, "blocks"));
+    let paragraph = preamble_blocks.get(0);
+    assert_eq!(
+        get_property(&paragraph, "content").as_string().as_deref(),
+        Some("Hello.")
+    );
+}

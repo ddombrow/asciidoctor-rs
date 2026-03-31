@@ -140,16 +140,25 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
     let mut attributes = BTreeMap::new();
     let mut header = None;
 
-    if let Some((title, title_range, consumed)) = parse_heading_line(&lines, 0, 1) {
+    while index < lines.len() && is_comment_line(lines[index]) {
+        index += 1;
+    }
+
+    if let Some((title, title_range, consumed)) = parse_heading_line(&lines, index, 1) {
         if title.level == 0 {
             let mut header_end = title_range[1].clone();
-            index = consumed;
+            index += consumed;
 
             while index < lines.len() {
                 let line = lines[index];
                 if line.trim().is_empty() {
                     index += 1;
                     break;
+                }
+
+                if is_comment_line(line) {
+                    index += 1;
+                    continue;
                 }
 
                 if let Some((name, value, end_col)) = parse_attribute_entry(line) {
@@ -471,6 +480,10 @@ fn parse_list_content(remainder: &str) -> Option<&str> {
     }
 
     Some(content)
+}
+
+fn is_comment_line(line: &str) -> bool {
+    line.trim_start().starts_with("//")
 }
 
 fn parse_attribute_entry(line: &str) -> Option<(String, String, usize)> {
@@ -848,6 +861,19 @@ mod tests {
         assert!(json.contains("\"value\": \"Document Title\""));
         assert!(json.contains("\"name\": \"paragraph\""));
         assert!(json.contains("\"value\": \"body\""));
+    }
+
+    #[test]
+    fn ignores_header_comments_in_tck_document_parsing() {
+        let document =
+            parse_tck_document("// comment\n= Document Title\n// note\n:toc: left\n\nbody");
+
+        assert_eq!(
+            document.header.as_ref().and_then(|header| header.title.first()).map(|title| title.value.as_str()),
+            Some("Document Title")
+        );
+        assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
+        assert_eq!(document.blocks.len(), 1);
     }
 
     #[test]

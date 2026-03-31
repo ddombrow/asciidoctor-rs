@@ -177,3 +177,28 @@ test("preview renders unordered lists", async ({ page }) => {
   await expect(items.nth(0)).toContainText("first item");
   await expect(items.nth(1)).toContainText("second item");
 });
+
+test("preview ignores header comments and preserves header attributes", async ({ page }) => {
+  const source = `// leading comment
+= Sample Document
+// comment between title and attrs
+:toc: left
+
+Hello from the browser.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.title).toBe("Sample Document");
+  expect(document.attributes).toEqual({ toc: "left" });
+  expect(document.blocks[0].type).toBe("preamble");
+  expect(document.blocks[0].blocks[0].content).toBe("Hello from the browser.");
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("#header h1")).toHaveText("Sample Document");
+  await expect(frame.locator("#content p").first()).toHaveText("Hello from the browser.");
+  await expect(frame.locator("text=leading comment")).toHaveCount(0);
+});
