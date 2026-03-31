@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::ast::{Block, Document, Heading, ListItem, OrderedList, Paragraph, UnorderedList};
 use crate::inline::parse_inlines;
 
@@ -23,6 +25,7 @@ struct ParsedListMarker<'a> {
 pub fn parse_document(input: &str) -> Document {
     let lines: Vec<&str> = input.lines().collect();
     let mut blocks = Vec::new();
+    let mut attributes = BTreeMap::new();
     let mut current_paragraph = Vec::new();
     let mut current_paragraph_anchor = None;
     let mut pending_anchor = None;
@@ -53,11 +56,25 @@ pub fn parse_document(input: &str) -> Document {
 
             if heading.level == 0 && title.is_none() && blocks.is_empty() {
                 title = Some(heading);
+                index += consumed_lines;
+
+                while index < lines.len() {
+                    let line = lines[index];
+                    if line.trim().is_empty() {
+                        index += 1;
+                        break;
+                    }
+
+                    let Some((name, value)) = parse_attribute_entry(line) else {
+                        break;
+                    };
+                    attributes.insert(name, value);
+                    index += 1;
+                }
             } else {
                 blocks.push(Block::Heading(heading));
+                index += consumed_lines;
             }
-
-            index += consumed_lines;
             continue;
         }
 
@@ -108,7 +125,11 @@ pub fn parse_document(input: &str) -> Document {
         &mut current_paragraph_anchor,
     );
 
-    Document { title, blocks }
+    Document {
+        title,
+        attributes,
+        blocks,
+    }
 }
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
@@ -430,6 +451,17 @@ fn parse_setext_heading(lines: &[&str], index: usize) -> Option<(Heading, usize)
     ))
 }
 
+fn parse_attribute_entry(line: &str) -> Option<(String, String)> {
+    let stripped = line.strip_prefix(':')?;
+    let separator = stripped.find(':')?;
+    let name = stripped[..separator].trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    Some((name.to_owned(), stripped[separator + 1..].trim_start().to_owned()))
+}
+
 fn apply_anchor_to_heading(mut heading: Heading, anchor: Option<PendingAnchor>) -> Heading {
     if let Some(anchor) = anchor {
         heading.id = Some(anchor.id);
@@ -602,6 +634,78 @@ mod tests {
             vec![Block::Heading(Heading {
                 level: 1,
                 title: "Section A".into(),
+                id: None,
+                reftext: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_document_header_attributes_after_title() {
+        let document =
+            parse_document("= Document Title\n:toc: left\n:source-highlighter: rouge\n\ncontent");
+
+        assert_eq!(
+            document.title,
+            Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            })
+        );
+        assert_eq!(
+            document.attributes,
+            [
+                ("source-highlighter".to_owned(), "rouge".to_owned()),
+                ("toc".to_owned(), "left".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("content".into())],
+                lines: vec!["content".into()],
+                id: None,
+                reftext: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn stops_parsing_header_attributes_at_first_non_attribute_line() {
+        let document = parse_document("= Document Title\n:toc: left\nintro text\n:ignored: value");
+
+        assert_eq!(
+            document.attributes,
+            [("toc".to_owned(), "left".to_owned())].into_iter().collect()
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text("intro text\n:ignored: value".into())],
+                lines: vec!["intro text".into(), ":ignored: value".into()],
+                id: None,
+                reftext: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn stops_parsing_header_attributes_after_blank_line() {
+        let document = parse_document("= Document Title\n:toc: left\n\n:body-attr: value");
+
+        assert_eq!(
+            document.attributes,
+            [("toc".to_owned(), "left".to_owned())].into_iter().collect()
+        );
+        assert_eq!(
+            document.blocks,
+            vec![Block::Paragraph(Paragraph {
+                inlines: vec![Inline::Text(":body-attr: value".into())],
+                lines: vec![":body-attr: value".into()],
                 id: None,
                 reftext: None,
             })]

@@ -224,7 +224,7 @@ pub fn prepare_document(document: &Document) -> DocumentBlock {
             .unwrap_or_default(),
         has_header: document.title.is_some(),
         no_header: document.title.is_none(),
-        attributes: BTreeMap::new(),
+        attributes: document.attributes.clone(),
         blocks,
         content_model: Some(ContentModel::Compound),
         footnotes: Vec::new(),
@@ -763,6 +763,7 @@ mod tests {
     #[test]
     fn prepares_nested_sections_for_react_facing_output() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Document Title".into(),
@@ -814,6 +815,7 @@ mod tests {
         assert_eq!(prepared.node_type, "document");
         assert_eq!(prepared.title, "Document Title");
         assert_eq!(prepared.content_model, Some(ContentModel::Compound));
+        assert!(prepared.attributes.is_empty());
         assert!(prepared.footnotes.is_empty());
         assert!(prepared.authors.is_empty());
         assert_eq!(prepared.sections.len(), 2);
@@ -852,8 +854,56 @@ mod tests {
     }
 
     #[test]
+    fn carries_document_attributes_into_prepared_output() {
+        let document = Document {
+            attributes: [("toc".to_owned(), "left".to_owned())].into_iter().collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.attributes.get("toc").map(String::as_str),
+            Some("left")
+        );
+    }
+
+    #[test]
+    fn serializes_document_attributes_at_top_level() {
+        let document = Document {
+            attributes: [
+                ("source-highlighter".to_owned(), "rouge".to_owned()),
+                ("toc".to_owned(), "left".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+        let json = prepared_document_to_json(&prepared).expect("json serialization");
+
+        assert!(json.contains("\"attributes\": {"));
+        assert!(json.contains("\"toc\": \"left\""));
+        assert!(json.contains("\"source-highlighter\": \"rouge\""));
+    }
+
+    #[test]
     fn prepares_paragraph_content_as_simple_blocks() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("first line\nsecond line".into())],
@@ -881,6 +931,7 @@ mod tests {
     #[test]
     fn serializes_with_react_asciidoc_style_field_names() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Document Title".into(),
@@ -908,6 +959,7 @@ mod tests {
     #[test]
     fn prepares_inline_spans_for_wasm_facing_output() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["before *strong* after".into()],
@@ -939,6 +991,7 @@ mod tests {
     #[test]
     fn prepares_links_for_wasm_facing_output() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["See https://example.org[example]".into()],
@@ -975,6 +1028,7 @@ mod tests {
     #[test]
     fn prepares_xrefs_for_wasm_facing_output() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["See <<install,Installation>>".into()],
@@ -1011,6 +1065,7 @@ mod tests {
     #[test]
     fn resolves_xrefs_to_prepared_section_ids_and_titles() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Sample Document".into(),
@@ -1065,6 +1120,7 @@ mod tests {
     #[test]
     fn uses_explicit_section_anchor_for_id_and_xref_resolution() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![
                 Block::Paragraph(Paragraph {
@@ -1118,6 +1174,7 @@ mod tests {
     #[test]
     fn resolves_xrefs_to_inline_anchor_targets() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["See <<bookmark-a>> and [[bookmark-a,Marked Spot]]look here".into()],
@@ -1165,6 +1222,7 @@ mod tests {
     #[test]
     fn preserves_phrase_anchor_text_and_uses_it_for_xrefs() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["See <<bookmark-b>> and [#bookmark-b]#visible text#".into()],
@@ -1220,6 +1278,7 @@ mod tests {
     #[test]
     fn sets_has_header_true_when_title_present() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "My Title".into(),
@@ -1239,6 +1298,7 @@ mod tests {
     #[test]
     fn sets_no_header_true_when_no_title() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![],
         };
@@ -1253,6 +1313,7 @@ mod tests {
     #[test]
     fn does_not_create_preamble_when_no_content_precedes_first_section() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Doc".into(),
@@ -1287,6 +1348,7 @@ mod tests {
     #[test]
     fn wraps_multiple_blocks_before_first_section_in_preamble() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Doc".into(),
@@ -1334,6 +1396,7 @@ mod tests {
     #[test]
     fn prepares_unordered_lists() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::UnorderedList(UnorderedList {
                 items: vec![ListItem {

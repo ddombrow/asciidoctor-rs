@@ -161,6 +161,7 @@ mod tests {
     #[test]
     fn renders_document_title_sections_and_paragraphs() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Document Title".into(),
@@ -208,6 +209,7 @@ mod tests {
     #[test]
     fn escapes_html_in_text_nodes() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Fish & Chips".into(),
@@ -231,6 +233,7 @@ mod tests {
     #[test]
     fn rendering_prepared_document_keeps_nested_sections() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Doc".into(),
@@ -264,6 +267,7 @@ mod tests {
     #[test]
     fn renders_strong_and_emphasis_inline_markup() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["before *strong* and _emphasis_ after".into()],
@@ -295,6 +299,7 @@ mod tests {
     #[test]
     fn renders_monospace_inline_markup() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["Run `cargo test` now".into()],
@@ -319,6 +324,7 @@ mod tests {
     #[test]
     fn renders_escaped_markup_as_literal_text() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec![r"\*not strong* and \_not emphasis_".into()],
@@ -336,6 +342,7 @@ mod tests {
     #[test]
     fn renders_links() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["See https://example.org[example] and http://foo.com".into()],
@@ -369,6 +376,7 @@ mod tests {
     #[test]
     fn renders_links_with_window_targets() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["See https://example.org[example^]".into()],
@@ -392,6 +400,7 @@ mod tests {
     #[test]
     fn renders_xrefs() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["See <<install,Installation>>".into()],
@@ -416,6 +425,7 @@ mod tests {
     #[test]
     fn renders_xrefs_with_resolved_section_ids() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "Sample Document".into(),
@@ -454,6 +464,7 @@ mod tests {
     #[test]
     fn renders_paragraph_anchor_ids() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["Hello".into()],
@@ -470,6 +481,7 @@ mod tests {
     #[test]
     fn renders_inline_anchor_points() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["[[bookmark-a]]look here".into()],
@@ -493,6 +505,7 @@ mod tests {
     #[test]
     fn renders_phrase_applied_inline_anchor_text() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["[#bookmark-b]#visible text#".into()],
@@ -513,6 +526,7 @@ mod tests {
     #[test]
     fn renders_empty_header_div_when_no_title() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::Paragraph(Paragraph {
                 lines: vec!["hello".into()],
@@ -531,6 +545,7 @@ mod tests {
     #[test]
     fn renders_preamble_with_correct_html_structure() {
         let document = Document {
+            attributes: Default::default(),
             title: Some(Heading {
                 level: 0,
                 title: "My Doc".into(),
@@ -567,6 +582,7 @@ mod tests {
     #[test]
     fn renders_ordered_lists() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::OrderedList(OrderedList {
                 items: vec![
@@ -601,6 +617,7 @@ mod tests {
     #[test]
     fn renders_unordered_lists() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::UnorderedList(UnorderedList {
                 items: vec![ListItem {
@@ -624,6 +641,7 @@ mod tests {
     #[test]
     fn renders_nested_lists_and_item_continuations() {
         let document = Document {
+            attributes: Default::default(),
             title: None,
             blocks: vec![Block::OrderedList(OrderedList {
                 items: vec![

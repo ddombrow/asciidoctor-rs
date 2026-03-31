@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Document {
     pub title: Option<Heading>,
+    pub attributes: BTreeMap<String, String>,
     pub blocks: Vec<Block>,
 }
 
