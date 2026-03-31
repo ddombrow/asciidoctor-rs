@@ -140,6 +140,21 @@ function renderDocument(document) {
   `;
 }
 
+function renderHeadMetadata(document) {
+  return (document.authors ?? [])
+    .flatMap((author) => {
+      const tags = [];
+      if (author?.name) {
+        tags.push(`<meta name="author" content="${escapeHtml(author.name)}" />`);
+      }
+      if (author?.email) {
+        tags.push(`<meta name="email" content="${escapeHtml(author.email)}" />`);
+      }
+      return tags;
+    })
+    .join("\n");
+}
+
 function renderBlocks(blocks, sectionLevel = 0) {
   return blocks.map((block) => renderBlock(block, sectionLevel)).join("");
 }
@@ -274,6 +289,7 @@ function renderPreview(document) {
   <html lang="en">
     <head>
       <meta charset="utf-8" />
+      ${renderHeadMetadata(document)}
       <link rel="stylesheet" href="${asciidoctorFontsHref}" onerror="this.onerror=null;this.href='${asciidoctorFontsFallbackHref}'" />
       <link rel="stylesheet" href="${asciidoctorStylesheetHref}" onerror="this.onerror=null;this.href='${asciidoctorStylesheetFallbackHref}'" />
       <style>

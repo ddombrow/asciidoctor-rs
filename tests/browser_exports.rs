@@ -80,3 +80,26 @@ fn browser_prepare_document_ignores_header_comments() {
         Some("Hello.")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_author_attribute() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\n:author: Jane Doe\n\nHello.\n",
+    )
+    .expect("value export should succeed");
+
+    let authors = Array::from(&get_property(&value, "authors"));
+    assert_eq!(authors.length(), 1);
+
+    let first_author = authors.get(0);
+    assert_eq!(
+        get_property(&first_author, "name").as_string().as_deref(),
+        Some("Jane Doe")
+    );
+
+    let attributes = get_property(&value, "attributes");
+    assert_eq!(
+        get_property(&attributes, "author").as_string().as_deref(),
+        Some("Jane Doe")
+    );
+}

@@ -700,6 +700,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_author_attribute_in_document_header() {
+        let document = parse_document("= Document Title\n:author: Jane Doe\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [("author".to_owned(), "Jane Doe".to_owned())]
+                .into_iter()
+                .collect()
+        );
+    }
+
+    #[test]
     fn ignores_leading_header_comments_before_document_title() {
         let document = parse_document("// comment one\n// comment two\n= Document Title\n\ncontent");
 

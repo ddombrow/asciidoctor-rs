@@ -229,8 +229,25 @@ pub fn prepare_document(document: &Document) -> DocumentBlock {
         content_model: Some(ContentModel::Compound),
         footnotes: Vec::new(),
         sections,
-        authors: Vec::new(),
+        authors: prepare_authors(document),
     }
+}
+
+fn prepare_authors(document: &Document) -> Vec<Author> {
+    let Some(name) = document
+        .attributes
+        .get("author")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+
+    vec![Author {
+        name: Some(name.to_owned()),
+        email: None,
+    }]
 }
 
 fn prepare_blocks(
@@ -875,6 +892,32 @@ mod tests {
     }
 
     #[test]
+    fn carries_author_attribute_into_prepared_authors() {
+        let document = Document {
+            attributes: [("author".to_owned(), "Jane Doe".to_owned())]
+                .into_iter()
+                .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.authors,
+            vec![crate::prepare::Author {
+                name: Some("Jane Doe".into()),
+                email: None,
+            }]
+        );
+    }
+
+    #[test]
     fn serializes_document_attributes_at_top_level() {
         let document = Document {
             attributes: [
@@ -898,6 +941,29 @@ mod tests {
         assert!(json.contains("\"attributes\": {"));
         assert!(json.contains("\"toc\": \"left\""));
         assert!(json.contains("\"source-highlighter\": \"rouge\""));
+    }
+
+    #[test]
+    fn serializes_author_attribute_into_authors_metadata() {
+        let document = Document {
+            attributes: [("author".to_owned(), "Jane Doe".to_owned())]
+                .into_iter()
+                .collect(),
+            title: Some(Heading {
+                level: 0,
+                title: "Document Title".into(),
+                id: None,
+                reftext: None,
+            }),
+            blocks: Vec::new(),
+        };
+
+        let prepared = prepare_document(&document);
+        let json = prepared_document_to_json(&prepared).expect("json serialization");
+
+        assert!(json.contains("\"author\": \"Jane Doe\""));
+        assert!(json.contains("\"authors\": ["));
+        assert!(json.contains("\"name\": \"Jane Doe\""));
     }
 
     #[test]
