@@ -3,22 +3,45 @@ use std::borrow::Cow;
 
 use serde::Deserialize;
 use serde::Serialize;
+use serde::ser::{SerializeStruct, Serializer};
 
 use crate::ast::{Inline, InlineForm, InlineVariant};
 use crate::inline::parse_spanned_inlines;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsgDocument {
     pub name: &'static str,
-    #[serde(rename = "type")]
     pub node_type: &'static str,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub attributes: BTreeMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<AsgHeader>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub blocks: Vec<AsgBlock>,
     pub location: [Position; 2],
+}
+
+impl Serialize for AsgDocument {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let include_attributes = self.header.is_some() || !self.attributes.is_empty();
+        let include_header = self.header.is_some();
+        let include_blocks = !self.blocks.is_empty();
+        let field_count = 3 + usize::from(include_attributes) + usize::from(include_header) + usize::from(include_blocks);
+        let mut state = serializer.serialize_struct("AsgDocument", field_count)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("type", &self.node_type)?;
+        if include_attributes {
+            state.serialize_field("attributes", &self.attributes)?;
+        }
+        if let Some(header) = &self.header {
+            state.serialize_field("header", header)?;
+        }
+        if include_blocks {
+            state.serialize_field("blocks", &self.blocks)?;
+        }
+        state.serialize_field("location", &self.location)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1318,10 +1341,20 @@ mod tests {
         let document = parse_tck_document("= Document Title\n\nbody");
         let json = serde_json::to_string_pretty(&document).expect("json");
 
+        assert!(json.contains("\"attributes\": {}"));
         assert!(json.contains("\"header\""));
         assert!(json.contains("\"value\": \"Document Title\""));
         assert!(json.contains("\"name\": \"paragraph\""));
         assert!(json.contains("\"value\": \"body\""));
+    }
+
+    #[test]
+    fn omits_empty_document_attributes_when_no_header_is_present() {
+        let document = parse_tck_document("body");
+        let json = serde_json::to_string_pretty(&document).expect("json");
+
+        assert!(!json.contains("\"attributes\": {}"));
+        assert!(json.contains("\"name\": \"paragraph\""));
     }
 
     #[test]
