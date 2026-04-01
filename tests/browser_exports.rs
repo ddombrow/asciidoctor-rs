@@ -255,3 +255,37 @@ fn browser_prepare_document_exposes_explicit_authors_metadata() {
         Some("OA")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_delimited_blocks() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\n\n----\nputs 'hello'\n----\n\n****\n* phone\n* keys\n****\n\n====\ninside example\n====\n",
+    )
+    .expect("value export should succeed");
+
+    let blocks = Array::from(&get_property(&value, "blocks"));
+    let preamble = blocks.get(0);
+    let preamble_blocks = Array::from(&get_property(&preamble, "blocks"));
+
+    let listing = preamble_blocks.get(0);
+    assert_eq!(
+        get_property(&listing, "type").as_string().as_deref(),
+        Some("listing")
+    );
+    assert_eq!(
+        get_property(&listing, "content").as_string().as_deref(),
+        Some("puts 'hello'")
+    );
+
+    let sidebar = preamble_blocks.get(1);
+    assert_eq!(
+        get_property(&sidebar, "type").as_string().as_deref(),
+        Some("sidebar")
+    );
+
+    let example = preamble_blocks.get(2);
+    assert_eq!(
+        get_property(&example, "type").as_string().as_deref(),
+        Some("example")
+    );
+}

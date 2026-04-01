@@ -6,10 +6,19 @@
     "author_1": "Doc Writer",
     "author_2": "Junior Writer",
     "authorcount": "2",
+    "authorinitials": "DW",
+    "authorinitials_1": "DW",
+    "authorinitials_2": "JW",
     "authors": "Doc Writer, Junior Writer",
     "email": "thedoctor@asciidoc.org",
     "email_1": "thedoctor@asciidoc.org",
-    "email_2": "junior@asciidoctor.org"
+    "email_2": "junior@asciidoctor.org",
+    "firstname": "Doc",
+    "firstname_1": "Doc",
+    "firstname_2": "Junior",
+    "lastname": "Writer",
+    "lastname_1": "Writer",
+    "lastname_2": "Writer"
   },
   "header": {
     "title": [

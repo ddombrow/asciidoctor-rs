@@ -1,7 +1,6 @@
 {
   "name": "document",
   "type": "block",
-  "attributes": {},
   "blocks": [
     {
       "name": "list",

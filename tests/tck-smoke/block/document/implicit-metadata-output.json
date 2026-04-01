@@ -4,8 +4,11 @@
   "attributes": {
     "author": "Stuart Rackham",
     "authorcount": "1",
+    "authorinitials": "SR",
     "authors": "Stuart Rackham",
     "email": "founder@asciidoc.org",
+    "firstname": "Stuart",
+    "lastname": "Rackham",
     "revdate": "2012-07-12",
     "revnumber": "8.6.8",
     "revremark": "See changelog.",

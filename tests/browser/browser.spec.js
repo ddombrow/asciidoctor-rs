@@ -413,6 +413,44 @@ test("preview renders unordered lists", async ({ page }) => {
   await expect(items.nth(1)).toContainText("second item");
 });
 
+test("exports and renders delimited listing sidebar and example blocks", async ({ page }) => {
+  const source = `= Sample Document
+
+----
+fn main() {
+    println!("Hello from the browser!");
+}
+----
+
+****
+* phone
+* keys
+****
+
+====
+inside example
+====`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.blocks[0].type).toBe("preamble");
+  expect(document.blocks[0].blocks.map((block) => block.type)).toEqual([
+    "listing",
+    "sidebar",
+    "example"
+  ]);
+  expect(document.blocks[0].blocks[0].content).toContain('println!("Hello from the browser!");');
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".listingblock pre")).toContainText('println!("Hello from the browser!");');
+  await expect(frame.locator(".sidebarblock ul > li")).toHaveCount(2);
+  await expect(frame.locator(".exampleblock p")).toHaveText("inside example");
+});
+
 test("preview ignores header comments and preserves header attributes", async ({ page }) => {
   const source = `// leading comment
 = Sample Document
