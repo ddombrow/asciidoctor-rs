@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::borrow::Cow;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -113,12 +114,14 @@ pub struct TckRequest {
 }
 
 pub fn render_tck_json(input: &str) -> serde_json::Result<String> {
-    let document = parse_tck_document(input);
+    let normalized = normalize_tck_newlines(input);
+    let document = parse_tck_document(normalized.as_ref());
     serde_json::to_string_pretty(&document)
 }
 
 pub fn render_tck_inline_json(input: &str) -> serde_json::Result<String> {
-    serde_json::to_string_pretty(&parse_tck_inlines(input))
+    let normalized = normalize_tck_newlines(input);
+    serde_json::to_string_pretty(&parse_tck_inlines(normalized.as_ref()))
 }
 
 pub fn render_tck_json_from_request(request_json: &str) -> Result<String, String> {
@@ -269,6 +272,14 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
 
 pub fn parse_tck_inlines(input: &str) -> Vec<AsgInline> {
     parse_tck_inlines_at(input, 1, 1)
+}
+
+fn normalize_tck_newlines(input: &str) -> Cow<'_, str> {
+    if !input.contains('\r') {
+        return Cow::Borrowed(input);
+    }
+
+    Cow::Owned(input.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
 fn parse_blocks(
