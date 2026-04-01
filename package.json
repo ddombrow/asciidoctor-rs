@@ -9,6 +9,7 @@
     "preview:browser": "npm run build:wasm:test && node tests/browser/server.mjs",
     "test:browser": "npm run build:wasm:test && playwright test",
     "test:browser:headed": "npm run build:wasm:test && playwright test --headed",
+    "test:tck": "node scripts/run-tck-full.mjs",
     "test:tck:smoke": "node scripts/run-tck-smoke.mjs"
   },
   "devDependencies": {

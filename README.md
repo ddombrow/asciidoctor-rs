@@ -49,6 +49,12 @@ There is also a local smoke suite wired to the real TCK harness:
 npm run test:tck:smoke
 ```
 
+To run the full sibling `..\asciidoc-tck` test suite through this adapter and see all failures:
+
+```powershell
+npm run test:tck
+```
+
 ## WASM Direction
 
 The prepared document is designed to move across a future WASM boundary in a shape that is
