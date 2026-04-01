@@ -139,6 +139,9 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
     let mut index = 0;
     let mut attributes = BTreeMap::new();
     let mut header = None;
+    let mut saw_explicit_author = false;
+    let mut saw_explicit_authors = false;
+    let mut saw_explicit_authorinitials = false;
 
     index = skip_header_comments(&lines, index);
 
@@ -190,6 +193,12 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
                 }
 
                 if let Some((name, value, end_col)) = parse_attribute_entry(line) {
+                    match name.as_str() {
+                        "author" => saw_explicit_author = true,
+                        "authors" => saw_explicit_authors = true,
+                        "authorinitials" => saw_explicit_authorinitials = true,
+                        _ => {}
+                    }
                     attributes.insert(name, value);
                     header_end = Position {
                         line: index + 1,
@@ -200,6 +209,20 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
                 }
 
                 break;
+            }
+
+            if saw_explicit_authors {
+                normalize_explicit_author_attributes(
+                    &mut attributes,
+                    "authors",
+                    saw_explicit_authorinitials,
+                );
+            } else if saw_explicit_author {
+                normalize_explicit_author_attributes(
+                    &mut attributes,
+                    "author",
+                    saw_explicit_authorinitials,
+                );
             }
 
             header = Some(AsgHeader {
@@ -570,18 +593,12 @@ fn parse_implicit_author_entry(entry: &str) -> Option<ImplicitAuthor> {
             let name = without_close[..open_index].trim();
             let email = without_close[open_index + 1..].trim();
             if !name.is_empty() && !email.is_empty() {
-                return Some(ImplicitAuthor {
-                    name: name.to_owned(),
-                    email: Some(email.to_owned()),
-                });
+                return build_author(name, Some(email.to_owned()));
             }
         }
     }
 
-    Some(ImplicitAuthor {
-        name: trimmed.to_owned(),
-        email: None,
-    })
+    build_author(trimmed, None)
 }
 
 fn insert_author_attributes(
@@ -590,11 +607,6 @@ fn insert_author_attributes(
 ) {
     if authors.is_empty() {
         return;
-    }
-
-    attributes.insert("author".to_owned(), authors[0].name.clone());
-    if let Some(email) = &authors[0].email {
-        attributes.insert("email".to_owned(), email.clone());
     }
 
     attributes.insert(
@@ -606,16 +618,174 @@ fn insert_author_attributes(
             .join(", "),
     );
     attributes.insert("authorcount".to_owned(), authors.len().to_string());
+    insert_primary_author_attributes(attributes, &authors[0], authors.len() == 1, false);
 
     if authors.len() > 1 {
+        insert_indexed_author_attributes(attributes, &authors[0], 1);
         for (index, author) in authors.iter().enumerate() {
-            let key_suffix = index + 1;
-            attributes.insert(format!("author_{key_suffix}"), author.name.clone());
-            if let Some(email) = &author.email {
-                attributes.insert(format!("email_{key_suffix}"), email.clone());
+            if index == 0 {
+                continue;
+            }
+            insert_indexed_author_attributes(attributes, author, index + 1);
+        }
+    }
+}
+
+fn insert_primary_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    author: &ImplicitAuthor,
+    preserve_existing_initials: bool,
+    preserve_existing_email: bool,
+) {
+    attributes.insert("author".to_owned(), author.name.clone());
+    attributes.insert("firstname".to_owned(), author.firstname.clone());
+    if let Some(middlename) = &author.middlename {
+        attributes.insert("middlename".to_owned(), middlename.clone());
+    }
+    if let Some(lastname) = &author.lastname {
+        attributes.insert("lastname".to_owned(), lastname.clone());
+    }
+    if !(preserve_existing_initials && attributes.contains_key("authorinitials")) {
+        attributes.insert("authorinitials".to_owned(), author.authorinitials.clone());
+    }
+    if let Some(email) = &author.email {
+        if !preserve_existing_email || !attributes.contains_key("email") {
+            attributes.insert("email".to_owned(), email.clone());
+        }
+    }
+}
+
+fn insert_indexed_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    author: &ImplicitAuthor,
+    index: usize,
+) {
+    attributes.insert(format!("author_{index}"), author.name.clone());
+    attributes.insert(format!("firstname_{index}"), author.firstname.clone());
+    if let Some(middlename) = &author.middlename {
+        attributes.insert(format!("middlename_{index}"), middlename.clone());
+    }
+    if let Some(lastname) = &author.lastname {
+        attributes.insert(format!("lastname_{index}"), lastname.clone());
+    }
+    attributes.insert(
+        format!("authorinitials_{index}"),
+        author.authorinitials.clone(),
+    );
+    if let Some(email) = &author.email {
+        attributes.insert(format!("email_{index}"), email.clone());
+    }
+}
+
+fn normalize_explicit_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    source_key: &str,
+    preserve_primary_initials: bool,
+) {
+    let explicit_primary_initials =
+        preserve_primary_initials.then(|| attributes.get("authorinitials").cloned()).flatten();
+    let source_value = attributes.get(source_key).cloned().unwrap_or_default();
+    let mut authors = if source_key == "authors" {
+        source_value
+            .split(';')
+            .filter_map(|entry| build_author(entry, None))
+            .collect::<Vec<_>>()
+    } else {
+        match build_author(&source_value, attributes.get("email").cloned()) {
+            Some(author) => vec![author],
+            None => Vec::new(),
+        }
+    };
+
+    if authors.is_empty() {
+        return;
+    }
+
+    if source_key == "authors" {
+        for (index, author) in authors.iter_mut().enumerate() {
+            if let Some(email) = attributes.get(&format!("email_{}", index + 1)).cloned() {
+                author.email = Some(email);
             }
         }
     }
+
+    clear_derived_author_attributes(attributes, preserve_primary_initials && authors.len() == 1);
+    insert_author_attributes(attributes, &authors);
+    if let Some(authorinitials) = explicit_primary_initials.filter(|_| authors.len() == 1) {
+        attributes.insert("authorinitials".to_owned(), authorinitials);
+    }
+}
+
+fn clear_derived_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    preserve_primary_initials: bool,
+) {
+    let mut keys_to_remove = Vec::new();
+    for key in attributes.keys() {
+        let remove = key == "authorcount"
+            || key == "firstname"
+            || key == "middlename"
+            || key == "lastname"
+            || key == "email"
+            || key.starts_with("author_")
+            || key.starts_with("firstname_")
+            || key.starts_with("middlename_")
+            || key.starts_with("lastname_")
+            || key.starts_with("authorinitials_")
+            || key.starts_with("email_")
+            || (!preserve_primary_initials && key == "authorinitials");
+        if remove {
+            keys_to_remove.push(key.clone());
+        }
+    }
+    for key in keys_to_remove {
+        attributes.remove(&key);
+    }
+}
+
+fn build_author(name: &str, email: Option<String>) -> Option<ImplicitAuthor> {
+    let normalized_name = name.replace('_', " ");
+    let segments = normalized_name
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    let firstname = segments[0].clone();
+    let middlename = if segments.len() > 2 {
+        Some(segments[1].clone())
+    } else {
+        None
+    };
+    let lastname = if segments.len() == 2 {
+        Some(segments[1].clone())
+    } else if segments.len() > 2 {
+        Some(segments[2..].join(" "))
+    } else {
+        None
+    };
+    let authorinitials = [Some(firstname.as_str()), middlename.as_deref(), lastname.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part.chars().next())
+        .collect::<String>();
+    let display_name = match (&middlename, &lastname) {
+        (Some(middlename), Some(lastname)) => format!("{firstname} {middlename} {lastname}"),
+        (None, Some(lastname)) => format!("{firstname} {lastname}"),
+        _ => firstname.clone(),
+    };
+
+    Some(ImplicitAuthor {
+        name: display_name,
+        firstname,
+        middlename,
+        lastname,
+        authorinitials,
+        email,
+    })
 }
 
 fn parse_implicit_revision_line(line: &str) -> Option<ImplicitRevisionLine> {
@@ -648,6 +818,10 @@ fn parse_implicit_revision_line(line: &str) -> Option<ImplicitRevisionLine> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ImplicitAuthor {
     name: String,
+    firstname: String,
+    middlename: Option<String>,
+    lastname: Option<String>,
+    authorinitials: String,
     email: Option<String>,
 }
 
@@ -1065,6 +1239,18 @@ mod tests {
             Some("2001-01-01")
         );
         assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
+        assert_eq!(
+            document.attributes.get("firstname").map(String::as_str),
+            Some("Stuart")
+        );
+        assert_eq!(
+            document.attributes.get("lastname").map(String::as_str),
+            Some("Rackham")
+        );
+        assert_eq!(
+            document.attributes.get("authorinitials").map(String::as_str),
+            Some("SR")
+        );
     }
 
     #[test]
@@ -1092,6 +1278,56 @@ mod tests {
         assert_eq!(
             document.attributes.get("email_2").map(String::as_str),
             Some("junior@asciidoctor.org")
+        );
+        assert_eq!(
+            document.attributes.get("authorinitials_2").map(String::as_str),
+            Some("JW")
+        );
+    }
+
+    #[test]
+    fn parses_explicit_author_metadata_in_tck_document_parsing() {
+        let document =
+            parse_tck_document("= Document Title\n:author: Doc Writer\n:email: thedoctor@asciidoc.org\n\nbody");
+
+        assert_eq!(
+            document.attributes.get("firstname").map(String::as_str),
+            Some("Doc")
+        );
+        assert_eq!(
+            document.attributes.get("lastname").map(String::as_str),
+            Some("Writer")
+        );
+        assert_eq!(
+            document.attributes.get("authorinitials").map(String::as_str),
+            Some("DW")
+        );
+        assert_eq!(
+            document.attributes.get("email").map(String::as_str),
+            Some("thedoctor@asciidoc.org")
+        );
+    }
+
+    #[test]
+    fn parses_explicit_authors_metadata_in_tck_document_parsing() {
+        let document =
+            parse_tck_document("= Document Title\n:authors: Doc Writer; Other Author\n\nbody");
+
+        assert_eq!(
+            document.attributes.get("author_1").map(String::as_str),
+            Some("Doc Writer")
+        );
+        assert_eq!(
+            document.attributes.get("firstname_2").map(String::as_str),
+            Some("Other")
+        );
+        assert_eq!(
+            document.attributes.get("lastname_2").map(String::as_str),
+            Some("Author")
+        );
+        assert_eq!(
+            document.attributes.get("authorinitials_2").map(String::as_str),
+            Some("OA")
         );
     }
 

@@ -25,6 +25,10 @@ struct ParsedListMarker<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ImplicitAuthor {
     name: String,
+    firstname: String,
+    middlename: Option<String>,
+    lastname: Option<String>,
+    authorinitials: String,
     email: Option<String>,
 }
 
@@ -136,6 +140,9 @@ pub fn parse_document(input: &str) -> Document {
 fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, String>, usize) {
     let mut attributes = BTreeMap::new();
     let mut index = 0;
+    let mut saw_explicit_author = false;
+    let mut saw_explicit_authors = false;
+    let mut saw_explicit_authorinitials = false;
 
     index = skip_header_comments(lines, index);
 
@@ -184,8 +191,20 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
         let Some((name, value)) = parse_attribute_entry(line) else {
             break;
         };
+        match name.as_str() {
+            "author" => saw_explicit_author = true,
+            "authors" => saw_explicit_authors = true,
+            "authorinitials" => saw_explicit_authorinitials = true,
+            _ => {}
+        }
         attributes.insert(name, value);
         index += 1;
+    }
+
+    if saw_explicit_authors {
+        normalize_explicit_author_attributes(&mut attributes, "authors", saw_explicit_authorinitials);
+    } else if saw_explicit_author {
+        normalize_explicit_author_attributes(&mut attributes, "author", saw_explicit_authorinitials);
     }
 
     (title, attributes, index)
@@ -566,18 +585,12 @@ fn parse_implicit_author_entry(entry: &str) -> Option<ImplicitAuthor> {
             let name = without_close[..open_index].trim();
             let email = without_close[open_index + 1..].trim();
             if !name.is_empty() && !email.is_empty() {
-                return Some(ImplicitAuthor {
-                    name: name.to_owned(),
-                    email: Some(email.to_owned()),
-                });
+                return build_author(name, Some(email.to_owned()));
             }
         }
     }
 
-    Some(ImplicitAuthor {
-        name: trimmed.to_owned(),
-        email: None,
-    })
+    build_author(trimmed, None)
 }
 
 fn insert_author_attributes(
@@ -586,11 +599,6 @@ fn insert_author_attributes(
 ) {
     if authors.is_empty() {
         return;
-    }
-
-    attributes.insert("author".to_owned(), authors[0].name.clone());
-    if let Some(email) = &authors[0].email {
-        attributes.insert("email".to_owned(), email.clone());
     }
 
     attributes.insert(
@@ -602,16 +610,174 @@ fn insert_author_attributes(
             .join(", "),
     );
     attributes.insert("authorcount".to_owned(), authors.len().to_string());
+    insert_primary_author_attributes(attributes, &authors[0], authors.len() == 1, false);
 
     if authors.len() > 1 {
+        insert_indexed_author_attributes(attributes, &authors[0], 1);
         for (index, author) in authors.iter().enumerate() {
-            let key_suffix = index + 1;
-            attributes.insert(format!("author_{key_suffix}"), author.name.clone());
-            if let Some(email) = &author.email {
-                attributes.insert(format!("email_{key_suffix}"), email.clone());
+            if index == 0 {
+                continue;
+            }
+            insert_indexed_author_attributes(attributes, author, index + 1);
+        }
+    }
+}
+
+fn insert_primary_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    author: &ImplicitAuthor,
+    preserve_existing_initials: bool,
+    preserve_existing_email: bool,
+) {
+    attributes.insert("author".to_owned(), author.name.clone());
+    attributes.insert("firstname".to_owned(), author.firstname.clone());
+    if let Some(middlename) = &author.middlename {
+        attributes.insert("middlename".to_owned(), middlename.clone());
+    }
+    if let Some(lastname) = &author.lastname {
+        attributes.insert("lastname".to_owned(), lastname.clone());
+    }
+    if !(preserve_existing_initials && attributes.contains_key("authorinitials")) {
+        attributes.insert("authorinitials".to_owned(), author.authorinitials.clone());
+    }
+    if let Some(email) = &author.email {
+        if !preserve_existing_email || !attributes.contains_key("email") {
+            attributes.insert("email".to_owned(), email.clone());
+        }
+    }
+}
+
+fn insert_indexed_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    author: &ImplicitAuthor,
+    index: usize,
+) {
+    attributes.insert(format!("author_{index}"), author.name.clone());
+    attributes.insert(format!("firstname_{index}"), author.firstname.clone());
+    if let Some(middlename) = &author.middlename {
+        attributes.insert(format!("middlename_{index}"), middlename.clone());
+    }
+    if let Some(lastname) = &author.lastname {
+        attributes.insert(format!("lastname_{index}"), lastname.clone());
+    }
+    attributes.insert(
+        format!("authorinitials_{index}"),
+        author.authorinitials.clone(),
+    );
+    if let Some(email) = &author.email {
+        attributes.insert(format!("email_{index}"), email.clone());
+    }
+}
+
+fn normalize_explicit_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    source_key: &str,
+    preserve_primary_initials: bool,
+) {
+    let explicit_primary_initials =
+        preserve_primary_initials.then(|| attributes.get("authorinitials").cloned()).flatten();
+    let source_value = attributes.get(source_key).cloned().unwrap_or_default();
+    let mut authors = if source_key == "authors" {
+        source_value
+            .split(';')
+            .filter_map(|entry| build_author(entry, None))
+            .collect::<Vec<_>>()
+    } else {
+        match build_author(&source_value, attributes.get("email").cloned()) {
+            Some(author) => vec![author],
+            None => Vec::new(),
+        }
+    };
+
+    if authors.is_empty() {
+        return;
+    }
+
+    if source_key == "authors" {
+        for (index, author) in authors.iter_mut().enumerate() {
+            if let Some(email) = attributes.get(&format!("email_{}", index + 1)).cloned() {
+                author.email = Some(email);
             }
         }
     }
+
+    clear_derived_author_attributes(attributes, preserve_primary_initials && authors.len() == 1);
+    insert_author_attributes(attributes, &authors);
+    if let Some(authorinitials) = explicit_primary_initials.filter(|_| authors.len() == 1) {
+        attributes.insert("authorinitials".to_owned(), authorinitials);
+    }
+}
+
+fn clear_derived_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    preserve_primary_initials: bool,
+) {
+    let mut keys_to_remove = Vec::new();
+    for key in attributes.keys() {
+        let remove = key == "authorcount"
+            || key == "firstname"
+            || key == "middlename"
+            || key == "lastname"
+            || key == "email"
+            || key.starts_with("author_")
+            || key.starts_with("firstname_")
+            || key.starts_with("middlename_")
+            || key.starts_with("lastname_")
+            || key.starts_with("authorinitials_")
+            || key.starts_with("email_")
+            || (!preserve_primary_initials && key == "authorinitials");
+        if remove {
+            keys_to_remove.push(key.clone());
+        }
+    }
+    for key in keys_to_remove {
+        attributes.remove(&key);
+    }
+}
+
+fn build_author(name: &str, email: Option<String>) -> Option<ImplicitAuthor> {
+    let normalized_name = name.replace('_', " ");
+    let segments = normalized_name
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    let firstname = segments[0].clone();
+    let middlename = if segments.len() > 2 {
+        Some(segments[1].clone())
+    } else {
+        None
+    };
+    let lastname = if segments.len() == 2 {
+        Some(segments[1].clone())
+    } else if segments.len() > 2 {
+        Some(segments[2..].join(" "))
+    } else {
+        None
+    };
+    let authorinitials = [Some(firstname.as_str()), middlename.as_deref(), lastname.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part.chars().next())
+        .collect::<String>();
+    let display_name = match (&middlename, &lastname) {
+        (Some(middlename), Some(lastname)) => format!("{firstname} {middlename} {lastname}"),
+        (None, Some(lastname)) => format!("{firstname} {lastname}"),
+        _ => firstname.clone(),
+    };
+
+    Some(ImplicitAuthor {
+        name: display_name,
+        firstname,
+        middlename,
+        lastname,
+        authorinitials,
+        email,
+    })
 }
 
 fn parse_implicit_revision_line(line: &str) -> Option<ImplicitRevisionLine> {
@@ -863,9 +1029,16 @@ mod tests {
 
         assert_eq!(
             document.attributes,
-            [("author".to_owned(), "Jane Doe".to_owned())]
-                .into_iter()
-                .collect()
+            [
+                ("author".to_owned(), "Jane Doe".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "JD".to_owned()),
+                ("authors".to_owned(), "Jane Doe".to_owned()),
+                ("firstname".to_owned(), "Jane".to_owned()),
+                ("lastname".to_owned(), "Doe".to_owned()),
+            ]
+            .into_iter()
+            .collect()
         );
     }
 
@@ -878,6 +1051,75 @@ mod tests {
             [("email".to_owned(), "jane@example.com".to_owned())]
                 .into_iter()
                 .collect()
+        );
+    }
+
+    #[test]
+    fn preserves_explicit_authorinitials_for_single_author_attribute() {
+        let document =
+            parse_document("= Document Title\n:authorinitials: DOC\n:author: Doc Writer\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Doc Writer".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "DOC".to_owned()),
+                ("authors".to_owned(), "Doc Writer".to_owned()),
+                ("firstname".to_owned(), "Doc".to_owned()),
+                ("lastname".to_owned(), "Writer".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_authors_attribute_into_indexed_name_parts() {
+        let document =
+            parse_document("= Document Title\n:authors: Doc Writer; Other Author\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Doc Writer".to_owned()),
+                ("author_1".to_owned(), "Doc Writer".to_owned()),
+                ("author_2".to_owned(), "Other Author".to_owned()),
+                ("authorcount".to_owned(), "2".to_owned()),
+                ("authorinitials".to_owned(), "DW".to_owned()),
+                ("authorinitials_1".to_owned(), "DW".to_owned()),
+                ("authorinitials_2".to_owned(), "OA".to_owned()),
+                ("authors".to_owned(), "Doc Writer, Other Author".to_owned()),
+                ("firstname".to_owned(), "Doc".to_owned()),
+                ("firstname_1".to_owned(), "Doc".to_owned()),
+                ("firstname_2".to_owned(), "Other".to_owned()),
+                ("lastname".to_owned(), "Writer".to_owned()),
+                ("lastname_1".to_owned(), "Writer".to_owned()),
+                ("lastname_2".to_owned(), "Author".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_middle_name_parts_for_author_attribute() {
+        let document =
+            parse_document("= Document Title\n:author: Doc Middle Writer\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Doc Middle Writer".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "DMW".to_owned()),
+                ("authors".to_owned(), "Doc Middle Writer".to_owned()),
+                ("firstname".to_owned(), "Doc".to_owned()),
+                ("lastname".to_owned(), "Writer".to_owned()),
+                ("middlename".to_owned(), "Middle".to_owned()),
+            ]
+            .into_iter()
+            .collect()
         );
     }
 
@@ -908,7 +1150,10 @@ mod tests {
             [
                 ("author".to_owned(), "Jane Doe".to_owned()),
                 ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "JD".to_owned()),
                 ("authors".to_owned(), "Jane Doe".to_owned()),
+                ("firstname".to_owned(), "Jane".to_owned()),
+                ("lastname".to_owned(), "Doe".to_owned()),
             ]
             .into_iter()
             .collect()
@@ -924,8 +1169,11 @@ mod tests {
             [
                 ("author".to_owned(), "Stuart Rackham".to_owned()),
                 ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "SR".to_owned()),
                 ("authors".to_owned(), "Stuart Rackham".to_owned()),
                 ("email".to_owned(), "founder@asciidoc.org".to_owned()),
+                ("firstname".to_owned(), "Stuart".to_owned()),
+                ("lastname".to_owned(), "Rackham".to_owned()),
             ]
             .into_iter()
             .collect()
@@ -943,8 +1191,11 @@ mod tests {
             [
                 ("author".to_owned(), "Stuart Rackham".to_owned()),
                 ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "SR".to_owned()),
                 ("authors".to_owned(), "Stuart Rackham".to_owned()),
                 ("email".to_owned(), "founder@asciidoc.org".to_owned()),
+                ("firstname".to_owned(), "Stuart".to_owned()),
+                ("lastname".to_owned(), "Rackham".to_owned()),
                 ("revdate".to_owned(), "2012-07-12".to_owned()),
                 ("revnumber".to_owned(), "8.6.8".to_owned()),
                 ("revremark".to_owned(), "See changelog.".to_owned()),
@@ -964,7 +1215,10 @@ mod tests {
             [
                 ("author".to_owned(), "Author Name".to_owned()),
                 ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "AN".to_owned()),
                 ("authors".to_owned(), "Author Name".to_owned()),
+                ("firstname".to_owned(), "Author".to_owned()),
+                ("lastname".to_owned(), "Name".to_owned()),
                 ("revnumber".to_owned(), "1.0.0".to_owned()),
                 ("revremark".to_owned(), "remark".to_owned()),
             ]
@@ -982,7 +1236,10 @@ mod tests {
             [
                 ("author".to_owned(), "Andrew Stanton".to_owned()),
                 ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "AS".to_owned()),
                 ("authors".to_owned(), "Andrew Stanton".to_owned()),
+                ("firstname".to_owned(), "Andrew".to_owned()),
+                ("lastname".to_owned(), "Stanton".to_owned()),
                 ("revnumber".to_owned(), "1.0.0".to_owned()),
             ]
             .into_iter()
@@ -1025,8 +1282,11 @@ mod tests {
             [
                 ("author".to_owned(), "Stuart Rackham".to_owned()),
                 ("authorcount".to_owned(), "1".to_owned()),
+                ("authorinitials".to_owned(), "SR".to_owned()),
                 ("authors".to_owned(), "Stuart Rackham".to_owned()),
                 ("email".to_owned(), "founder@asciidoc.org".to_owned()),
+                ("firstname".to_owned(), "Stuart".to_owned()),
+                ("lastname".to_owned(), "Rackham".to_owned()),
                 ("revdate".to_owned(), "2001-01-01".to_owned()),
                 ("revnumber".to_owned(), "1.0".to_owned()),
                 ("toc".to_owned(), "left".to_owned()),
@@ -1049,10 +1309,19 @@ mod tests {
                 ("author_1".to_owned(), "Doc Writer".to_owned()),
                 ("author_2".to_owned(), "Junior Writer".to_owned()),
                 ("authorcount".to_owned(), "2".to_owned()),
+                ("authorinitials".to_owned(), "DW".to_owned()),
+                ("authorinitials_1".to_owned(), "DW".to_owned()),
+                ("authorinitials_2".to_owned(), "JW".to_owned()),
                 ("authors".to_owned(), "Doc Writer, Junior Writer".to_owned()),
                 ("email".to_owned(), "thedoctor@asciidoc.org".to_owned()),
                 ("email_1".to_owned(), "thedoctor@asciidoc.org".to_owned()),
                 ("email_2".to_owned(), "junior@asciidoctor.org".to_owned()),
+                ("firstname".to_owned(), "Doc".to_owned()),
+                ("firstname_1".to_owned(), "Doc".to_owned()),
+                ("firstname_2".to_owned(), "Junior".to_owned()),
+                ("lastname".to_owned(), "Writer".to_owned()),
+                ("lastname_1".to_owned(), "Writer".to_owned()),
+                ("lastname_2".to_owned(), "Writer".to_owned()),
             ]
             .into_iter()
             .collect()

@@ -35,7 +35,12 @@ test("exports author attribute in document metadata", async ({ page }) => {
   const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
   const document = JSON.parse(json);
 
-  expect(document.attributes).toMatchObject({ author: "Jane Doe" });
+  expect(document.attributes).toMatchObject({
+    author: "Jane Doe",
+    firstname: "Jane",
+    lastname: "Doe",
+    authorinitials: "JD"
+  });
   expect(document.authors).toEqual([
     {
       name: "Jane Doe"
@@ -208,6 +213,32 @@ test("exports multiple implicit authors without trailing semicolon", async ({ pa
     {
       name: "Junior Writer",
       email: "junior@asciidoctor.org"
+    }
+  ]);
+});
+
+test("exports explicit authors attribute name parts in document metadata", async ({ page }) => {
+  const source = "= Sample Document\n:authors: Doc Writer; Other Author\n\nHello from the browser.\n";
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.attributes).toMatchObject({
+    author: "Doc Writer",
+    author_1: "Doc Writer",
+    author_2: "Other Author",
+    firstname: "Doc",
+    firstname_2: "Other",
+    lastname: "Writer",
+    lastname_2: "Author",
+    authorinitials: "DW",
+    authorinitials_2: "OA"
+  });
+  expect(document.authors).toEqual([
+    {
+      name: "Doc Writer"
+    },
+    {
+      name: "Other Author"
     }
   ]);
 });

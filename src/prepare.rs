@@ -1097,6 +1097,37 @@ mod tests {
     }
 
     #[test]
+    fn carries_explicit_authors_attribute_into_prepared_authors() {
+        let document = parse_document(
+            "= Document Title\n:authors: Doc Writer; Other Author\n\ncontent",
+        );
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.authors,
+            vec![
+                crate::prepare::Author {
+                    name: Some("Doc Writer".into()),
+                    email: None,
+                },
+                crate::prepare::Author {
+                    name: Some("Other Author".into()),
+                    email: None,
+                },
+            ]
+        );
+        assert_eq!(
+            prepared.attributes.get("authorinitials").map(String::as_str),
+            Some("DW")
+        );
+        assert_eq!(
+            prepared.attributes.get("authorinitials_2").map(String::as_str),
+            Some("OA")
+        );
+    }
+
+    #[test]
     fn carries_email_attribute_into_prepared_authors() {
         let document = Document {
             attributes: [("email".to_owned(), "jane@example.com".to_owned())]

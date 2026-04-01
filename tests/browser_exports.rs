@@ -102,6 +102,18 @@ fn browser_prepare_document_exposes_author_attribute() {
         get_property(&attributes, "author").as_string().as_deref(),
         Some("Jane Doe")
     );
+    assert_eq!(
+        get_property(&attributes, "firstname").as_string().as_deref(),
+        Some("Jane")
+    );
+    assert_eq!(
+        get_property(&attributes, "lastname").as_string().as_deref(),
+        Some("Doe")
+    );
+    assert_eq!(
+        get_property(&attributes, "authorinitials").as_string().as_deref(),
+        Some("JD")
+    );
 }
 
 #[wasm_bindgen_test]
@@ -216,5 +228,30 @@ fn browser_prepare_document_exposes_multiple_implicit_authors() {
     assert_eq!(
         get_property(&second_author, "email").as_string().as_deref(),
         Some("junior@asciidoctor.org")
+    );
+}
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_explicit_authors_metadata() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\n:authors: Doc Writer; Other Author\n\nHello.\n",
+    )
+    .expect("value export should succeed");
+
+    let authors = Array::from(&get_property(&value, "authors"));
+    assert_eq!(authors.length(), 2);
+
+    let attributes = get_property(&value, "attributes");
+    assert_eq!(
+        get_property(&attributes, "firstname").as_string().as_deref(),
+        Some("Doc")
+    );
+    assert_eq!(
+        get_property(&attributes, "lastname_2").as_string().as_deref(),
+        Some("Author")
+    );
+    assert_eq!(
+        get_property(&attributes, "authorinitials_2").as_string().as_deref(),
+        Some("OA")
     );
 }
