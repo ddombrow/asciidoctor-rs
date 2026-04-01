@@ -247,8 +247,13 @@ function renderBlock(block, parentSectionLevel = 0) {
   }
 
   if (block.type === "listing") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title
+      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      : "";
     return `
-      <div class="listingblock">
+      <div class="listingblock"${id}>
+        ${title}
         <div class="content">
           <pre>${escapeHtml(block.content ?? "")}</pre>
         </div>
@@ -257,8 +262,13 @@ function renderBlock(block, parentSectionLevel = 0) {
   }
 
   if (block.type === "example") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title
+      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      : "";
     return `
-      <div class="exampleblock">
+      <div class="exampleblock"${id}>
+        ${title}
         <div class="content">
           ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
         </div>
@@ -267,9 +277,14 @@ function renderBlock(block, parentSectionLevel = 0) {
   }
 
   if (block.type === "sidebar") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title
+      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      : "";
     return `
-      <div class="sidebarblock">
+      <div class="sidebarblock"${id}>
         <div class="content">
+          ${title}
           ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
         </div>
       </div>

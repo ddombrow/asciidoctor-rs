@@ -56,7 +56,11 @@ pub struct AsgBlock {
     #[serde(rename = "type")]
     pub node_type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<Vec<InlineText>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<AsgBlockMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,6 +77,17 @@ pub struct AsgBlock {
     pub marker: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<AsgListItem>,
+    pub location: [Position; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AsgBlockMetadata {
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<String>,
     pub location: [Position; 2],
 }
 
@@ -278,7 +293,7 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
     let start = header
         .as_ref()
         .map(|header| header.location[0].clone())
-        .or_else(|| blocks.first().map(|block| block.location[0].clone()))
+        .or_else(|| blocks.first().map(block_start_position))
         .unwrap_or(Position { line: 1, col: 1 });
     let end = header
         .as_ref()
@@ -296,6 +311,13 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
         blocks,
         location: [start, end],
     }
+}
+
+fn block_start_position(block: &AsgBlock) -> Position {
+    block.metadata
+        .as_ref()
+        .map(|metadata| metadata.location[0].clone())
+        .unwrap_or_else(|| block.location[0].clone())
 }
 
 pub fn parse_tck_inlines(input: &str) -> Vec<AsgInline> {
@@ -357,6 +379,7 @@ fn parse_blocks(
             blocks.push(AsgBlock {
                 name: "section",
                 node_type: "block",
+                id: None,
                 title: Some(vec![InlineText {
                     name: "text",
                     node_type: "string",
@@ -369,6 +392,7 @@ fn parse_blocks(
                         heading_range[1].clone(),
                     ],
                 }]),
+                metadata: None,
                 level: Some(heading.level),
                 form: None,
                 delimiter: None,
@@ -443,7 +467,9 @@ fn parse_blocks(
             blocks.push(AsgBlock {
                 name: "list",
                 node_type: "block",
+                id: None,
                 title: None,
+                metadata: None,
                 level: None,
                 form: None,
                 delimiter: None,
@@ -510,7 +536,9 @@ fn parse_delimited_block(
     index: usize,
     line_offset: usize,
 ) -> Option<(AsgBlock, usize)> {
-    let delimiter = lines.get(index)?.trim();
+    let prelude = parse_block_prelude(lines, index, line_offset);
+    let delimiter_index = index + prelude.consumed_lines;
+    let delimiter = lines.get(delimiter_index)?.trim();
     let name = match delimiter {
         "----" => "listing",
         "====" => "example",
@@ -518,19 +546,21 @@ fn parse_delimited_block(
         _ => return None,
     };
 
-    let closing_index = lines[index + 1..]
+    let closing_index = lines[delimiter_index + 1..]
         .iter()
         .position(|line| line.trim() == delimiter)
-        .map(|offset| index + 1 + offset)?;
-    let start_line = line_offset + index;
+        .map(|offset| delimiter_index + 1 + offset)?;
+    let start_line = line_offset + delimiter_index;
     let end_line = line_offset + closing_index;
-    let inner_lines = &lines[index + 1..closing_index];
+    let inner_lines = &lines[delimiter_index + 1..closing_index];
     let consumed = closing_index - index + 1;
 
     let mut block = AsgBlock {
         name,
         node_type: "block",
-        title: None,
+        id: prelude.id.clone(),
+        title: prelude.title,
+        metadata: prelude.metadata,
         level: None,
         form: Some("delimited"),
         delimiter: Some(match delimiter {
@@ -586,6 +616,239 @@ fn parse_delimited_block(
     Some((block, consumed))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ParsedBlockPrelude {
+    consumed_lines: usize,
+    id: Option<String>,
+    title: Option<Vec<InlineText>>,
+    metadata: Option<AsgBlockMetadata>,
+    start: Option<Position>,
+}
+
+fn parse_block_prelude(lines: &[&str], index: usize, line_offset: usize) -> ParsedBlockPrelude {
+    let mut prelude = ParsedBlockPrelude::default();
+    let mut cursor = index;
+    let mut title_raw = None::<String>;
+    let mut metadata_attributes = BTreeMap::new();
+    let mut metadata_options = Vec::new();
+    let mut metadata_roles = Vec::new();
+    let mut metadata_start = None::<Position>;
+    let mut metadata_end = None::<Position>;
+
+    if let Some(line) = lines.get(cursor)
+        && let Some(title) = parse_block_title(line)
+    {
+        let next = cursor + 1;
+        if lines
+            .get(next)
+            .is_some_and(|line| parse_attribute_list_line(line).is_some() || is_delimited_block_delimiter(line))
+        {
+            let title_line = line_offset + cursor;
+            prelude.title = Some(vec![InlineText {
+                name: "text",
+                node_type: "string",
+                value: title.clone(),
+                location: [
+                    Position { line: title_line, col: 2 },
+                    Position {
+                        line: title_line,
+                        col: lines[cursor].len(),
+                    },
+                ],
+            }]);
+            title_raw = Some(title);
+            metadata_start = Some(Position { line: title_line, col: 1 });
+            metadata_end = Some(Position {
+                line: title_line,
+                col: lines[cursor].len(),
+            });
+            cursor += 1;
+        }
+    }
+
+    if let Some(line) = lines.get(cursor)
+        && let Some(entries) = parse_attribute_list_line(line)
+    {
+        let next = cursor + 1;
+        if lines.get(next).is_some_and(|line| is_delimited_block_delimiter(line)) {
+            let attr_line = line_offset + cursor;
+            apply_attribute_list(
+                &mut metadata_attributes,
+                &mut prelude.id,
+                &mut metadata_options,
+                &mut metadata_roles,
+                &entries,
+            );
+            metadata_start.get_or_insert(Position { line: attr_line, col: 1 });
+            metadata_end = Some(Position {
+                line: attr_line,
+                col: lines[cursor].len(),
+            });
+            cursor += 1;
+        }
+    }
+
+    if let Some(title_raw) = title_raw {
+        metadata_attributes.insert("title".into(), title_raw);
+    }
+    if let Some(id) = &prelude.id {
+        metadata_attributes.entry("id".into()).or_insert_with(|| id.clone());
+    }
+
+    prelude.consumed_lines = cursor - index;
+    prelude.start = metadata_start.clone();
+    if metadata_start.is_some() || !metadata_attributes.is_empty() || !metadata_options.is_empty() || !metadata_roles.is_empty() {
+        prelude.metadata = Some(AsgBlockMetadata {
+            attributes: metadata_attributes,
+            options: metadata_options,
+            roles: metadata_roles,
+            location: [
+                metadata_start.unwrap_or(Position { line: line_offset + index, col: 1 }),
+                metadata_end.unwrap_or(Position { line: line_offset + index, col: 1 }),
+            ],
+        });
+    }
+
+    prelude
+}
+
+fn parse_block_title(line: &str) -> Option<String> {
+    let title = line.strip_prefix('.')?.trim_end();
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
+fn parse_attribute_list_line(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?;
+    Some(split_attribute_list(inner))
+}
+
+fn split_attribute_list(input: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+
+    for ch in input.chars() {
+        match ch {
+            '\'' | '"' if quote == Some(ch) => {
+                quote = None;
+                current.push(ch);
+            }
+            '\'' | '"' if quote.is_none() => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            ',' if quote.is_none() => {
+                values.push(current.trim().to_owned());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    values.push(current.trim().to_owned());
+    values
+}
+
+fn is_delimited_block_delimiter(line: &str) -> bool {
+    matches!(line.trim(), "----" | "====" | "****")
+}
+
+fn apply_attribute_list(
+    attributes: &mut BTreeMap<String, String>,
+    id: &mut Option<String>,
+    options: &mut Vec<String>,
+    roles: &mut Vec<String>,
+    entries: &[String],
+) {
+    for (index, entry) in entries.iter().enumerate() {
+        let slot = index + 1;
+        if entry.is_empty() {
+            continue;
+        }
+
+        if let Some((name, value)) = parse_named_attribute(entry) {
+            attributes.insert(name.clone(), value.clone());
+            if name == "opts" {
+                for option in value.split(',').map(str::trim).filter(|value| !value.is_empty()) {
+                    if !options.iter().any(|existing| existing == option) {
+                        options.push(option.to_owned());
+                    }
+                }
+            } else if name == "role" {
+                for role in value.split_whitespace().filter(|value| !value.is_empty()) {
+                    if !roles.iter().any(|existing| existing == role) {
+                        roles.push(role.to_owned());
+                    }
+                }
+            }
+            continue;
+        }
+
+        if let Some(value) = entry.strip_prefix('#') {
+            if !value.is_empty() {
+                *id = Some(value.to_owned());
+                attributes.insert(format!("${slot}"), entry.clone());
+            }
+            continue;
+        }
+
+        if let Some(value) = entry.strip_prefix('.') {
+            attributes.insert(format!("${slot}"), entry.clone());
+            for role in value.split('.').map(str::trim).filter(|value| !value.is_empty()) {
+                if !roles.iter().any(|existing| existing == role) {
+                    roles.push(role.to_owned());
+                }
+            }
+            if !roles.is_empty() {
+                attributes.insert("role".into(), roles.join(" "));
+            }
+            continue;
+        }
+
+        if let Some(value) = entry.strip_prefix('%') {
+            attributes.insert(format!("${slot}"), entry.clone());
+            for option in value.split('%').map(str::trim).filter(|value| !value.is_empty()) {
+                if !options.iter().any(|existing| existing == option) {
+                    options.push(option.to_owned());
+                }
+                attributes.entry(format!("{option}-option")).or_default();
+            }
+            continue;
+        }
+
+        attributes.insert(format!("${slot}"), entry.clone());
+        if !attributes.contains_key("style") {
+            attributes.insert("style".into(), entry.clone());
+        } else if attributes.get("style").is_some_and(|style| style == "source")
+            && !attributes.contains_key("language")
+        {
+            attributes.insert("language".into(), entry.clone());
+        }
+    }
+}
+
+fn parse_named_attribute(entry: &str) -> Option<(String, String)> {
+    let separator = entry.find('=')?;
+    let name = entry[..separator].trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((name.to_owned(), unquote_attribute_value(entry[separator + 1..].trim())))
+}
+
+fn unquote_attribute_value(value: &str) -> String {
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        let first = bytes[0] as char;
+        let last = bytes[value.len() - 1] as char;
+        if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+            return value[1..value.len() - 1].to_owned();
+        }
+    }
+    value.to_owned()
+}
+
 fn flush_paragraph(
     blocks: &mut Vec<AsgBlock>,
     paragraph_start: &mut Option<usize>,
@@ -609,7 +872,9 @@ fn flush_paragraph(
     blocks.push(AsgBlock {
         name: "paragraph",
         node_type: "block",
+        id: None,
         title: None,
+        metadata: None,
         level: None,
         form: None,
         delimiter: None,
@@ -1595,5 +1860,18 @@ mod tests {
         assert_eq!(block.form, Some("delimited"));
         assert_eq!(block.delimiter, Some("****"));
         assert!(block.blocks.as_ref().is_some_and(|blocks| !blocks.is_empty()));
+    }
+
+    #[test]
+    fn renders_tck_delimited_block_metadata() {
+        let document = parse_tck_document(".Exhibit A\n[source,rust]\n----\nputs 'hello'\n----");
+        let block = document.blocks.first().expect("listing block");
+
+        assert_eq!(block.title.as_ref().and_then(|title| title.first()).map(|text| text.value.as_str()), Some("Exhibit A"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(metadata.attributes.get("$1").map(String::as_str), Some("source"));
+        assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("source"));
+        assert_eq!(metadata.attributes.get("language").map(String::as_str), Some("rust"));
+        assert_eq!(metadata.attributes.get("title").map(String::as_str), Some("Exhibit A"));
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Block, CompoundBlock, Document, Heading, ListItem, Listing, OrderedList, Paragraph,
+    Block, BlockMetadata, CompoundBlock, Document, Heading, ListItem, Listing, OrderedList, Paragraph,
     UnorderedList,
 };
 use crate::inline::parse_inlines;
@@ -45,6 +45,12 @@ struct ImplicitRevisionLine {
     number: String,
     date: Option<String>,
     remark: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct BlockPrelude {
+    metadata: BlockMetadata,
+    consumed_lines: usize,
 }
 
 pub fn parse_document(input: &str) -> Document {
@@ -269,7 +275,9 @@ fn push_block(
 }
 
 fn parse_delimited_block(lines: &[&str], index: usize) -> Option<(Block, usize)> {
-    let delimiter = lines.get(index)?.trim();
+    let prelude = parse_block_prelude(lines, index);
+    let delimiter_index = index + prelude.consumed_lines;
+    let delimiter = lines.get(delimiter_index)?.trim();
     let block_kind = match delimiter {
         "----" => "listing",
         "====" => "example",
@@ -277,33 +285,229 @@ fn parse_delimited_block(lines: &[&str], index: usize) -> Option<(Block, usize)>
         _ => return None,
     };
 
-    let closing_index = lines[index + 1..]
+    let closing_index = lines[delimiter_index + 1..]
         .iter()
         .position(|line| line.trim() == delimiter)
-        .map(|offset| index + 1 + offset)?;
-    let inner_lines = &lines[index + 1..closing_index];
+        .map(|offset| delimiter_index + 1 + offset)?;
+    let inner_lines = &lines[delimiter_index + 1..closing_index];
     let consumed = closing_index - index + 1;
 
     let block = match block_kind {
         "listing" => Block::Listing(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+            metadata: prelude.metadata,
         }),
         "example" => {
             let mut nested_title = None;
             Block::Example(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                metadata: prelude.metadata,
             })
         }
         "sidebar" => {
             let mut nested_title = None;
             Block::Sidebar(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                metadata: prelude.metadata,
             })
         }
         _ => return None,
     };
 
     Some((block, consumed))
+}
+
+fn parse_block_prelude(lines: &[&str], index: usize) -> BlockPrelude {
+    let mut prelude = BlockPrelude::default();
+    let mut cursor = index;
+
+    if let Some(title) = lines.get(cursor).and_then(|line| parse_block_title(line)) {
+        let next = cursor + 1;
+        if lines
+            .get(next)
+            .is_some_and(|line| parse_attribute_list_line(line).is_some() || is_delimited_block_delimiter(line))
+        {
+            prelude.metadata.title = Some(title.clone());
+            prelude.metadata.attributes.insert("title".into(), title);
+            cursor += 1;
+        }
+    }
+
+    if let Some(attr_line) = lines.get(cursor).and_then(|line| parse_attribute_list_line(line)) {
+        let next = cursor + 1;
+        if lines.get(next).is_some_and(|line| is_delimited_block_delimiter(line)) {
+            apply_attribute_list_to_metadata(&mut prelude.metadata, &attr_line);
+            cursor += 1;
+        }
+    }
+
+    prelude.consumed_lines = cursor - index;
+    prelude
+}
+
+fn is_delimited_block_delimiter(line: &str) -> bool {
+    matches!(line.trim(), "----" | "====" | "****")
+}
+
+fn parse_block_title(line: &str) -> Option<String> {
+    let title = line.strip_prefix('.')?.trim_end();
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
+fn parse_attribute_list_line(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?;
+    Some(split_attribute_list(inner))
+}
+
+fn split_attribute_list(input: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+
+    for ch in input.chars() {
+        match ch {
+            '\'' | '"' if quote == Some(ch) => {
+                quote = None;
+                current.push(ch);
+            }
+            '\'' | '"' if quote.is_none() => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            ',' if quote.is_none() => {
+                values.push(current.trim().to_owned());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    values.push(current.trim().to_owned());
+    values
+}
+
+fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[String]) {
+    for (index, entry) in entries.iter().enumerate() {
+        let slot = index + 1;
+        if entry.is_empty() {
+            continue;
+        }
+
+        if let Some((name, value)) = parse_named_attribute(entry) {
+            metadata.attributes.insert(name.clone(), value.clone());
+            if name == "opts" {
+                metadata.options = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            } else if name == "role" {
+                metadata.roles = value
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect();
+                if !metadata.roles.is_empty() {
+                    metadata.role = Some(metadata.roles.join(" "));
+                }
+            }
+            continue;
+        }
+
+        if let Some(id) = entry.strip_prefix('#') {
+            if !id.is_empty() {
+                metadata.id = Some(id.to_owned());
+                metadata.attributes.insert(format!("${slot}"), entry.clone());
+                metadata.attributes.insert("id".into(), id.to_owned());
+            }
+            continue;
+        }
+
+        if let Some(role_entry) = entry.strip_prefix('.') {
+            let roles = role_entry
+                .split('.')
+                .map(str::trim)
+                .filter(|role| !role.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if !roles.is_empty() {
+                metadata.attributes.insert(format!("${slot}"), entry.clone());
+                metadata.roles.extend(roles);
+                let mut deduped_roles = Vec::new();
+                for role in std::mem::take(&mut metadata.roles) {
+                    if !deduped_roles.contains(&role) {
+                        deduped_roles.push(role);
+                    }
+                }
+                metadata.roles = deduped_roles;
+                metadata.role = Some(metadata.roles.join(" "));
+                metadata
+                    .attributes
+                    .insert("role".into(), metadata.roles.join(" "));
+            }
+            continue;
+        }
+
+        if let Some(option_entry) = entry.strip_prefix('%') {
+            let options = option_entry
+                .split('%')
+                .map(str::trim)
+                .filter(|option| !option.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if !options.is_empty() {
+                metadata.attributes.insert(format!("${slot}"), entry.clone());
+                for option in options {
+                    if !metadata.options.contains(&option) {
+                        metadata.options.push(option.clone());
+                    }
+                    metadata
+                        .attributes
+                        .entry(format!("{option}-option"))
+                        .or_default();
+                }
+            }
+            continue;
+        }
+
+        metadata.attributes.insert(format!("${slot}"), entry.clone());
+        if metadata.style.is_none() {
+            metadata.style = Some(entry.clone());
+            metadata
+                .attributes
+                .entry("style".into())
+                .or_insert_with(|| entry.clone());
+        } else if metadata.style.as_deref() == Some("source")
+            && !metadata.attributes.contains_key("language")
+        {
+            metadata
+                .attributes
+                .insert("language".into(), entry.clone());
+        }
+    }
+}
+
+fn parse_named_attribute(entry: &str) -> Option<(String, String)> {
+    let separator = entry.find('=')?;
+    let name = entry[..separator].trim();
+    if name.is_empty() {
+        return None;
+    }
+    let value = unquote_attribute_value(entry[separator + 1..].trim());
+    Some((name.to_owned(), value))
+}
+
+fn unquote_attribute_value(value: &str) -> String {
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        let first = bytes[0] as char;
+        let last = bytes[value.len() - 1] as char;
+        if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+            return value[1..value.len() - 1].to_owned();
+        }
+    }
+    value.to_owned()
 }
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
@@ -982,7 +1186,7 @@ fn is_valid_anchor_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, CompoundBlock, Heading, Inline, InlineForm, InlineVariant, ListItem, Listing,
+        Block, BlockMetadata, CompoundBlock, Heading, Inline, InlineForm, InlineVariant, ListItem, Listing,
         OrderedList, Paragraph, UnorderedList,
     };
     use crate::parser::parse_document;
@@ -1821,6 +2025,7 @@ mod tests {
             document.blocks,
             vec![Block::Listing(Listing {
                 lines: vec!["def main".into(), "  puts 'hello'".into(), "end".into()],
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1852,6 +2057,7 @@ mod tests {
                         },
                     ],
                 })],
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1869,7 +2075,39 @@ mod tests {
                     id: None,
                     reftext: None,
                 })],
+                metadata: BlockMetadata::default(),
             })]
         );
+    }
+
+    #[test]
+    fn parses_delimited_listing_block_title_and_attributes() {
+        let document = parse_document(".Exhibit A\n[source,rust]\n----\nfn main() {}\n----");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.title.as_deref(), Some("Exhibit A"));
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(listing.metadata.attributes.get("$1").map(String::as_str), Some("source"));
+        assert_eq!(listing.metadata.attributes.get("$2").map(String::as_str), Some("rust"));
+        assert_eq!(listing.metadata.attributes.get("language").map(String::as_str), Some("rust"));
+    }
+
+    #[test]
+    fn parses_delimited_sidebar_block_attributes() {
+        let document = parse_document("[foo=bar,%open,.callout]\n****\ninside\n****");
+
+        let [Block::Sidebar(sidebar)] = document.blocks.as_slice() else {
+            panic!("expected sidebar");
+        };
+        assert_eq!(sidebar.metadata.attributes.get("foo").map(String::as_str), Some("bar"));
+        assert_eq!(
+            sidebar.metadata.attributes.get("open-option").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(sidebar.metadata.role.as_deref(), Some("callout"));
+        assert_eq!(sidebar.metadata.options, vec!["open"]);
+        assert_eq!(sidebar.metadata.roles, vec!["callout"]);
     }
 }

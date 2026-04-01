@@ -97,6 +97,8 @@ pub struct ListItemBlock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListingBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub content: String,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
@@ -538,28 +540,29 @@ fn prepare_ordered_list(list: &OrderedList) -> ListBlock {
 
 fn prepare_listing(listing: &AstListing) -> ListingBlock {
     ListingBlock {
+        id: listing.metadata.id.clone(),
         content: listing.lines.join("\n"),
-        attributes: BTreeMap::new(),
+        attributes: listing.metadata.attributes.clone(),
         content_model: Some(ContentModel::Simple),
         line_number: None,
-        style: None,
-        role: None,
+        style: listing.metadata.style.clone(),
+        role: listing.metadata.role.clone(),
         level: 0,
-        title: None,
+        title: listing.metadata.title.clone(),
     }
 }
 
 fn prepare_compound_block(block: &AstCompoundBlock) -> CompoundBlock {
     CompoundBlock {
-        id: None,
+        id: block.metadata.id.clone(),
         blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
-        attributes: BTreeMap::new(),
+        attributes: block.metadata.attributes.clone(),
         content_model: Some(ContentModel::Compound),
         line_number: None,
-        style: None,
-        role: None,
+        style: block.metadata.style.clone(),
+        role: block.metadata.role.clone(),
         level: 0,
-        title: None,
+        title: block.metadata.title.clone(),
     }
 }
 
@@ -688,8 +691,23 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     collect_block_refs_into(&item.blocks, refs);
                 }
             }
-            PreparedBlock::Listing(_) => {}
+            PreparedBlock::Listing(listing) => {
+                if let Some(id) = &listing.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: listing.title.clone(),
+                        });
+                }
+            }
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
+                if let Some(id) = &example.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: example.title.clone(),
+                        });
+                }
                 collect_block_refs_into(&example.blocks, refs);
             }
             PreparedBlock::Section(section) => {
@@ -1935,6 +1953,7 @@ mod tests {
             blocks: vec![
                 Block::Listing(Listing {
                     lines: vec!["puts 'hello'".into()],
+                    metadata: Default::default(),
                 }),
                 Block::Sidebar(AstCompoundBlock {
                     blocks: vec![Block::Paragraph(Paragraph {
@@ -1943,6 +1962,7 @@ mod tests {
                         id: None,
                         reftext: None,
                     })],
+                    metadata: Default::default(),
                 }),
                 Block::Example(AstCompoundBlock {
                     blocks: vec![Block::Paragraph(Paragraph {
@@ -1951,6 +1971,7 @@ mod tests {
                         id: None,
                         reftext: None,
                     })],
+                    metadata: Default::default(),
                 }),
             ],
         };
@@ -1974,5 +1995,22 @@ mod tests {
             panic!("expected example");
         };
         assert_eq!(example.blocks.len(), 1);
+    }
+
+    #[test]
+    fn prepares_delimited_block_metadata() {
+        let document = parse_document(".Exhibit A\n[source,rust]\n----\nfn main() {}\n----");
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Listing(listing) = &preamble.blocks[0] else {
+            panic!("expected listing");
+        };
+
+        assert_eq!(listing.title.as_deref(), Some("Exhibit A"));
+        assert_eq!(listing.style.as_deref(), Some("source"));
+        assert_eq!(listing.attributes.get("language").map(String::as_str), Some("rust"));
+        assert_eq!(listing.attributes.get("title").map(String::as_str), Some("Exhibit A"));
     }
 }

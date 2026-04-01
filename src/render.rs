@@ -35,7 +35,7 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
         PreparedBlock::Example(example) => render_compound(html, "exampleblock", example),
-        PreparedBlock::Sidebar(sidebar) => render_compound(html, "sidebarblock", sidebar),
+        PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -83,7 +83,15 @@ fn render_ordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
 }
 
 fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
-    html.push_str("<div class=\"listingblock\">\n<div class=\"content\">\n<pre>");
+    html.push_str("<div class=\"listingblock\"");
+    if let Some(id) = &listing.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n");
+    if let Some(title) = &listing.title {
+        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+    }
+    html.push_str("<div class=\"content\">\n<pre>");
     html.push_str(&escape_html(&listing.content));
     html.push_str("</pre>\n</div>\n</div>\n");
 }
@@ -93,7 +101,30 @@ fn render_compound(
     class_name: &str,
     block: &crate::prepare::CompoundBlock,
 ) {
-    html.push_str(&format!("<div class=\"{class_name}\">\n<div class=\"content\">\n"));
+    html.push_str(&format!("<div class=\"{class_name}\""));
+    if let Some(id) = &block.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n");
+    if let Some(title) = &block.title {
+        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+    }
+    html.push_str("<div class=\"content\">\n");
+    for child in &block.blocks {
+        render_block(html, child);
+    }
+    html.push_str("</div>\n</div>\n");
+}
+
+fn render_sidebar(html: &mut String, block: &crate::prepare::CompoundBlock) {
+    html.push_str("<div class=\"sidebarblock\"");
+    if let Some(id) = &block.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n<div class=\"content\">\n");
+    if let Some(title) = &block.title {
+        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+    }
     for child in &block.blocks {
         render_block(html, child);
     }
@@ -173,7 +204,7 @@ fn escape_html(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, CompoundBlock, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink,
+        Block, BlockMetadata, CompoundBlock, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink,
         InlineSpan, InlineVariant, InlineXref, ListItem, Listing, OrderedList, Paragraph,
         UnorderedList,
     };
@@ -722,6 +753,7 @@ mod tests {
             blocks: vec![
                 Block::Listing(Listing {
                     lines: vec!["puts 'hello'".into()],
+                    metadata: BlockMetadata::default(),
                 }),
                 Block::Sidebar(CompoundBlock {
                     blocks: vec![Block::Paragraph(Paragraph {
@@ -730,6 +762,7 @@ mod tests {
                         id: None,
                         reftext: None,
                     })],
+                    metadata: BlockMetadata::default(),
                 }),
                 Block::Example(CompoundBlock {
                     blocks: vec![Block::Paragraph(Paragraph {
@@ -738,6 +771,7 @@ mod tests {
                         id: None,
                         reftext: None,
                     })],
+                    metadata: BlockMetadata::default(),
                 }),
             ],
         };
@@ -750,5 +784,24 @@ mod tests {
         assert!(html.contains("<p>inside sidebar</p>"));
         assert!(html.contains("<div class=\"exampleblock\">"));
         assert!(html.contains("<p>inside example</p>"));
+    }
+
+    #[test]
+    fn renders_delimited_block_titles() {
+        let document = Document {
+            attributes: Default::default(),
+            title: None,
+            blocks: vec![Block::Listing(Listing {
+                lines: vec!["puts 'hello'".into()],
+                metadata: BlockMetadata {
+                    title: Some("Exhibit A".into()),
+                    ..Default::default()
+                },
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div class=\"title\">Exhibit A</div>"));
     }
 }

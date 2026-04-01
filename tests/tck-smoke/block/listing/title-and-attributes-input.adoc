@@ -1,0 +1,5 @@
+.Exhibit A
+[source,rust]
+----
+puts 'hello'
+----

@@ -1,0 +1,40 @@
+{
+  "name": "document",
+  "type": "block",
+  "blocks": [
+    {
+      "name": "listing",
+      "type": "block",
+      "title": [
+        {
+          "name": "text",
+          "type": "string",
+          "value": "Exhibit A",
+          "location": [{ "line": 1, "col": 2 }, { "line": 1, "col": 10 }]
+        }
+      ],
+      "metadata": {
+        "attributes": {
+          "title": "Exhibit A",
+          "$1": "source",
+          "$2": "rust",
+          "style": "source",
+          "language": "rust"
+        },
+        "location": [{ "line": 1, "col": 1 }, { "line": 2, "col": 13 }]
+      },
+      "form": "delimited",
+      "delimiter": "----",
+      "inlines": [
+        {
+          "type": "string",
+          "name": "text",
+          "value": "puts 'hello'",
+          "location": [{ "line": 4, "col": 1 }, { "line": 4, "col": 12 }]
+        }
+      ],
+      "location": [{ "line": 3, "col": 1 }, { "line": 5, "col": 4 }]
+    }
+  ],
+  "location": [{ "line": 1, "col": 1 }, { "line": 5, "col": 4 }]
+}

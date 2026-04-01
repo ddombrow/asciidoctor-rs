@@ -37,11 +37,24 @@ pub struct Paragraph {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     pub lines: Vec<String>,
+    pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompoundBlock {
     pub blocks: Vec<Block>,
+    pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BlockMetadata {
+    pub id: Option<String>,
+    pub title: Option<String>,
+    pub style: Option<String>,
+    pub role: Option<String>,
+    pub attributes: BTreeMap<String, String>,
+    pub options: Vec<String>,
+    pub roles: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

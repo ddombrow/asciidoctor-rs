@@ -451,6 +451,54 @@ inside example
   await expect(frame.locator(".exampleblock p")).toHaveText("inside example");
 });
 
+test("exports and renders delimited block titles and attributes", async ({ page }) => {
+  const source = `= Sample Document
+
+.Exhibit A
+[source,rust]
+----
+fn main() {}
+----
+
+.Callout Box
+[.featured,%open]
+****
+inside sidebar
+****`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks[0]).toMatchObject({
+    type: "listing",
+    title: "Exhibit A",
+    style: "source"
+  });
+  expect(preambleBlocks[0].attributes).toMatchObject({
+    title: "Exhibit A",
+    style: "source",
+    language: "rust"
+  });
+  expect(preambleBlocks[1]).toMatchObject({
+    type: "sidebar",
+    title: "Callout Box",
+    role: "featured"
+  });
+  expect(preambleBlocks[1].attributes).toMatchObject({
+    title: "Callout Box",
+    role: "featured",
+    "open-option": ""
+  });
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".listingblock > .title")).toHaveText("Exhibit A");
+  await expect(frame.locator(".sidebarblock > .content > .title")).toHaveText("Callout Box");
+});
+
 test("preview ignores header comments and preserves header attributes", async ({ page }) => {
   const source = `// leading comment
 = Sample Document

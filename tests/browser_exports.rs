@@ -289,3 +289,31 @@ fn browser_prepare_document_exposes_delimited_blocks() {
         Some("example")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_delimited_block_metadata() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\n\n.Exhibit A\n[source,rust]\n----\nputs 'hello'\n----\n",
+    )
+    .expect("value export should succeed");
+
+    let blocks = Array::from(&get_property(&value, "blocks"));
+    let preamble = blocks.get(0);
+    let preamble_blocks = Array::from(&get_property(&preamble, "blocks"));
+
+    let listing = preamble_blocks.get(0);
+    assert_eq!(
+        get_property(&listing, "title").as_string().as_deref(),
+        Some("Exhibit A")
+    );
+    assert_eq!(
+        get_property(&listing, "style").as_string().as_deref(),
+        Some("source")
+    );
+
+    let attributes = get_property(&listing, "attributes");
+    assert_eq!(
+        get_property(&attributes, "language").as_string().as_deref(),
+        Some("rust")
+    );
+}
