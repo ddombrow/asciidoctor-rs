@@ -248,6 +248,11 @@ pub fn prepare_document(document: &Document) -> DocumentBlock {
 }
 
 fn prepare_authors(document: &Document) -> Vec<Author> {
+    let indexed_authors = collect_indexed_authors(&document.attributes);
+    if !indexed_authors.is_empty() {
+        return indexed_authors;
+    }
+
     let name = document
         .attributes
         .get("author")
@@ -271,6 +276,35 @@ fn prepare_authors(document: &Document) -> Vec<Author> {
         name,
         email,
     }]
+}
+
+fn collect_indexed_authors(attributes: &BTreeMap<String, String>) -> Vec<Author> {
+    let mut authors = Vec::new();
+    let mut index = 1;
+
+    loop {
+        let name = attributes
+            .get(&format!("author_{index}"))
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let email = attributes
+            .get(&format!("email_{index}"))
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+
+        if name.is_none() && email.is_none() {
+            break;
+        }
+
+        authors.push(Author { name, email });
+        index += 1;
+    }
+
+    authors
 }
 
 fn prepare_revision(document: &Document) -> Option<Revision> {
@@ -829,6 +863,7 @@ mod tests {
         Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
         InlineXref, ListItem, Paragraph, UnorderedList,
     };
+    use crate::parser::parse_document;
     use crate::prepare::{
         ContentModel, PreparedBlock, PreparedInline, TextInline, prepare_document,
         prepared_document_to_json,
@@ -1006,6 +1041,62 @@ mod tests {
     }
 
     #[test]
+    fn carries_implicit_header_metadata_into_prepared_output() {
+        let document = parse_document(
+            "= Document Title\nStuart Rackham <founder@asciidoc.org>\nv8.6.8, 2012-07-12: See changelog.\n\ncontent",
+        );
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.authors,
+            vec![crate::prepare::Author {
+                name: Some("Stuart Rackham".into()),
+                email: Some("founder@asciidoc.org".into()),
+            }]
+        );
+        assert_eq!(
+            prepared.revision,
+            Some(crate::prepare::Revision {
+                number: Some("8.6.8".into()),
+                date: Some("2012-07-12".into()),
+                remark: Some("See changelog.".into()),
+            })
+        );
+        assert_eq!(
+            prepared.attributes.get("author").map(String::as_str),
+            Some("Stuart Rackham")
+        );
+        assert_eq!(
+            prepared.attributes.get("email").map(String::as_str),
+            Some("founder@asciidoc.org")
+        );
+    }
+
+    #[test]
+    fn carries_multiple_implicit_authors_into_prepared_authors() {
+        let document = parse_document(
+            "= Document Title\nDoc Writer <thedoctor@asciidoc.org>; Junior Writer <junior@asciidoctor.org>\n\ncontent",
+        );
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(
+            prepared.authors,
+            vec![
+                crate::prepare::Author {
+                    name: Some("Doc Writer".into()),
+                    email: Some("thedoctor@asciidoc.org".into()),
+                },
+                crate::prepare::Author {
+                    name: Some("Junior Writer".into()),
+                    email: Some("junior@asciidoctor.org".into()),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn carries_email_attribute_into_prepared_authors() {
         let document = Document {
             attributes: [("email".to_owned(), "jane@example.com".to_owned())]
@@ -1160,6 +1251,38 @@ mod tests {
         assert!(json.contains("\"number\": \"1.2\""));
         assert!(json.contains("\"date\": \"2026-03-31\""));
         assert!(json.contains("\"remark\": \"Draft\""));
+    }
+
+    #[test]
+    fn serializes_implicit_header_metadata_into_json() {
+        let document = parse_document(
+            "= Document Title\nStuart Rackham <founder@asciidoc.org>\nv8.6.8, 2012-07-12: See changelog.\n\ncontent",
+        );
+
+        let prepared = prepare_document(&document);
+        let json = prepared_document_to_json(&prepared).expect("json serialization");
+
+        assert!(json.contains("\"author\": \"Stuart Rackham\""));
+        assert!(json.contains("\"email\": \"founder@asciidoc.org\""));
+        assert!(json.contains("\"number\": \"8.6.8\""));
+        assert!(json.contains("\"date\": \"2012-07-12\""));
+        assert!(json.contains("\"remark\": \"See changelog.\""));
+    }
+
+    #[test]
+    fn serializes_multiple_implicit_authors_into_json() {
+        let document = parse_document(
+            "= Document Title\nDoc Writer <thedoctor@asciidoc.org>; Junior Writer <junior@asciidoctor.org>\n\ncontent",
+        );
+
+        let prepared = prepare_document(&document);
+        let json = prepared_document_to_json(&prepared).expect("json serialization");
+
+        assert!(json.contains("\"authors\": ["));
+        assert!(json.contains("\"name\": \"Doc Writer\""));
+        assert!(json.contains("\"email\": \"thedoctor@asciidoc.org\""));
+        assert!(json.contains("\"name\": \"Junior Writer\""));
+        assert!(json.contains("\"email\": \"junior@asciidoctor.org\""));
     }
 
     #[test]

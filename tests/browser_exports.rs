@@ -152,3 +152,69 @@ fn browser_prepare_document_exposes_revision_attributes() {
         Some("Draft")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_implicit_header_metadata() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\nStuart Rackham <founder@asciidoc.org>\nv8.6.8, 2012-07-12: See changelog.\n\nHello.\n",
+    )
+    .expect("value export should succeed");
+
+    let authors = Array::from(&get_property(&value, "authors"));
+    assert_eq!(authors.length(), 1);
+
+    let first_author = authors.get(0);
+    assert_eq!(
+        get_property(&first_author, "name").as_string().as_deref(),
+        Some("Stuart Rackham")
+    );
+    assert_eq!(
+        get_property(&first_author, "email").as_string().as_deref(),
+        Some("founder@asciidoc.org")
+    );
+
+    let revision = get_property(&value, "revision");
+    assert_eq!(
+        get_property(&revision, "number").as_string().as_deref(),
+        Some("8.6.8")
+    );
+    assert_eq!(
+        get_property(&revision, "date").as_string().as_deref(),
+        Some("2012-07-12")
+    );
+    assert_eq!(
+        get_property(&revision, "remark").as_string().as_deref(),
+        Some("See changelog.")
+    );
+}
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_multiple_implicit_authors() {
+    let value = asciidoctor_rs::prepare_document_value(
+        "= Sample Document\nDoc Writer <thedoctor@asciidoc.org>; Junior Writer <junior@asciidoctor.org>\n\nHello.\n",
+    )
+    .expect("value export should succeed");
+
+    let authors = Array::from(&get_property(&value, "authors"));
+    assert_eq!(authors.length(), 2);
+
+    let first_author = authors.get(0);
+    assert_eq!(
+        get_property(&first_author, "name").as_string().as_deref(),
+        Some("Doc Writer")
+    );
+    assert_eq!(
+        get_property(&first_author, "email").as_string().as_deref(),
+        Some("thedoctor@asciidoc.org")
+    );
+
+    let second_author = authors.get(1);
+    assert_eq!(
+        get_property(&second_author, "name").as_string().as_deref(),
+        Some("Junior Writer")
+    );
+    assert_eq!(
+        get_property(&second_author, "email").as_string().as_deref(),
+        Some("junior@asciidoctor.org")
+    );
+}

@@ -1,0 +1,86 @@
+{
+  "name": "document",
+  "type": "block",
+  "attributes": {
+    "author": "Doc Writer",
+    "author_1": "Doc Writer",
+    "author_2": "Junior Writer",
+    "authorcount": "2",
+    "authors": "Doc Writer, Junior Writer",
+    "email": "thedoctor@asciidoc.org",
+    "email_1": "thedoctor@asciidoc.org",
+    "email_2": "junior@asciidoctor.org"
+  },
+  "header": {
+    "title": [
+      {
+        "name": "text",
+        "type": "string",
+        "value": "Document Title",
+        "location": [
+          {
+            "line": 1,
+            "col": 3
+          },
+          {
+            "line": 1,
+            "col": 16
+          }
+        ]
+      }
+    ],
+    "location": [
+      {
+        "line": 1,
+        "col": 1
+      },
+      {
+        "line": 2,
+        "col": 75
+      }
+    ]
+  },
+  "blocks": [
+    {
+      "name": "paragraph",
+      "type": "block",
+      "inlines": [
+        {
+          "name": "text",
+          "type": "string",
+          "value": "body",
+          "location": [
+            {
+              "line": 4,
+              "col": 1
+            },
+            {
+              "line": 4,
+              "col": 4
+            }
+          ]
+        }
+      ],
+      "location": [
+        {
+          "line": 4,
+          "col": 1
+        },
+        {
+          "line": 4,
+          "col": 4
+        }
+      ]
+    }
+  ],
+  "location": [
+    {
+      "line": 1,
+      "col": 1
+    },
+    {
+      "line": 4,
+      "col": 4
+    }
+  ]
+}

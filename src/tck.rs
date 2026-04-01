@@ -140,14 +140,42 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
     let mut attributes = BTreeMap::new();
     let mut header = None;
 
-    while index < lines.len() && is_comment_line(lines[index]) {
-        index += 1;
-    }
+    index = skip_header_comments(&lines, index);
 
     if let Some((title, title_range, consumed)) = parse_heading_line(&lines, index, 1) {
         if title.level == 0 {
             let mut header_end = title_range[1].clone();
             index += consumed;
+            index = skip_header_comments(&lines, index);
+
+            if let Some(author_line) =
+                lines.get(index).and_then(|line| parse_implicit_author_line(&lines, index, line))
+            {
+                insert_author_attributes(&mut attributes, &author_line.authors);
+                header_end = Position {
+                    line: index + 1,
+                    col: lines[index].len(),
+                };
+                index += 1;
+                index = skip_header_comments(&lines, index);
+
+                if let Some(revision_line) =
+                    lines.get(index).and_then(|line| parse_implicit_revision_line(line))
+                {
+                    attributes.insert("revnumber".to_owned(), revision_line.number);
+                    if let Some(date) = revision_line.date {
+                        attributes.insert("revdate".to_owned(), date);
+                    }
+                    if let Some(remark) = revision_line.remark {
+                        attributes.insert("revremark".to_owned(), remark);
+                    }
+                    header_end = Position {
+                        line: index + 1,
+                        col: lines[index].len(),
+                    };
+                    index += 1;
+                }
+            }
 
             while index < lines.len() {
                 let line = lines[index];
@@ -486,6 +514,13 @@ fn is_comment_line(line: &str) -> bool {
     line.trim_start().starts_with("//")
 }
 
+fn skip_header_comments(lines: &[&str], mut index: usize) -> usize {
+    while index < lines.len() && is_comment_line(lines[index]) {
+        index += 1;
+    }
+    index
+}
+
 fn parse_attribute_entry(line: &str) -> Option<(String, String, usize)> {
     let stripped = line.strip_prefix(':')?;
     let separator = stripped.find(':')?;
@@ -495,6 +530,137 @@ fn parse_attribute_entry(line: &str) -> Option<(String, String, usize)> {
         return None;
     }
     Some((name.to_owned(), value, line.len()))
+}
+
+fn parse_implicit_author_line(
+    lines: &[&str],
+    index: usize,
+    line: &str,
+) -> Option<ImplicitAuthorLine> {
+    let trimmed = line.trim();
+    if trimmed.is_empty()
+        || is_comment_line(line)
+        || parse_attribute_entry(line).is_some()
+        || parse_heading_line(lines, index, 1).is_some()
+        || parse_implicit_revision_line(line).is_some()
+    {
+        return None;
+    }
+
+    let authors = trimmed
+        .split(';')
+        .filter_map(parse_implicit_author_entry)
+        .collect::<Vec<_>>();
+
+    if authors.is_empty() {
+        return None;
+    }
+
+    Some(ImplicitAuthorLine { authors })
+}
+
+fn parse_implicit_author_entry(entry: &str) -> Option<ImplicitAuthor> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(without_close) = trimmed.strip_suffix('>') {
+        if let Some(open_index) = without_close.rfind('<') {
+            let name = without_close[..open_index].trim();
+            let email = without_close[open_index + 1..].trim();
+            if !name.is_empty() && !email.is_empty() {
+                return Some(ImplicitAuthor {
+                    name: name.to_owned(),
+                    email: Some(email.to_owned()),
+                });
+            }
+        }
+    }
+
+    Some(ImplicitAuthor {
+        name: trimmed.to_owned(),
+        email: None,
+    })
+}
+
+fn insert_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    authors: &[ImplicitAuthor],
+) {
+    if authors.is_empty() {
+        return;
+    }
+
+    attributes.insert("author".to_owned(), authors[0].name.clone());
+    if let Some(email) = &authors[0].email {
+        attributes.insert("email".to_owned(), email.clone());
+    }
+
+    attributes.insert(
+        "authors".to_owned(),
+        authors
+            .iter()
+            .map(|author| author.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    attributes.insert("authorcount".to_owned(), authors.len().to_string());
+
+    if authors.len() > 1 {
+        for (index, author) in authors.iter().enumerate() {
+            let key_suffix = index + 1;
+            attributes.insert(format!("author_{key_suffix}"), author.name.clone());
+            if let Some(email) = &author.email {
+                attributes.insert(format!("email_{key_suffix}"), email.clone());
+            }
+        }
+    }
+}
+
+fn parse_implicit_revision_line(line: &str) -> Option<ImplicitRevisionLine> {
+    let trimmed = line.trim();
+    let remainder = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))?;
+
+    let (number_and_date, remark) = match remainder.split_once(':') {
+        Some((value, remark)) => (value.trim_end(), Some(remark.trim())),
+        None => (remainder, None),
+    };
+
+    let (number, date) = match number_and_date.split_once(',') {
+        Some((number, date)) => (number.trim(), Some(date.trim())),
+        None => (number_and_date.trim(), None),
+    };
+
+    if number.is_empty() || number.chars().any(char::is_whitespace) {
+        return None;
+    }
+
+    Some(ImplicitRevisionLine {
+        number: number.to_owned(),
+        date: date.filter(|value| !value.is_empty()).map(str::to_owned),
+        remark: remark.filter(|value| !value.is_empty()).map(str::to_owned),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImplicitAuthor {
+    name: String,
+    email: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImplicitAuthorLine {
+    authors: Vec<ImplicitAuthor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImplicitRevisionLine {
+    number: String,
+    date: Option<String>,
+    remark: Option<String>,
 }
 
 fn parse_heading_line(
@@ -874,6 +1040,59 @@ mod tests {
         );
         assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
         assert_eq!(document.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_implicit_metadata_in_tck_document_parsing() {
+        let document = parse_tck_document(
+            "= Document Title\nStuart Rackham <founder@asciidoc.org>\nv1.0, 2001-01-01\n:toc: left\n\nbody",
+        );
+
+        assert_eq!(
+            document.attributes.get("author").map(String::as_str),
+            Some("Stuart Rackham")
+        );
+        assert_eq!(
+            document.attributes.get("email").map(String::as_str),
+            Some("founder@asciidoc.org")
+        );
+        assert_eq!(
+            document.attributes.get("revnumber").map(String::as_str),
+            Some("1.0")
+        );
+        assert_eq!(
+            document.attributes.get("revdate").map(String::as_str),
+            Some("2001-01-01")
+        );
+        assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
+    }
+
+    #[test]
+    fn parses_multiple_implicit_authors_in_tck_document_parsing() {
+        let document = parse_tck_document(
+            "= Document Title\nDoc Writer <thedoctor@asciidoc.org>; Junior Writer <junior@asciidoctor.org>\n\nbody",
+        );
+
+        assert_eq!(
+            document.attributes.get("author").map(String::as_str),
+            Some("Doc Writer")
+        );
+        assert_eq!(
+            document.attributes.get("author_1").map(String::as_str),
+            Some("Doc Writer")
+        );
+        assert_eq!(
+            document.attributes.get("author_2").map(String::as_str),
+            Some("Junior Writer")
+        );
+        assert_eq!(
+            document.attributes.get("email_1").map(String::as_str),
+            Some("thedoctor@asciidoc.org")
+        );
+        assert_eq!(
+            document.attributes.get("email_2").map(String::as_str),
+            Some("junior@asciidoctor.org")
+        );
     }
 
     #[test]

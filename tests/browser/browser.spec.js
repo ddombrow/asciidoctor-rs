@@ -132,6 +132,108 @@ test("preview writes revision metadata into head", async ({ page }) => {
   });
 });
 
+test("exports implicit header metadata in document metadata", async ({ page }) => {
+  const source =
+    "= Sample Document\nStuart Rackham <founder@asciidoc.org>\nv8.6.8, 2012-07-12: See changelog.\n\nHello from the browser.\n";
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.attributes).toMatchObject({
+    author: "Stuart Rackham",
+    email: "founder@asciidoc.org",
+    revnumber: "8.6.8",
+    revdate: "2012-07-12",
+    revremark: "See changelog."
+  });
+  expect(document.authors).toEqual([
+    {
+      name: "Stuart Rackham",
+      email: "founder@asciidoc.org"
+    }
+  ]);
+  expect(document.revision).toEqual({
+    number: "8.6.8",
+    date: "2012-07-12",
+    remark: "See changelog."
+  });
+});
+
+test("preview writes implicit header metadata into head", async ({ page }) => {
+  const source =
+    "= Sample Document\nStuart Rackham <founder@asciidoc.org>\nv8.6.8, 2012-07-12: See changelog.\n\nHello from the browser.\n";
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const metadata = await page.locator("#preview-frame").evaluate((iframe) => ({
+    author: iframe.contentDocument?.querySelector('meta[name="author"]')?.getAttribute("content"),
+    email: iframe.contentDocument?.querySelector('meta[name="email"]')?.getAttribute("content"),
+    revnumber:
+      iframe.contentDocument?.querySelector('meta[name="revnumber"]')?.getAttribute("content"),
+    revdate: iframe.contentDocument?.querySelector('meta[name="revdate"]')?.getAttribute("content"),
+    revremark:
+      iframe.contentDocument?.querySelector('meta[name="revremark"]')?.getAttribute("content")
+  }));
+
+  expect(metadata).toEqual({
+    author: "Stuart Rackham",
+    email: "founder@asciidoc.org",
+    revnumber: "8.6.8",
+    revdate: "2012-07-12",
+    revremark: "See changelog."
+  });
+});
+
+test("exports multiple implicit authors without trailing semicolon", async ({ page }) => {
+  const source =
+    "= Sample Document\nDoc Writer <thedoctor@asciidoc.org>; Junior Writer <junior@asciidoctor.org>\n\nHello from the browser.\n";
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.attributes).toMatchObject({
+    author: "Doc Writer",
+    author_1: "Doc Writer",
+    author_2: "Junior Writer",
+    email: "thedoctor@asciidoc.org",
+    email_1: "thedoctor@asciidoc.org",
+    email_2: "junior@asciidoctor.org",
+    authors: "Doc Writer, Junior Writer",
+    authorcount: "2"
+  });
+  expect(document.authors).toEqual([
+    {
+      name: "Doc Writer",
+      email: "thedoctor@asciidoc.org"
+    },
+    {
+      name: "Junior Writer",
+      email: "junior@asciidoctor.org"
+    }
+  ]);
+});
+
+test("preview writes multiple implicit authors into head", async ({ page }) => {
+  const source =
+    "= Sample Document\nDoc Writer <thedoctor@asciidoc.org>; Junior Writer <junior@asciidoctor.org>\n\nHello from the browser.\n";
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const metadata = await page.locator("#preview-frame").evaluate((iframe) => ({
+    authors: [...iframe.contentDocument.querySelectorAll('meta[name="author"]')].map((node) =>
+      node.getAttribute("content")
+    ),
+    emails: [...iframe.contentDocument.querySelectorAll('meta[name="email"]')].map((node) =>
+      node.getAttribute("content")
+    )
+  }));
+
+  expect(metadata).toEqual({
+    authors: ["Doc Writer", "Junior Writer"],
+    emails: ["thedoctor@asciidoc.org", "junior@asciidoctor.org"]
+  });
+});
+
 test("exports prepared document as a JS value", async ({ page }) => {
   const document = await page.evaluate((input) => window.__prepareDocumentValue(input), sample);
 

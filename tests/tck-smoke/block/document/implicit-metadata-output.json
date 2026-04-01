@@ -1,0 +1,86 @@
+{
+  "name": "document",
+  "type": "block",
+  "attributes": {
+    "author": "Stuart Rackham",
+    "authorcount": "1",
+    "authors": "Stuart Rackham",
+    "email": "founder@asciidoc.org",
+    "revdate": "2012-07-12",
+    "revnumber": "8.6.8",
+    "revremark": "See changelog.",
+    "toc": "left"
+  },
+  "header": {
+    "title": [
+      {
+        "name": "text",
+        "type": "string",
+        "value": "Document Title",
+        "location": [
+          {
+            "line": 1,
+            "col": 3
+          },
+          {
+            "line": 1,
+            "col": 16
+          }
+        ]
+      }
+    ],
+    "location": [
+      {
+        "line": 1,
+        "col": 1
+      },
+      {
+        "line": 4,
+        "col": 10
+      }
+    ]
+  },
+  "blocks": [
+    {
+      "name": "paragraph",
+      "type": "block",
+      "inlines": [
+        {
+          "name": "text",
+          "type": "string",
+          "value": "body",
+          "location": [
+            {
+              "line": 6,
+              "col": 1
+            },
+            {
+              "line": 6,
+              "col": 4
+            }
+          ]
+        }
+      ],
+      "location": [
+        {
+          "line": 6,
+          "col": 1
+        },
+        {
+          "line": 6,
+          "col": 4
+        }
+      ]
+    }
+  ],
+  "location": [
+    {
+      "line": 1,
+      "col": 1
+    },
+    {
+      "line": 6,
+      "col": 4
+    }
+  ]
+}

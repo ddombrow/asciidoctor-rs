@@ -22,6 +22,24 @@ struct ParsedListMarker<'a> {
     content: &'a str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImplicitAuthor {
+    name: String,
+    email: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImplicitAuthorLine {
+    authors: Vec<ImplicitAuthor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImplicitRevisionLine {
+    number: String,
+    date: Option<String>,
+    remark: Option<String>,
+}
+
 pub fn parse_document(input: &str) -> Document {
     let lines: Vec<&str> = input.lines().collect();
     let (mut title, attributes, mut index) = parse_document_header(&lines);
@@ -119,9 +137,7 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
     let mut attributes = BTreeMap::new();
     let mut index = 0;
 
-    while index < lines.len() && is_comment_line(lines[index]) {
-        index += 1;
-    }
+    index = skip_header_comments(lines, index);
 
     let title = match parse_heading(lines, index) {
         Some((heading, consumed_lines)) if heading.level == 0 => {
@@ -130,6 +146,28 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
         }
         _ => return (None, attributes, index),
     };
+
+    index = skip_header_comments(lines, index);
+
+    if let Some(author_line) =
+        lines.get(index).and_then(|line| parse_implicit_author_line(lines, index, line))
+    {
+        insert_author_attributes(&mut attributes, &author_line.authors);
+        index += 1;
+        index = skip_header_comments(lines, index);
+
+        if let Some(revision_line) = lines.get(index).and_then(|line| parse_implicit_revision_line(line))
+        {
+            attributes.insert("revnumber".to_owned(), revision_line.number);
+            if let Some(date) = revision_line.date {
+                attributes.insert("revdate".to_owned(), date);
+            }
+            if let Some(remark) = revision_line.remark {
+                attributes.insert("revremark".to_owned(), remark);
+            }
+            index += 1;
+        }
+    }
 
     while index < lines.len() {
         let line = lines[index];
@@ -151,6 +189,13 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
     }
 
     (title, attributes, index)
+}
+
+fn skip_header_comments(lines: &[&str], mut index: usize) -> usize {
+    while index < lines.len() && is_comment_line(lines[index]) {
+        index += 1;
+    }
+    index
 }
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
@@ -483,6 +528,119 @@ fn parse_attribute_entry(line: &str) -> Option<(String, String)> {
     Some((name.to_owned(), stripped[separator + 1..].trim_start().to_owned()))
 }
 
+fn parse_implicit_author_line(
+    lines: &[&str],
+    index: usize,
+    line: &str,
+) -> Option<ImplicitAuthorLine> {
+    let trimmed = line.trim();
+    if trimmed.is_empty()
+        || is_comment_line(line)
+        || parse_attribute_entry(line).is_some()
+        || parse_heading(lines, index).is_some()
+        || parse_implicit_revision_line(line).is_some()
+    {
+        return None;
+    }
+
+    let authors = trimmed
+        .split(';')
+        .filter_map(parse_implicit_author_entry)
+        .collect::<Vec<_>>();
+
+    if authors.is_empty() {
+        return None;
+    }
+
+    Some(ImplicitAuthorLine { authors })
+}
+
+fn parse_implicit_author_entry(entry: &str) -> Option<ImplicitAuthor> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(without_close) = trimmed.strip_suffix('>') {
+        if let Some(open_index) = without_close.rfind('<') {
+            let name = without_close[..open_index].trim();
+            let email = without_close[open_index + 1..].trim();
+            if !name.is_empty() && !email.is_empty() {
+                return Some(ImplicitAuthor {
+                    name: name.to_owned(),
+                    email: Some(email.to_owned()),
+                });
+            }
+        }
+    }
+
+    Some(ImplicitAuthor {
+        name: trimmed.to_owned(),
+        email: None,
+    })
+}
+
+fn insert_author_attributes(
+    attributes: &mut BTreeMap<String, String>,
+    authors: &[ImplicitAuthor],
+) {
+    if authors.is_empty() {
+        return;
+    }
+
+    attributes.insert("author".to_owned(), authors[0].name.clone());
+    if let Some(email) = &authors[0].email {
+        attributes.insert("email".to_owned(), email.clone());
+    }
+
+    attributes.insert(
+        "authors".to_owned(),
+        authors
+            .iter()
+            .map(|author| author.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    attributes.insert("authorcount".to_owned(), authors.len().to_string());
+
+    if authors.len() > 1 {
+        for (index, author) in authors.iter().enumerate() {
+            let key_suffix = index + 1;
+            attributes.insert(format!("author_{key_suffix}"), author.name.clone());
+            if let Some(email) = &author.email {
+                attributes.insert(format!("email_{key_suffix}"), email.clone());
+            }
+        }
+    }
+}
+
+fn parse_implicit_revision_line(line: &str) -> Option<ImplicitRevisionLine> {
+    let trimmed = line.trim();
+    let remainder = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))?;
+
+    let (number_and_date, remark) = match remainder.split_once(':') {
+        Some((value, remark)) => (value.trim_end(), Some(remark.trim())),
+        None => (remainder, None),
+    };
+
+    let (number, date) = match number_and_date.split_once(',') {
+        Some((number, date)) => (number.trim(), Some(date.trim())),
+        None => (number_and_date.trim(), None),
+    };
+
+    if number.is_empty() || number.chars().any(char::is_whitespace) {
+        return None;
+    }
+
+    Some(ImplicitRevisionLine {
+        number: number.to_owned(),
+        date: date.filter(|value| !value.is_empty()).map(str::to_owned),
+        remark: remark.filter(|value| !value.is_empty()).map(str::to_owned),
+    })
+}
+
 fn is_comment_line(line: &str) -> bool {
     line.trim_start().starts_with("//")
 }
@@ -735,6 +893,166 @@ mod tests {
                 ("revdate".to_owned(), "2026-03-31".to_owned()),
                 ("revnumber".to_owned(), "1.2".to_owned()),
                 ("revremark".to_owned(), "Draft".to_owned())
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_implicit_author_line_in_document_header() {
+        let document = parse_document("= Document Title\nJane Doe\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Jane Doe".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authors".to_owned(), "Jane Doe".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_implicit_author_email_line_in_document_header() {
+        let document = parse_document("= Document Title\nStuart Rackham <founder@asciidoc.org>\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Stuart Rackham".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authors".to_owned(), "Stuart Rackham".to_owned()),
+                ("email".to_owned(), "founder@asciidoc.org".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_implicit_revision_line_in_document_header() {
+        let document = parse_document(
+            "= Document Title\nStuart Rackham <founder@asciidoc.org>\nv8.6.8, 2012-07-12: See changelog.\n\ncontent",
+        );
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Stuart Rackham".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authors".to_owned(), "Stuart Rackham".to_owned()),
+                ("email".to_owned(), "founder@asciidoc.org".to_owned()),
+                ("revdate".to_owned(), "2012-07-12".to_owned()),
+                ("revnumber".to_owned(), "8.6.8".to_owned()),
+                ("revremark".to_owned(), "See changelog.".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_implicit_revision_line_without_date() {
+        let document =
+            parse_document("= Document Title\nAuthor Name\nv1.0.0,:remark\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Author Name".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authors".to_owned(), "Author Name".to_owned()),
+                ("revnumber".to_owned(), "1.0.0".to_owned()),
+                ("revremark".to_owned(), "remark".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_implicit_revision_line_without_date_or_remark() {
+        let document = parse_document("= Document Title\nAndrew Stanton\nv1.0.0\n\ncontent");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Andrew Stanton".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authors".to_owned(), "Andrew Stanton".to_owned()),
+                ("revnumber".to_owned(), "1.0.0".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn ignores_implicit_revision_line_without_author_line() {
+        let document = parse_document("= Document Title\nv1.0.0\n\ncontent");
+
+        assert!(document.attributes.is_empty());
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("v1.0.0".into())],
+                    lines: vec!["v1.0.0".into()],
+                    id: None,
+                    reftext: None,
+                }),
+                Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("content".into())],
+                    lines: vec!["content".into()],
+                    id: None,
+                    reftext: None,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_implicit_metadata_before_explicit_attributes() {
+        let document = parse_document(
+            "= Document Title\n// author comment\nStuart Rackham <founder@asciidoc.org>\n// revision comment\nv1.0, 2001-01-01\n:toc: left\n\ncontent",
+        );
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Stuart Rackham".to_owned()),
+                ("authorcount".to_owned(), "1".to_owned()),
+                ("authors".to_owned(), "Stuart Rackham".to_owned()),
+                ("email".to_owned(), "founder@asciidoc.org".to_owned()),
+                ("revdate".to_owned(), "2001-01-01".to_owned()),
+                ("revnumber".to_owned(), "1.0".to_owned()),
+                ("toc".to_owned(), "left".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn parses_multiple_implicit_authors_without_trailing_semicolon() {
+        let document = parse_document(
+            "= Document Title\nDoc Writer <thedoctor@asciidoc.org>; Junior Writer <junior@asciidoctor.org>\n\ncontent",
+        );
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("author".to_owned(), "Doc Writer".to_owned()),
+                ("author_1".to_owned(), "Doc Writer".to_owned()),
+                ("author_2".to_owned(), "Junior Writer".to_owned()),
+                ("authorcount".to_owned(), "2".to_owned()),
+                ("authors".to_owned(), "Doc Writer, Junior Writer".to_owned()),
+                ("email".to_owned(), "thedoctor@asciidoc.org".to_owned()),
+                ("email_1".to_owned(), "thedoctor@asciidoc.org".to_owned()),
+                ("email_2".to_owned(), "junior@asciidoctor.org".to_owned()),
             ]
             .into_iter()
             .collect()
