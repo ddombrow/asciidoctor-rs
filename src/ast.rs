@@ -13,6 +13,9 @@ pub enum Block {
     Paragraph(Paragraph),
     UnorderedList(UnorderedList),
     OrderedList(OrderedList),
+    Listing(Listing),
+    Example(CompoundBlock),
+    Sidebar(CompoundBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +32,16 @@ pub struct Paragraph {
     pub inlines: Vec<Inline>,
     pub id: Option<String>,
     pub reftext: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listing {
+    pub lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompoundBlock {
+    pub blocks: Vec<Block>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

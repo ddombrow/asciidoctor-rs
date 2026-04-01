@@ -33,6 +33,9 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
         PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
         PreparedBlock::UnorderedList(list) => render_unordered_list(html, list),
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list),
+        PreparedBlock::Listing(listing) => render_listing(html, listing),
+        PreparedBlock::Example(example) => render_compound(html, "exampleblock", example),
+        PreparedBlock::Sidebar(sidebar) => render_compound(html, "sidebarblock", sidebar),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -77,6 +80,24 @@ fn render_ordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
         html.push_str("</li>\n");
     }
     html.push_str("</ol>\n</div>\n");
+}
+
+fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
+    html.push_str("<div class=\"listingblock\">\n<div class=\"content\">\n<pre>");
+    html.push_str(&escape_html(&listing.content));
+    html.push_str("</pre>\n</div>\n</div>\n");
+}
+
+fn render_compound(
+    html: &mut String,
+    class_name: &str,
+    block: &crate::prepare::CompoundBlock,
+) {
+    html.push_str(&format!("<div class=\"{class_name}\">\n<div class=\"content\">\n"));
+    for child in &block.blocks {
+        render_block(html, child);
+    }
+    html.push_str("</div>\n</div>\n");
 }
 
 fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBlock) {
@@ -152,8 +173,9 @@ fn escape_html(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan,
-        InlineVariant, InlineXref, ListItem, OrderedList, Paragraph, UnorderedList,
+        Block, CompoundBlock, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink,
+        InlineSpan, InlineVariant, InlineXref, ListItem, Listing, OrderedList, Paragraph,
+        UnorderedList,
     };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
@@ -690,5 +712,43 @@ mod tests {
         assert!(html.contains("<p>nested item</p>"));
         assert!(html.contains("<p>continued paragraph</p>"));
         assert!(html.contains("<p>second item</p>"));
+    }
+
+    #[test]
+    fn renders_delimited_blocks() {
+        let document = Document {
+            attributes: Default::default(),
+            title: None,
+            blocks: vec![
+                Block::Listing(Listing {
+                    lines: vec!["puts 'hello'".into()],
+                }),
+                Block::Sidebar(CompoundBlock {
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        lines: vec!["inside sidebar".into()],
+                        inlines: vec![Inline::Text("inside sidebar".into())],
+                        id: None,
+                        reftext: None,
+                    })],
+                }),
+                Block::Example(CompoundBlock {
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        lines: vec!["inside example".into()],
+                        inlines: vec![Inline::Text("inside example".into())],
+                        id: None,
+                        reftext: None,
+                    })],
+                }),
+            ],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div class=\"listingblock\">"));
+        assert!(html.contains("<pre>puts &#39;hello&#39;</pre>"));
+        assert!(html.contains("<div class=\"sidebarblock\">"));
+        assert!(html.contains("<p>inside sidebar</p>"));
+        assert!(html.contains("<div class=\"exampleblock\">"));
+        assert!(html.contains("<p>inside example</p>"));
     }
 }

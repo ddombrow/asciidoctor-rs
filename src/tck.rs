@@ -37,6 +37,10 @@ pub struct AsgBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub form: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delimiter: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub inlines: Option<Vec<AsgInline>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Vec<AsgBlock>>,
@@ -343,6 +347,8 @@ fn parse_blocks(
                     ],
                 }]),
                 level: Some(heading.level),
+                form: None,
+                delimiter: None,
                 inlines: None,
                 blocks: Some(child_blocks),
                 variant: None,
@@ -354,6 +360,20 @@ fn parse_blocks(
 
             index = child_start
                 + count_consumed_lines(&lines[child_start..], stop_at_level, heading.level);
+            continue;
+        }
+
+        if let Some((block, consumed_lines)) = parse_delimited_block(lines, index, line_offset) {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            last_end = Some(block.location[1].clone());
+            blocks.push(block);
+            index += consumed_lines;
             continue;
         }
 
@@ -402,6 +422,8 @@ fn parse_blocks(
                 node_type: "block",
                 title: None,
                 level: None,
+                form: None,
+                delimiter: None,
                 inlines: None,
                 blocks: None,
                 variant: Some(match list_marker.kind {
@@ -460,6 +482,87 @@ fn count_consumed_lines(lines: &[&str], stop_at_level: Option<u8>, current_level
     index
 }
 
+fn parse_delimited_block(
+    lines: &[&str],
+    index: usize,
+    line_offset: usize,
+) -> Option<(AsgBlock, usize)> {
+    let delimiter = lines.get(index)?.trim();
+    let name = match delimiter {
+        "----" => "listing",
+        "====" => "example",
+        "****" => "sidebar",
+        _ => return None,
+    };
+
+    let closing_index = lines[index + 1..]
+        .iter()
+        .position(|line| line.trim() == delimiter)
+        .map(|offset| index + 1 + offset)?;
+    let start_line = line_offset + index;
+    let end_line = line_offset + closing_index;
+    let inner_lines = &lines[index + 1..closing_index];
+    let consumed = closing_index - index + 1;
+
+    let mut block = AsgBlock {
+        name,
+        node_type: "block",
+        title: None,
+        level: None,
+        form: Some("delimited"),
+        delimiter: Some(match delimiter {
+            "----" => "----",
+            "====" => "====",
+            "****" => "****",
+            _ => unreachable!(),
+        }),
+        inlines: None,
+        blocks: None,
+        variant: None,
+        marker: None,
+        items: vec![],
+        location: [
+            Position {
+                line: start_line,
+                col: 1,
+            },
+            Position {
+                line: end_line,
+                col: lines[closing_index].trim_end().len(),
+            },
+        ],
+    };
+
+    match name {
+        "listing" => {
+            let content = inner_lines.join("\n");
+            if !content.is_empty() {
+                let start = Position {
+                    line: start_line + 1,
+                    col: 1,
+                };
+                let end = Position {
+                    line: end_line - 1,
+                    col: inner_lines.last().map(|line| line.len()).unwrap_or(1),
+                };
+                block.inlines = Some(vec![AsgInline::Text(InlineText {
+                    name: "text",
+                    node_type: "string",
+                    value: content,
+                    location: [start, end],
+                })]);
+            }
+        }
+        "example" | "sidebar" => {
+            let (children, _) = parse_blocks(inner_lines, start_line + 1, None);
+            block.blocks = Some(children);
+        }
+        _ => {}
+    }
+
+    Some((block, consumed))
+}
+
 fn flush_paragraph(
     blocks: &mut Vec<AsgBlock>,
     paragraph_start: &mut Option<usize>,
@@ -485,6 +588,8 @@ fn flush_paragraph(
         node_type: "block",
         title: None,
         level: None,
+        form: None,
+        delimiter: None,
         inlines: Some(parse_tck_inlines_at(&value, start.line, start.col)),
         blocks: None,
         variant: None,
@@ -1173,7 +1278,7 @@ fn offset_to_end_position(
 
 #[cfg(test)]
 mod tests {
-    use crate::tck::{parse_tck_document, parse_tck_inlines, render_tck_json_from_request};
+    use crate::tck::{AsgInline, parse_tck_document, parse_tck_inlines, render_tck_json_from_request};
 
     #[test]
     fn renders_ordered_list_block() {
@@ -1429,5 +1534,33 @@ mod tests {
         assert!(json.contains("\"name\": \"text\""));
         assert!(json.contains("\"value\": \"*not strong*\""));
         assert!(!json.contains("\"variant\": \"strong\""));
+    }
+
+    #[test]
+    fn renders_tck_delimited_listing_block() {
+        let document = parse_tck_document("----\ndef main\n  puts 'hello'\nend\n----");
+        let block = document.blocks.first().expect("listing block");
+
+        assert_eq!(block.name, "listing");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("----"));
+        let Some(inlines) = &block.inlines else {
+            panic!("expected listing text");
+        };
+        let AsgInline::Text(text) = &inlines[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "def main\n  puts 'hello'\nend");
+    }
+
+    #[test]
+    fn renders_tck_delimited_sidebar_block() {
+        let document = parse_tck_document("****\n* one\n* two\n****");
+        let block = document.blocks.first().expect("sidebar block");
+
+        assert_eq!(block.name, "sidebar");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("****"));
+        assert!(block.blocks.as_ref().is_some_and(|blocks| !blocks.is_empty()));
     }
 }

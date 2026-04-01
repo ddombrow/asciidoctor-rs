@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::ast::{Block, Document, Heading, ListItem, OrderedList, Paragraph, UnorderedList};
+use crate::ast::{
+    Block, CompoundBlock, Document, Heading, ListItem, Listing, OrderedList, Paragraph,
+    UnorderedList,
+};
 use crate::inline::parse_inlines;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,89 +49,8 @@ struct ImplicitRevisionLine {
 
 pub fn parse_document(input: &str) -> Document {
     let lines: Vec<&str> = input.lines().collect();
-    let (mut title, attributes, mut index) = parse_document_header(&lines);
-    let mut blocks = Vec::new();
-    let mut current_paragraph = Vec::new();
-    let mut current_paragraph_anchor = None;
-    let mut pending_anchor = None;
-
-    while index < lines.len() {
-        let line = lines[index];
-
-        if let Some(anchor) = parse_block_anchor(line) {
-            flush_paragraph(
-                &mut blocks,
-                &mut current_paragraph,
-                &mut current_paragraph_anchor,
-            );
-            pending_anchor = Some(anchor);
-            index += 1;
-            continue;
-        }
-
-        if let Some((heading, consumed_lines)) = parse_heading(&lines, index) {
-            flush_paragraph(
-                &mut blocks,
-                &mut current_paragraph,
-                &mut current_paragraph_anchor,
-            );
-            let heading = apply_anchor_to_heading(heading, pending_anchor.take());
-
-            if heading.level == 0 && title.is_none() && blocks.is_empty() {
-                title = Some(heading);
-            } else {
-                blocks.push(Block::Heading(heading));
-            }
-            index += consumed_lines;
-            continue;
-        }
-
-        if let Some((list, consumed_lines)) = parse_unordered_list(&lines, index) {
-            flush_paragraph(
-                &mut blocks,
-                &mut current_paragraph,
-                &mut current_paragraph_anchor,
-            );
-            pending_anchor = None;
-            blocks.push(Block::UnorderedList(list));
-            index += consumed_lines;
-            continue;
-        }
-
-        if let Some((list, consumed_lines)) = parse_ordered_list(&lines, index) {
-            flush_paragraph(
-                &mut blocks,
-                &mut current_paragraph,
-                &mut current_paragraph_anchor,
-            );
-            pending_anchor = None;
-            blocks.push(Block::OrderedList(list));
-            index += consumed_lines;
-            continue;
-        }
-
-        if line.trim().is_empty() {
-            flush_paragraph(
-                &mut blocks,
-                &mut current_paragraph,
-                &mut current_paragraph_anchor,
-            );
-            index += 1;
-            continue;
-        }
-
-        if current_paragraph.is_empty() {
-            current_paragraph_anchor = pending_anchor.take();
-        }
-        current_paragraph.push(line.to_owned());
-        index += 1;
-    }
-
-    flush_paragraph(
-        &mut blocks,
-        &mut current_paragraph,
-        &mut current_paragraph_anchor,
-    );
+    let (mut title, attributes, index) = parse_document_header(&lines);
+    let blocks = parse_blocks_from_lines(&lines[index..], &mut title, true);
 
     Document {
         title,
@@ -215,6 +137,173 @@ fn skip_header_comments(lines: &[&str], mut index: usize) -> usize {
         index += 1;
     }
     index
+}
+
+fn parse_blocks_from_lines(
+    lines: &[&str],
+    title: &mut Option<Heading>,
+    allow_document_title: bool,
+) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    let mut current_paragraph = Vec::new();
+    let mut current_paragraph_anchor = None;
+    let mut pending_anchor = None;
+
+    while index < lines.len() {
+        let line = lines[index];
+
+        if let Some(anchor) = parse_block_anchor(line) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            pending_anchor = Some(anchor);
+            index += 1;
+            continue;
+        }
+
+        if let Some((block, consumed_lines)) = parse_delimited_block(lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                block,
+                pending_anchor.take(),
+            );
+            index += consumed_lines;
+            continue;
+        }
+
+        if let Some((heading, consumed_lines)) = parse_heading(lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                Block::Heading(heading),
+                pending_anchor.take(),
+            );
+            index += consumed_lines;
+            continue;
+        }
+
+        if let Some((list, consumed_lines)) = parse_unordered_list(lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            blocks.push(Block::UnorderedList(list));
+            pending_anchor = None;
+            index += consumed_lines;
+            continue;
+        }
+
+        if let Some((list, consumed_lines)) = parse_ordered_list(lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            blocks.push(Block::OrderedList(list));
+            pending_anchor = None;
+            index += consumed_lines;
+            continue;
+        }
+
+        if line.trim().is_empty() {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+            );
+            index += 1;
+            continue;
+        }
+
+        if current_paragraph.is_empty() {
+            current_paragraph_anchor = pending_anchor.take();
+        }
+        current_paragraph.push(line.to_owned());
+        index += 1;
+    }
+
+    flush_paragraph(
+        &mut blocks,
+        &mut current_paragraph,
+        &mut current_paragraph_anchor,
+    );
+
+    blocks
+}
+
+fn push_block(
+    blocks: &mut Vec<Block>,
+    title: &mut Option<Heading>,
+    allow_document_title: bool,
+    block: Block,
+    anchor: Option<PendingAnchor>,
+) {
+    match block {
+        Block::Heading(heading) => {
+            let heading = apply_anchor_to_heading(heading, anchor);
+            if allow_document_title && heading.level == 0 && title.is_none() && blocks.is_empty() {
+                *title = Some(heading);
+            } else {
+                blocks.push(Block::Heading(heading));
+            }
+        }
+        other => blocks.push(other),
+    }
+}
+
+fn parse_delimited_block(lines: &[&str], index: usize) -> Option<(Block, usize)> {
+    let delimiter = lines.get(index)?.trim();
+    let block_kind = match delimiter {
+        "----" => "listing",
+        "====" => "example",
+        "****" => "sidebar",
+        _ => return None,
+    };
+
+    let closing_index = lines[index + 1..]
+        .iter()
+        .position(|line| line.trim() == delimiter)
+        .map(|offset| index + 1 + offset)?;
+    let inner_lines = &lines[index + 1..closing_index];
+    let consumed = closing_index - index + 1;
+
+    let block = match block_kind {
+        "listing" => Block::Listing(Listing {
+            lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+        }),
+        "example" => {
+            let mut nested_title = None;
+            Block::Example(CompoundBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+            })
+        }
+        "sidebar" => {
+            let mut nested_title = None;
+            Block::Sidebar(CompoundBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+            })
+        }
+        _ => return None,
+    };
+
+    Some((block, consumed))
 }
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
@@ -341,6 +430,10 @@ fn parse_list_item_continuation_block(
         }
 
         return None;
+    }
+
+    if let Some((block, consumed)) = parse_delimited_block(lines, start) {
+        return Some((block, blank_lines + consumed));
     }
 
     let mut paragraph_lines = Vec::new();
@@ -889,8 +982,8 @@ fn is_valid_anchor_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, Heading, Inline, InlineForm, InlineVariant, ListItem, OrderedList, Paragraph,
-        UnorderedList,
+        Block, CompoundBlock, Heading, Inline, InlineForm, InlineVariant, ListItem, Listing,
+        OrderedList, Paragraph, UnorderedList,
     };
     use crate::parser::parse_document;
 
@@ -1716,6 +1809,66 @@ mod tests {
                         })],
                     },
                 ],
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_delimited_listing_blocks() {
+        let document = parse_document("----\ndef main\n  puts 'hello'\nend\n----");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::Listing(Listing {
+                lines: vec!["def main".into(), "  puts 'hello'".into(), "end".into()],
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_delimited_sidebar_blocks() {
+        let document = parse_document("****\n* one\n* two\n****");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::Sidebar(CompoundBlock {
+                blocks: vec![Block::UnorderedList(UnorderedList {
+                    items: vec![
+                        ListItem {
+                            blocks: vec![Block::Paragraph(Paragraph {
+                                inlines: vec![Inline::Text("one".into())],
+                                lines: vec!["one".into()],
+                                id: None,
+                                reftext: None,
+                            })],
+                        },
+                        ListItem {
+                            blocks: vec![Block::Paragraph(Paragraph {
+                                inlines: vec![Inline::Text("two".into())],
+                                lines: vec!["two".into()],
+                                id: None,
+                                reftext: None,
+                            })],
+                        },
+                    ],
+                })],
+            })]
+        );
+    }
+
+    #[test]
+    fn parses_delimited_example_blocks() {
+        let document = parse_document("====\nA paragraph.\n====");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::Example(CompoundBlock {
+                blocks: vec![Block::Paragraph(Paragraph {
+                    inlines: vec![Inline::Text("A paragraph.".into())],
+                    lines: vec!["A paragraph.".into()],
+                    id: None,
+                    reftext: None,
+                })],
             })]
         );
     }

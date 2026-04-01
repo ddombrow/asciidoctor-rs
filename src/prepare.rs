@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{Block, Document, Inline, InlineForm, InlineVariant, OrderedList, Paragraph, UnorderedList};
+use crate::ast::{
+    Block, CompoundBlock as AstCompoundBlock, Document, Inline, InlineForm, InlineVariant,
+    Listing as AstListing, OrderedList, Paragraph, UnorderedList,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +50,9 @@ pub enum PreparedBlock {
     Section(SectionBlock),
     UnorderedList(ListBlock),
     OrderedList(ListBlock),
+    Listing(ListingBlock),
+    Example(CompoundBlock),
+    Sidebar(CompoundBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +92,23 @@ pub struct ListBlock {
 #[serde(rename_all = "camelCase")]
 pub struct ListItemBlock {
     pub blocks: Vec<PreparedBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListingBlock {
+    pub content: String,
+    pub attributes: BTreeMap<String, String>,
+    pub content_model: Option<ContentModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub level: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +403,33 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::Listing(listing) => {
+                let listing = PreparedBlock::Listing(prepare_listing(listing));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(listing);
+                } else {
+                    prepared.push(listing);
+                }
+                index += 1;
+            }
+            Block::Example(example) => {
+                let example = PreparedBlock::Example(prepare_compound_block(example));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(example);
+                } else {
+                    prepared.push(example);
+                }
+                index += 1;
+            }
+            Block::Sidebar(sidebar) => {
+                let sidebar = PreparedBlock::Sidebar(prepare_compound_block(sidebar));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(sidebar);
+                } else {
+                    prepared.push(sidebar);
+                }
+                index += 1;
+            }
             Block::Heading(heading) => {
                 if wrap_document_preamble && !seen_section && !preamble_blocks.is_empty() {
                     prepared.push(PreparedBlock::Preamble(prepare_preamble(std::mem::take(
@@ -486,6 +536,33 @@ fn prepare_ordered_list(list: &OrderedList) -> ListBlock {
     }
 }
 
+fn prepare_listing(listing: &AstListing) -> ListingBlock {
+    ListingBlock {
+        content: listing.lines.join("\n"),
+        attributes: BTreeMap::new(),
+        content_model: Some(ContentModel::Simple),
+        line_number: None,
+        style: None,
+        role: None,
+        level: 0,
+        title: None,
+    }
+}
+
+fn prepare_compound_block(block: &AstCompoundBlock) -> CompoundBlock {
+    CompoundBlock {
+        id: None,
+        blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
+        attributes: BTreeMap::new(),
+        content_model: Some(ContentModel::Compound),
+        line_number: None,
+        style: None,
+        role: None,
+        level: 0,
+        title: None,
+    }
+}
+
 fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
     inlines
         .iter()
@@ -551,7 +628,10 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             PreparedBlock::Preamble(_)
             | PreparedBlock::Paragraph(_)
             | PreparedBlock::UnorderedList(_)
-            | PreparedBlock::OrderedList(_) => None,
+            | PreparedBlock::OrderedList(_)
+            | PreparedBlock::Listing(_)
+            | PreparedBlock::Example(_)
+            | PreparedBlock::Sidebar(_) => None,
         })
         .collect()
 }
@@ -607,6 +687,10 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                 for item in &list.items {
                     collect_block_refs_into(&item.blocks, refs);
                 }
+            }
+            PreparedBlock::Listing(_) => {}
+            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
+                collect_block_refs_into(&example.blocks, refs);
             }
             PreparedBlock::Section(section) => {
                 refs.entry(normalize_section_ref_key(&section.id))
@@ -674,6 +758,10 @@ fn resolve_xrefs_in_blocks(
                 for item in &mut list.items {
                     resolve_xrefs_in_blocks(&mut item.blocks, section_refs, block_refs);
                 }
+            }
+            PreparedBlock::Listing(_) => {}
+            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
+                resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
             }
             PreparedBlock::Section(section) => {
                 resolve_xrefs_in_blocks(&mut section.blocks, section_refs, block_refs)
@@ -860,8 +948,9 @@ fn inline_form_name(form: InlineForm) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, Document, Heading, Inline, InlineForm, InlineLink, InlineSpan, InlineVariant,
-        InlineXref, ListItem, Paragraph, UnorderedList,
+        Block, CompoundBlock as AstCompoundBlock, Document, Heading, Inline, InlineForm,
+        InlineLink, InlineSpan, InlineVariant, InlineXref, ListItem, Listing, Paragraph,
+        UnorderedList,
     };
     use crate::parser::parse_document;
     use crate::prepare::{
@@ -1836,5 +1925,54 @@ mod tests {
 
         assert_eq!(list.name, "ulist");
         assert_eq!(list.items.len(), 1);
+    }
+
+    #[test]
+    fn prepares_listing_and_compound_delimited_blocks() {
+        let document = Document {
+            attributes: Default::default(),
+            title: None,
+            blocks: vec![
+                Block::Listing(Listing {
+                    lines: vec!["puts 'hello'".into()],
+                }),
+                Block::Sidebar(AstCompoundBlock {
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        inlines: vec![Inline::Text("inside sidebar".into())],
+                        lines: vec!["inside sidebar".into()],
+                        id: None,
+                        reftext: None,
+                    })],
+                }),
+                Block::Example(AstCompoundBlock {
+                    blocks: vec![Block::Paragraph(Paragraph {
+                        inlines: vec![Inline::Text("inside example".into())],
+                        lines: vec!["inside example".into()],
+                        id: None,
+                        reftext: None,
+                    })],
+                }),
+            ],
+        };
+
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+
+        let PreparedBlock::Listing(listing) = &preamble.blocks[0] else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.content, "puts 'hello'");
+
+        let PreparedBlock::Sidebar(sidebar) = &preamble.blocks[1] else {
+            panic!("expected sidebar");
+        };
+        assert_eq!(sidebar.blocks.len(), 1);
+
+        let PreparedBlock::Example(example) = &preamble.blocks[2] else {
+            panic!("expected example");
+        };
+        assert_eq!(example.blocks.len(), 1);
     }
 }

@@ -246,6 +246,36 @@ function renderBlock(block, parentSectionLevel = 0) {
     `;
   }
 
+  if (block.type === "listing") {
+    return `
+      <div class="listingblock">
+        <div class="content">
+          <pre>${escapeHtml(block.content ?? "")}</pre>
+        </div>
+      </div>
+    `;
+  }
+
+  if (block.type === "example") {
+    return `
+      <div class="exampleblock">
+        <div class="content">
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+        </div>
+      </div>
+    `;
+  }
+
+  if (block.type === "sidebar") {
+    return `
+      <div class="sidebarblock">
+        <div class="content">
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+        </div>
+      </div>
+    `;
+  }
+
   return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;
 }
 
