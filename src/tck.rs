@@ -12,6 +12,7 @@ pub struct AsgDocument {
     pub name: &'static str,
     #[serde(rename = "type")]
     pub node_type: &'static str,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub attributes: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<AsgHeader>,
@@ -121,7 +122,7 @@ pub fn render_tck_json(input: &str) -> serde_json::Result<String> {
 
 pub fn render_tck_inline_json(input: &str) -> serde_json::Result<String> {
     let normalized = normalize_tck_newlines(input);
-    serde_json::to_string_pretty(&parse_tck_inlines(normalized.as_ref()))
+    serde_json::to_string_pretty(&parse_tck_inlines(trim_tck_inline_terminal_newline(normalized.as_ref())))
 }
 
 pub fn render_tck_json_from_request(request_json: &str) -> Result<String, String> {
@@ -280,6 +281,10 @@ fn normalize_tck_newlines(input: &str) -> Cow<'_, str> {
     }
 
     Cow::Owned(input.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
+fn trim_tck_inline_terminal_newline(input: &str) -> &str {
+    input.strip_suffix('\n').unwrap_or(input)
 }
 
 fn parse_blocks(
