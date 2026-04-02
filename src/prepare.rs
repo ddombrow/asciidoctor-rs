@@ -81,11 +81,19 @@ pub struct ParagraphBlock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub items: Vec<ListItemBlock>,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     pub level: u8,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -452,11 +460,11 @@ fn prepare_blocks(
                     id,
                     reftext: heading.reftext.clone(),
                     blocks: section_blocks,
-                    attributes: BTreeMap::new(),
+                    attributes: heading.metadata.attributes.clone(),
                     content_model: Some(ContentModel::Compound),
                     line_number: None,
-                    style: None,
-                    role: None,
+                    style: heading.metadata.style.clone(),
+                    role: heading.metadata.role.clone(),
                     level: section_level,
                     title: heading.title.clone(),
                     numbered: false,
@@ -496,13 +504,13 @@ fn prepare_paragraph(paragraph: &Paragraph) -> ParagraphBlock {
         blocks: Vec::new(),
         content: paragraph.plain_text(),
         inlines: prepare_inlines(&paragraph.inlines),
-        attributes: BTreeMap::new(),
+        attributes: paragraph.metadata.attributes.clone(),
         content_model: Some(ContentModel::Simple),
         line_number: None,
-        style: None,
-        role: None,
+        style: paragraph.metadata.style.clone(),
+        role: paragraph.metadata.role.clone(),
         level: 0,
-        title: None,
+        title: paragraph.metadata.title.clone(),
     }
 }
 
@@ -515,10 +523,14 @@ fn prepare_unordered_list(list: &UnorderedList) -> ListBlock {
                 blocks: prepare_blocks(&item.blocks, false, &mut Vec::new()),
             })
             .collect(),
-        attributes: BTreeMap::new(),
+        attributes: list.metadata.attributes.clone(),
         content_model: Some(ContentModel::Compound),
         level: 0,
         name: "ulist".into(),
+        id: list.metadata.id.clone(),
+        style: list.metadata.style.clone(),
+        role: list.metadata.role.clone(),
+        title: list.metadata.title.clone(),
     }
 }
 
@@ -531,10 +543,14 @@ fn prepare_ordered_list(list: &OrderedList) -> ListBlock {
                 blocks: prepare_blocks(&item.blocks, false, &mut Vec::new()),
             })
             .collect(),
-        attributes: BTreeMap::new(),
+        attributes: list.metadata.attributes.clone(),
         content_model: Some(ContentModel::Compound),
         level: 0,
         name: "olist".into(),
+        id: list.metadata.id.clone(),
+        style: list.metadata.style.clone(),
+        role: list.metadata.role.clone(),
+        title: list.metadata.title.clone(),
     }
 }
 
@@ -966,9 +982,9 @@ fn inline_form_name(form: InlineForm) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, CompoundBlock as AstCompoundBlock, Document, Heading, Inline, InlineForm,
-        InlineLink, InlineSpan, InlineVariant, InlineXref, ListItem, Listing, Paragraph,
-        UnorderedList,
+        Block, BlockMetadata, CompoundBlock as AstCompoundBlock, Document, Heading, Inline,
+        InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref, ListItem, Listing,
+        Paragraph, UnorderedList,
     };
     use crate::parser::parse_document;
     use crate::prepare::{
@@ -985,44 +1001,51 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Preamble paragraph.".into())],
                     lines: vec!["Preamble paragraph.".into()],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section A".into(),
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Section body.".into())],
                     lines: vec!["Section body.".into()],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Heading(Heading {
                     level: 2,
                     title: "Section A Child".into(),
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Nested body.".into())],
                     lines: vec!["Nested body.".into()],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section B".into(),
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
             ],
         };
 
@@ -1078,7 +1101,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1101,7 +1125,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1131,7 +1156,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1245,7 +1271,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1274,7 +1301,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1303,7 +1331,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1326,7 +1355,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1352,7 +1382,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1378,7 +1409,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: Vec::new(),
         };
 
@@ -1433,7 +1465,8 @@ mod tests {
                 lines: vec!["first line".into(), "second line".into()],
                 id: None,
                 reftext: None,
-            })],
+            metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1460,13 +1493,15 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("hello".into())],
                 lines: vec!["hello".into()],
                 id: None,
                 reftext: None,
-            })],
+            metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1497,7 +1532,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            })],
+            metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1529,7 +1565,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            })],
+            metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1566,7 +1603,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            })],
+            metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1594,7 +1632,8 @@ mod tests {
                 title: "Sample Document".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     lines: vec!["See <<First Section>>.".into()],
@@ -1610,13 +1649,15 @@ mod tests {
                     ],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
             ],
         };
 
@@ -1660,13 +1701,15 @@ mod tests {
                     ],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
                     id: Some("install".into()),
                     reftext: Some("Installation".into()),
-                }),
+                metadata: BlockMetadata::default()
+            }),
             ],
         };
 
@@ -1719,7 +1762,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            })],
+            metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1766,7 +1810,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            })],
+            metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1807,7 +1852,8 @@ mod tests {
                 title: "My Title".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: vec![],
         };
 
@@ -1842,20 +1888,23 @@ mod tests {
                 title: "Doc".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: vec![
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Section body.".into())],
                     lines: vec!["Section body.".into()],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
             ],
         };
 
@@ -1877,26 +1926,30 @@ mod tests {
                 title: "Doc".into(),
                 id: None,
                 reftext: None,
-            }),
+            metadata: BlockMetadata::default()
+        }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("First preamble paragraph.".into())],
                     lines: vec!["First preamble paragraph.".into()],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Second preamble paragraph.".into())],
                     lines: vec!["Second preamble paragraph.".into()],
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section One".into(),
                     id: None,
                     reftext: None,
-                }),
+                metadata: BlockMetadata::default()
+            }),
             ],
         };
 
@@ -1928,9 +1981,11 @@ mod tests {
                         lines: vec!["first item".into()],
                         id: None,
                         reftext: None,
+                        metadata: BlockMetadata::default()
                     })],
                 }],
-            })],
+                metadata: BlockMetadata::default()
+        })],
         };
 
         let prepared = prepare_document(&document);
@@ -1961,6 +2016,7 @@ mod tests {
                         lines: vec!["inside sidebar".into()],
                         id: None,
                         reftext: None,
+                        metadata: BlockMetadata::default()
                     })],
                     metadata: Default::default(),
                 }),
@@ -1970,6 +2026,7 @@ mod tests {
                         lines: vec!["inside example".into()],
                         id: None,
                         reftext: None,
+                        metadata: BlockMetadata::default()
                     })],
                     metadata: Default::default(),
                 }),
@@ -2014,3 +2071,4 @@ mod tests {
         assert_eq!(listing.attributes.get("title").map(String::as_str), Some("Exhibit A"));
     }
 }
+

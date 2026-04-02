@@ -24,6 +24,7 @@ pub struct Heading {
     pub title: String,
     pub id: Option<String>,
     pub reftext: Option<String>,
+    pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub struct Paragraph {
     pub inlines: Vec<Inline>,
     pub id: Option<String>,
     pub reftext: Option<String>,
+    pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,11 +62,13 @@ pub struct BlockMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnorderedList {
     pub items: Vec<ListItem>,
+    pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderedList {
     pub items: Vec<ListItem>,
+    pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

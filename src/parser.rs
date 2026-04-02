@@ -154,7 +154,9 @@ fn parse_blocks_from_lines(
     let mut index = 0;
     let mut current_paragraph = Vec::new();
     let mut current_paragraph_anchor = None;
+    let mut current_paragraph_prelude = None::<BlockPrelude>;
     let mut pending_anchor = None;
+    let mut pending_block_prelude = None::<BlockPrelude>;
 
     while index < lines.len() {
         let line = lines[index];
@@ -164,17 +166,27 @@ fn parse_blocks_from_lines(
                 &mut blocks,
                 &mut current_paragraph,
                 &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
             );
             pending_anchor = Some(anchor);
             index += 1;
             continue;
         }
 
-        if let Some((block, consumed_lines)) = parse_delimited_block(lines, index) {
+        if current_paragraph.is_empty() && pending_block_prelude.is_none() {
+            if let Some(prelude) = try_parse_block_prelude(lines, index) {
+                pending_block_prelude = Some(prelude.clone());
+                index += prelude.consumed_lines;
+                continue;
+            }
+        }
+
+        if let Some((block, consumed_lines)) = parse_delimited_block(lines, index, pending_block_prelude.as_ref()) {
             flush_paragraph(
                 &mut blocks,
                 &mut current_paragraph,
                 &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
             );
             push_block(
                 &mut blocks,
@@ -183,6 +195,7 @@ fn parse_blocks_from_lines(
                 block,
                 pending_anchor.take(),
             );
+            pending_block_prelude = None;
             index += consumed_lines;
             continue;
         }
@@ -192,12 +205,16 @@ fn parse_blocks_from_lines(
                 &mut blocks,
                 &mut current_paragraph,
                 &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
             );
             push_block(
                 &mut blocks,
                 title,
                 allow_document_title,
-                Block::Heading(heading),
+                Block::Heading(apply_prelude_to_heading(
+                    heading,
+                    pending_block_prelude.take(),
+                )),
                 pending_anchor.take(),
             );
             index += consumed_lines;
@@ -209,8 +226,12 @@ fn parse_blocks_from_lines(
                 &mut blocks,
                 &mut current_paragraph,
                 &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
             );
-            blocks.push(Block::UnorderedList(list));
+            blocks.push(Block::UnorderedList(apply_prelude_to_unordered_list(
+                list,
+                pending_block_prelude.take(),
+            )));
             pending_anchor = None;
             index += consumed_lines;
             continue;
@@ -221,8 +242,12 @@ fn parse_blocks_from_lines(
                 &mut blocks,
                 &mut current_paragraph,
                 &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
             );
-            blocks.push(Block::OrderedList(list));
+            blocks.push(Block::OrderedList(apply_prelude_to_ordered_list(
+                list,
+                pending_block_prelude.take(),
+            )));
             pending_anchor = None;
             index += consumed_lines;
             continue;
@@ -233,13 +258,16 @@ fn parse_blocks_from_lines(
                 &mut blocks,
                 &mut current_paragraph,
                 &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
             );
+            pending_block_prelude = None;
             index += 1;
             continue;
         }
 
         if current_paragraph.is_empty() {
             current_paragraph_anchor = pending_anchor.take();
+            current_paragraph_prelude = pending_block_prelude.take();
         }
         current_paragraph.push(line.to_owned());
         index += 1;
@@ -249,6 +277,7 @@ fn parse_blocks_from_lines(
         &mut blocks,
         &mut current_paragraph,
         &mut current_paragraph_anchor,
+        &mut current_paragraph_prelude,
     );
 
     blocks
@@ -274,10 +303,47 @@ fn push_block(
     }
 }
 
-fn parse_delimited_block(lines: &[&str], index: usize) -> Option<(Block, usize)> {
-    let prelude = parse_block_prelude(lines, index);
-    let delimiter_index = index + prelude.consumed_lines;
+fn apply_prelude_to_heading(mut heading: Heading, prelude: Option<BlockPrelude>) -> Heading {
+    if let Some(prelude) = prelude {
+        if heading.id.is_none() {
+            heading.id = prelude.metadata.id.clone();
+        }
+        heading.metadata = prelude.metadata;
+    }
+    heading
+}
+
+fn apply_prelude_to_unordered_list(
+    mut list: UnorderedList,
+    prelude: Option<BlockPrelude>,
+) -> UnorderedList {
+    if let Some(prelude) = prelude {
+        list.metadata = prelude.metadata;
+    }
+    list
+}
+
+fn apply_prelude_to_ordered_list(
+    mut list: OrderedList,
+    prelude: Option<BlockPrelude>,
+) -> OrderedList {
+    if let Some(prelude) = prelude {
+        list.metadata = prelude.metadata;
+    }
+    list
+}
+
+fn parse_delimited_block(
+    lines: &[&str],
+    index: usize,
+    pending_prelude: Option<&BlockPrelude>,
+) -> Option<(Block, usize)> {
+    let prelude = pending_prelude.cloned().unwrap_or_default();
+    let delimiter_index = index;
     let delimiter = lines.get(delimiter_index)?.trim();
+    if !is_delimited_block_delimiter(delimiter) {
+        return None;
+    }
     let block_kind = match delimiter {
         "----" => "listing",
         "====" => "example",
@@ -317,16 +383,13 @@ fn parse_delimited_block(lines: &[&str], index: usize) -> Option<(Block, usize)>
     Some((block, consumed))
 }
 
-fn parse_block_prelude(lines: &[&str], index: usize) -> BlockPrelude {
+fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude> {
     let mut prelude = BlockPrelude::default();
     let mut cursor = index;
 
     if let Some(title) = lines.get(cursor).and_then(|line| parse_block_title(line)) {
         let next = cursor + 1;
-        if lines
-            .get(next)
-            .is_some_and(|line| parse_attribute_list_line(line).is_some() || is_delimited_block_delimiter(line))
-        {
+        if lines.get(next).is_some_and(|line| !line.trim().is_empty()) {
             prelude.metadata.title = Some(title.clone());
             prelude.metadata.attributes.insert("title".into(), title);
             cursor += 1;
@@ -335,14 +398,14 @@ fn parse_block_prelude(lines: &[&str], index: usize) -> BlockPrelude {
 
     if let Some(attr_line) = lines.get(cursor).and_then(|line| parse_attribute_list_line(line)) {
         let next = cursor + 1;
-        if lines.get(next).is_some_and(|line| is_delimited_block_delimiter(line)) {
+        if lines.get(next).is_some_and(|line| !line.trim().is_empty()) {
             apply_attribute_list_to_metadata(&mut prelude.metadata, &attr_line);
             cursor += 1;
         }
     }
 
     prelude.consumed_lines = cursor - index;
-    prelude
+    (prelude.consumed_lines > 0).then_some(prelude)
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
@@ -350,6 +413,9 @@ fn is_delimited_block_delimiter(line: &str) -> bool {
 }
 
 fn parse_block_title(line: &str) -> Option<String> {
+    if parse_list_marker(line).is_some() {
+        return None;
+    }
     let title = line.strip_prefix('.')?.trim_end();
     (!title.is_empty()).then(|| title.to_owned())
 }
@@ -512,13 +578,25 @@ fn unquote_attribute_value(value: &str) -> String {
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
     parse_list(lines, index, ListKind::Unordered, 1).map(|(items, consumed)| {
-        (UnorderedList { items }, consumed)
+        (
+            UnorderedList {
+                items,
+                metadata: BlockMetadata::default(),
+            },
+            consumed,
+        )
     })
 }
 
 fn parse_ordered_list(lines: &[&str], index: usize) -> Option<(OrderedList, usize)> {
     parse_list(lines, index, ListKind::Ordered, 1).map(|(items, consumed)| {
-        (OrderedList { items }, consumed)
+        (
+            OrderedList {
+                items,
+                metadata: BlockMetadata::default(),
+            },
+            consumed,
+        )
     })
 }
 
@@ -636,7 +714,7 @@ fn parse_list_item_continuation_block(
         return None;
     }
 
-    if let Some((block, consumed)) = parse_delimited_block(lines, start) {
+    if let Some((block, consumed)) = parse_delimited_block(lines, start, None) {
         return Some((block, blank_lines + consumed));
     }
 
@@ -668,8 +746,14 @@ fn parse_list_item_continuation_block(
 fn parse_list_block(lines: &[&str], index: usize, kind: ListKind, level: usize) -> Option<(Block, usize)> {
     let (items, consumed) = parse_list(lines, index, kind, level)?;
     let block = match kind {
-        ListKind::Unordered => Block::UnorderedList(UnorderedList { items }),
-        ListKind::Ordered => Block::OrderedList(OrderedList { items }),
+        ListKind::Unordered => Block::UnorderedList(UnorderedList {
+            items,
+            metadata: BlockMetadata::default(),
+        }),
+        ListKind::Ordered => Block::OrderedList(OrderedList {
+            items,
+            metadata: BlockMetadata::default(),
+        }),
     };
     Some((block, consumed))
 }
@@ -734,6 +818,7 @@ fn make_paragraph(lines: Vec<String>) -> Paragraph {
         lines,
         id: None,
         reftext: None,
+        metadata: BlockMetadata::default(),
     }
 }
 
@@ -751,6 +836,7 @@ fn flush_paragraph(
     blocks: &mut Vec<Block>,
     current_paragraph: &mut Vec<String>,
     current_paragraph_anchor: &mut Option<PendingAnchor>,
+    current_paragraph_prelude: &mut Option<BlockPrelude>,
 ) {
     if current_paragraph.is_empty() {
         return;
@@ -758,11 +844,20 @@ fn flush_paragraph(
 
     let lines = std::mem::take(current_paragraph);
     let anchor = current_paragraph_anchor.take();
+    let prelude = current_paragraph_prelude.take();
+    let metadata = prelude
+        .map(|prelude| prelude.metadata)
+        .unwrap_or_default();
+    let id = anchor
+        .as_ref()
+        .map(|anchor| anchor.id.clone())
+        .or_else(|| metadata.id.clone());
     blocks.push(Block::Paragraph(Paragraph {
         inlines: parse_inlines(&lines.join("\n")),
         lines,
-        id: anchor.as_ref().map(|anchor| anchor.id.clone()),
+        id,
         reftext: anchor.and_then(|anchor| anchor.reftext),
+        metadata,
     }));
 }
 
@@ -805,6 +900,7 @@ fn parse_atx_heading(line: &str) -> Option<Heading> {
         title,
         id: None,
         reftext: None,
+        metadata: BlockMetadata::default(),
     })
 }
 
@@ -828,6 +924,7 @@ fn parse_setext_heading(lines: &[&str], index: usize) -> Option<(Heading, usize)
             title: title.to_owned(),
             id: None,
             reftext: None,
+            metadata: BlockMetadata::default(),
         },
         2,
     ))
@@ -1203,12 +1300,14 @@ mod tests {
                     lines: vec!["first line".into(), "second line".into()],
                     id: None,
                     reftext: None,
+                metadata: BlockMetadata::default(),
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("third line".into())],
                     lines: vec!["third line".into()],
                     id: None,
                     reftext: None,
+                metadata: BlockMetadata::default(),
                 }),
             ]
         );
@@ -1226,6 +1325,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -1236,12 +1336,14 @@ mod tests {
                     title: "Section One".into(),
                     id: None,
                     reftext: None,
+                metadata: BlockMetadata::default(),
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("content".into())],
                     lines: vec!["content".into()],
                     id: None,
                     reftext: None,
+                metadata: BlockMetadata::default(),
                 }),
             ]
         );
@@ -1258,6 +1360,7 @@ mod tests {
                 title: "Section One".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1273,6 +1376,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -1282,6 +1386,7 @@ mod tests {
                 title: "Section A".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1298,6 +1403,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -1316,6 +1422,7 @@ mod tests {
                 lines: vec!["content".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1557,12 +1664,14 @@ mod tests {
                     lines: vec!["v1.0.0".into()],
                     id: None,
                     reftext: None,
+                metadata: BlockMetadata::default(),
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("content".into())],
                     lines: vec!["content".into()],
                     id: None,
                     reftext: None,
+                metadata: BlockMetadata::default(),
                 }),
             ]
         );
@@ -1636,6 +1745,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -1645,6 +1755,7 @@ mod tests {
                 lines: vec!["content".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1665,6 +1776,7 @@ mod tests {
                 lines: vec!["content".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1682,6 +1794,7 @@ mod tests {
                 lines: vec!["body".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1701,6 +1814,7 @@ mod tests {
                 lines: vec!["intro text".into(), ":ignored: value".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1720,6 +1834,7 @@ mod tests {
                 lines: vec![":body-attr: value".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1736,6 +1851,7 @@ mod tests {
                 lines: vec!["=#= My Title".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1785,7 +1901,8 @@ mod tests {
                 title: "First Section".into(),
                 id: Some("install".into()),
                 reftext: Some("Installation".into()),
-            })]
+            metadata: BlockMetadata::default()
+        })]
         );
     }
 
@@ -1800,7 +1917,8 @@ mod tests {
                 lines: vec!["Hello".into()],
                 id: Some("intro".into()),
                 reftext: Some("Introduction".into()),
-            })]
+            metadata: BlockMetadata::default()
+        })]
         );
     }
 
@@ -1818,6 +1936,7 @@ mod tests {
                             lines: vec!["first item".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                     ListItem {
@@ -1826,9 +1945,11 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1847,6 +1968,7 @@ mod tests {
                             lines: vec!["first item".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                     ListItem {
@@ -1855,9 +1977,11 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1873,6 +1997,7 @@ mod tests {
                 title: "My Title".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -1882,6 +2007,7 @@ mod tests {
                 lines: vec!["A paragraph.".into()],
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1897,6 +2023,7 @@ mod tests {
                 title: "First Title".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -1906,6 +2033,7 @@ mod tests {
                 title: "Second Title".into(),
                 id: None,
                 reftext: None,
+            metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1924,6 +2052,7 @@ mod tests {
                             lines: vec!["first item".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                     ListItem {
@@ -1932,9 +2061,11 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1954,6 +2085,7 @@ mod tests {
                                 lines: vec!["parent".into()],
                                 id: None,
                                 reftext: None,
+                            metadata: BlockMetadata::default(),
                             }),
                             Block::UnorderedList(UnorderedList {
                                 items: vec![ListItem {
@@ -1962,8 +2094,10 @@ mod tests {
                                         lines: vec!["child".into()],
                                         id: None,
                                         reftext: None,
+                                    metadata: BlockMetadata::default(),
                                     })],
                                 }],
+                                metadata: BlockMetadata::default(),
                             }),
                         ],
                     },
@@ -1973,9 +2107,11 @@ mod tests {
                             lines: vec!["sibling".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -1995,12 +2131,14 @@ mod tests {
                                 lines: vec!["first item".into()],
                                 id: None,
                                 reftext: None,
+                            metadata: BlockMetadata::default(),
                             }),
                             Block::Paragraph(Paragraph {
                                 inlines: vec![Inline::Text("continued paragraph".into())],
                                 lines: vec!["continued paragraph".into()],
                                 id: None,
                                 reftext: None,
+                            metadata: BlockMetadata::default(),
                             }),
                         ],
                     },
@@ -2010,9 +2148,11 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
+                        metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2045,6 +2185,7 @@ mod tests {
                                 lines: vec!["one".into()],
                                 id: None,
                                 reftext: None,
+                            metadata: BlockMetadata::default(),
                             })],
                         },
                         ListItem {
@@ -2053,9 +2194,11 @@ mod tests {
                                 lines: vec!["two".into()],
                                 id: None,
                                 reftext: None,
+                            metadata: BlockMetadata::default(),
                             })],
                         },
                     ],
+                    metadata: BlockMetadata::default(),
                 })],
                 metadata: BlockMetadata::default(),
             })]
@@ -2074,6 +2217,7 @@ mod tests {
                     lines: vec!["A paragraph.".into()],
                     id: None,
                     reftext: None,
+                metadata: BlockMetadata::default(),
                 })],
                 metadata: BlockMetadata::default(),
             })]
@@ -2111,3 +2255,6 @@ mod tests {
         assert_eq!(sidebar.metadata.roles, vec!["callout"]);
     }
 }
+
+
+

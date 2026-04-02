@@ -182,8 +182,10 @@ function renderBlock(block, parentSectionLevel = 0) {
 
   if (block.type === "paragraph") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
     return `
       <div class="paragraph"${id}>
+        ${title}
         <p>${renderInlines(block.inlines ?? [])}</p>
         </div>
     `;
@@ -209,6 +211,8 @@ function renderBlock(block, parentSectionLevel = 0) {
   }
 
   if (block.type === "unordered_list") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
     const items = (block.items ?? [])
       .map(
         (item) => `
@@ -219,7 +223,8 @@ function renderBlock(block, parentSectionLevel = 0) {
       )
       .join("");
     return `
-      <div class="ulist">
+      <div class="ulist"${id}>
+        ${title}
         <ul>
           ${items}
         </ul>
@@ -228,6 +233,8 @@ function renderBlock(block, parentSectionLevel = 0) {
   }
 
   if (block.type === "ordered_list") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
     const items = (block.items ?? [])
       .map(
         (item) => `
@@ -238,7 +245,8 @@ function renderBlock(block, parentSectionLevel = 0) {
       )
       .join("");
     return `
-      <div class="olist arabic">
+      <div class="olist arabic"${id}>
+        ${title}
         <ol class="arabic">
           ${items}
         </ol>
