@@ -85,7 +85,8 @@ function runOrThrow(command, args, errorMessage) {
 function isMissingOfflineDependency(stderr) {
   return (
     stderr.includes("attempting to make an HTTP request, but --offline was specified") ||
-    stderr.includes("failed to download")
+    stderr.includes("failed to download") ||
+    (stderr.includes("no matching package named") && stderr.includes("you're using offline mode"))
   );
 }
 
