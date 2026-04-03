@@ -191,6 +191,27 @@ function renderBlock(block, parentSectionLevel = 0) {
     `;
   }
 
+  if (block.type === "admonition") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const label = renderAdmonitionLabel(block.variant ?? "");
+    return `
+      <div class="admonitionblock ${escapeHtml(block.variant ?? "")}"${id}>
+        <table>
+          <tr>
+            <td class="icon">
+              <div class="title">${escapeHtml(label)}</div>
+            </td>
+            <td class="content">
+              ${title}
+              ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+  }
+
   if (block.type === "section") {
     const level = Math.min((block.level ?? 1) + 1, 6);
     const sectionClass = `sect${block.level ?? Math.max(parentSectionLevel + 1, 1)}`;
@@ -387,6 +408,15 @@ function renderPreview(document) {
     </body>
   </html>`);
   doc.close();
+}
+
+function renderAdmonitionLabel(variant) {
+  if (variant === "note") return "Note";
+  if (variant === "tip") return "Tip";
+  if (variant === "important") return "Important";
+  if (variant === "caution") return "Caution";
+  if (variant === "warning") return "Warning";
+  return variant;
 }
 
 function renderPreviewError(message) {

@@ -499,6 +499,32 @@ inside sidebar
   await expect(frame.locator(".sidebarblock > .content > .title")).toHaveText("Callout Box");
 });
 
+test("exports and renders admonition paragraphs", async ({ page }) => {
+  const source = `= Sample Document
+
+NOTE: This is just a note.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks[0]).toMatchObject({
+    type: "admonition",
+    variant: "note"
+  });
+  expect(preambleBlocks[0].blocks[0]).toMatchObject({
+    type: "paragraph",
+    content: "This is just a note."
+  });
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.note .icon .title")).toHaveText("Note");
+  await expect(frame.locator(".admonitionblock.note .content p")).toHaveText("This is just a note.");
+});
+
 test("preview ignores header comments and preserves header attributes", async ({ page }) => {
   const source = `// leading comment
 = Sample Document

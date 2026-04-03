@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{
-    Block, CompoundBlock as AstCompoundBlock, Document, Inline, InlineForm, InlineVariant,
-    Listing as AstListing, OrderedList, Paragraph, UnorderedList,
+    AdmonitionBlock as AstAdmonitionBlock, Block, CompoundBlock as AstCompoundBlock, Document,
+    Inline, InlineForm, InlineVariant, Listing as AstListing, OrderedList, Paragraph,
+    UnorderedList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +48,7 @@ pub struct DocumentSection {
 pub enum PreparedBlock {
     Preamble(CompoundBlock),
     Paragraph(ParagraphBlock),
+    Admonition(AdmonitionBlock),
     Section(SectionBlock),
     UnorderedList(ListBlock),
     OrderedList(ListBlock),
@@ -76,6 +78,26 @@ pub struct ParagraphBlock {
     pub level: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmonitionBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub blocks: Vec<PreparedBlock>,
+    pub attributes: BTreeMap<String, String>,
+    pub content_model: Option<ContentModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub level: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub variant: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -395,6 +417,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::Admonition(admonition) => {
+                let admonition = PreparedBlock::Admonition(prepare_admonition_block(admonition));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(admonition);
+                } else {
+                    prepared.push(admonition);
+                }
+                index += 1;
+            }
             Block::UnorderedList(list) => {
                 let list = PreparedBlock::UnorderedList(prepare_unordered_list(list));
                 if wrap_document_preamble && !seen_section {
@@ -511,6 +542,21 @@ fn prepare_paragraph(paragraph: &Paragraph) -> ParagraphBlock {
         role: paragraph.metadata.role.clone(),
         level: 0,
         title: paragraph.metadata.title.clone(),
+    }
+}
+
+fn prepare_admonition_block(block: &AstAdmonitionBlock) -> AdmonitionBlock {
+    AdmonitionBlock {
+        id: block.metadata.id.clone(),
+        blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
+        attributes: block.metadata.attributes.clone(),
+        content_model: Some(ContentModel::Compound),
+        line_number: None,
+        style: block.metadata.style.clone(),
+        role: block.metadata.role.clone(),
+        level: 0,
+        title: block.metadata.title.clone(),
+        variant: block.variant.as_str().into(),
     }
 }
 
@@ -646,6 +692,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             }),
             PreparedBlock::Preamble(_)
             | PreparedBlock::Paragraph(_)
+            | PreparedBlock::Admonition(_)
             | PreparedBlock::UnorderedList(_)
             | PreparedBlock::OrderedList(_)
             | PreparedBlock::Listing(_)
@@ -701,6 +748,16 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                         });
                 }
                 collect_inline_anchor_refs(&paragraph.inlines, refs);
+            }
+            PreparedBlock::Admonition(admonition) => {
+                if let Some(id) = &admonition.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: admonition.title.clone(),
+                        });
+                }
+                collect_block_refs_into(&admonition.blocks, refs);
             }
             PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => {
                 for item in &list.items {
@@ -787,6 +844,9 @@ fn resolve_xrefs_in_blocks(
                     .map(prepared_inline_plain_text)
                     .collect::<Vec<_>>()
                     .join("");
+            }
+            PreparedBlock::Admonition(admonition) => {
+                resolve_xrefs_in_blocks(&mut admonition.blocks, section_refs, block_refs)
             }
             PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => {
                 for item in &mut list.items {
@@ -2069,6 +2129,24 @@ mod tests {
         assert_eq!(listing.style.as_deref(), Some("source"));
         assert_eq!(listing.attributes.get("language").map(String::as_str), Some("rust"));
         assert_eq!(listing.attributes.get("title").map(String::as_str), Some("Exhibit A"));
+    }
+
+    #[test]
+    fn prepares_admonition_paragraphs() {
+        let document = parse_document("NOTE: This is just a note.");
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Admonition(admonition) = &preamble.blocks[0] else {
+            panic!("expected admonition");
+        };
+
+        assert_eq!(admonition.variant, "note");
+        let PreparedBlock::Paragraph(paragraph) = &admonition.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.content, "This is just a note.");
     }
 }
 

@@ -424,6 +424,20 @@ fn parse_blocks(
             continue;
         }
 
+        if let Some((block, consumed_lines)) = parse_admonition_paragraph(lines, index, line_offset) {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            last_end = Some(block.location[1].clone());
+            blocks.push(block);
+            index += consumed_lines;
+            continue;
+        }
+
         if let Some(list_marker) = parse_list_item_line(line).filter(|marker| marker.level == 1) {
             flush_paragraph(
                 &mut blocks,
@@ -847,6 +861,113 @@ fn unquote_attribute_value(value: &str) -> String {
         }
     }
     value.to_owned()
+}
+
+fn parse_admonition_paragraph(
+    lines: &[&str],
+    index: usize,
+    line_offset: usize,
+) -> Option<(AsgBlock, usize)> {
+    let (variant, content_col, first_line_content) = parse_admonition_prefix(lines.get(index)?)?;
+    let mut paragraph_lines = vec![first_line_content.to_owned()];
+    let mut consumed = 1;
+
+    while index + consumed < lines.len() {
+        let line = lines[index + consumed];
+        if line.trim().is_empty()
+            || parse_heading_line(lines, index + consumed, 1).is_some()
+            || parse_list_item_line(line).is_some()
+            || is_delimited_block_delimiter(line)
+        {
+            break;
+        }
+        paragraph_lines.push(line.to_owned());
+        consumed += 1;
+    }
+
+    let start_line = line_offset + index;
+    let end_line = start_line + paragraph_lines.len() - 1;
+    let end_col = lines[index + consumed - 1].trim_end().len();
+    let value = paragraph_lines.join("\n");
+    let paragraph = AsgBlock {
+        name: "paragraph",
+        node_type: "block",
+        id: None,
+        title: None,
+        metadata: None,
+        level: None,
+        form: None,
+        delimiter: None,
+        inlines: Some(parse_tck_inlines_at(&value, start_line, content_col)),
+        blocks: None,
+        variant: None,
+        marker: None,
+        items: vec![],
+        location: [
+            Position {
+                line: start_line,
+                col: 1,
+            },
+            Position {
+                line: end_line,
+                col: end_col,
+            },
+        ],
+    };
+
+    Some((
+        AsgBlock {
+            name: "admonition",
+            node_type: "block",
+            id: None,
+            title: None,
+            metadata: None,
+            level: None,
+            form: Some("paragraph"),
+            delimiter: None,
+            inlines: None,
+            blocks: Some(vec![paragraph]),
+            variant: Some(variant),
+            marker: None,
+            items: vec![],
+            location: [
+                Position {
+                    line: start_line,
+                    col: 1,
+                },
+                Position {
+                    line: end_line,
+                    col: end_col,
+                },
+            ],
+        },
+        consumed,
+    ))
+}
+
+fn parse_admonition_prefix(line: &str) -> Option<(&'static str, usize, &str)> {
+    let trimmed = line.trim_start();
+    let leading_ws = line.len() - trimmed.len();
+    for (prefix, variant) in [
+        ("NOTE:", "note"),
+        ("TIP:", "tip"),
+        ("IMPORTANT:", "important"),
+        ("CAUTION:", "caution"),
+        ("WARNING:", "warning"),
+    ] {
+        let Some(remainder) = trimmed.strip_prefix(prefix) else {
+            continue;
+        };
+        if !remainder.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let content = remainder.trim();
+        if content.is_empty() {
+            continue;
+        }
+        return Some((variant, leading_ws + prefix.len() + 2, content));
+    }
+    None
 }
 
 fn flush_paragraph(
@@ -1873,5 +1994,30 @@ mod tests {
         assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("source"));
         assert_eq!(metadata.attributes.get("language").map(String::as_str), Some("rust"));
         assert_eq!(metadata.attributes.get("title").map(String::as_str), Some("Exhibit A"));
+    }
+
+    #[test]
+    fn renders_tck_admonition_paragraph() {
+        let document = parse_tck_document("NOTE: This is just a note.");
+        let block = document.blocks.first().expect("admonition block");
+
+        assert_eq!(block.name, "admonition");
+        assert_eq!(block.form, Some("paragraph"));
+        assert_eq!(block.variant, Some("note"));
+        let paragraph = block
+            .blocks
+            .as_ref()
+            .and_then(|blocks| blocks.first())
+            .expect("paragraph block");
+        assert_eq!(paragraph.name, "paragraph");
+        let text = paragraph
+            .inlines
+            .as_ref()
+            .and_then(|inlines| inlines.first())
+            .expect("paragraph text");
+        let AsgInline::Text(text) = text else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "This is just a note.");
     }
 }

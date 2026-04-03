@@ -317,3 +317,23 @@ fn browser_prepare_document_exposes_delimited_block_metadata() {
         Some("rust")
     );
 }
+
+#[wasm_bindgen_test]
+fn browser_prepare_document_exposes_admonition_blocks() {
+    let value = asciidoctor_rs::prepare_document_value("= Sample Document\n\nNOTE: This is just a note.\n")
+        .expect("value export should succeed");
+
+    let blocks = Array::from(&get_property(&value, "blocks"));
+    let preamble = blocks.get(0);
+    let preamble_blocks = Array::from(&get_property(&preamble, "blocks"));
+
+    let admonition = preamble_blocks.get(0);
+    assert_eq!(
+        get_property(&admonition, "type").as_string().as_deref(),
+        Some("admonition")
+    );
+    assert_eq!(
+        get_property(&admonition, "variant").as_string().as_deref(),
+        Some("note")
+    );
+}

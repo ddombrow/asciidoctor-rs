@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Block, BlockMetadata, CompoundBlock, Document, Heading, ListItem, Listing, OrderedList, Paragraph,
-    UnorderedList,
+    AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Document, Heading,
+    ListItem, Listing, OrderedList, Paragraph, UnorderedList,
 };
 use crate::inline::parse_inlines;
 
@@ -253,6 +253,23 @@ fn parse_blocks_from_lines(
             continue;
         }
 
+        if current_paragraph.is_empty() {
+            if let Some((admonition, consumed_lines)) =
+                parse_admonition_paragraph(lines, index, pending_block_prelude.as_ref())
+            {
+                push_block(
+                    &mut blocks,
+                    title,
+                    allow_document_title,
+                    admonition,
+                    pending_anchor.take(),
+                );
+                pending_block_prelude = None;
+                index += consumed_lines;
+                continue;
+            }
+        }
+
         if line.trim().is_empty() {
             flush_paragraph(
                 &mut blocks,
@@ -333,6 +350,16 @@ fn apply_prelude_to_ordered_list(
     list
 }
 
+fn apply_prelude_to_admonition(
+    mut admonition: AdmonitionBlock,
+    prelude: Option<BlockPrelude>,
+) -> AdmonitionBlock {
+    if let Some(prelude) = prelude {
+        admonition.metadata = prelude.metadata;
+    }
+    admonition
+}
+
 fn parse_delimited_block(
     lines: &[&str],
     index: usize,
@@ -381,6 +408,43 @@ fn parse_delimited_block(
     };
 
     Some((block, consumed))
+}
+
+fn parse_admonition_paragraph(
+    lines: &[&str],
+    index: usize,
+    pending_prelude: Option<&BlockPrelude>,
+) -> Option<(Block, usize)> {
+    let (variant, first_line) = parse_admonition_prefix(lines.get(index)?)?;
+    let mut paragraph_lines = vec![first_line.to_owned()];
+    let mut consumed = 1;
+
+    while index + consumed < lines.len() {
+        let line = lines[index + consumed];
+        if line.trim().is_empty()
+            || parse_block_anchor(line).is_some()
+            || parse_heading(lines, index + consumed).is_some()
+            || parse_list_marker(line).is_some()
+            || is_delimited_block_delimiter(line)
+        {
+            break;
+        }
+
+        paragraph_lines.push(line.to_owned());
+        consumed += 1;
+    }
+
+    Some((
+        Block::Admonition(apply_prelude_to_admonition(
+            AdmonitionBlock {
+                variant,
+                blocks: vec![make_paragraph_like_block(paragraph_lines)],
+                metadata: BlockMetadata::default(),
+            },
+            pending_prelude.cloned(),
+        )),
+        consumed,
+    ))
 }
 
 fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude> {
@@ -653,7 +717,7 @@ fn parse_list_item(
         return None;
     }
 
-    let mut blocks = vec![Block::Paragraph(make_paragraph(vec![marker.content.to_owned()]))];
+    let mut blocks = vec![make_paragraph_like_block(vec![marker.content.to_owned()])];
     let mut consumed = 1;
 
     while index + consumed < lines.len() {
@@ -739,7 +803,7 @@ fn parse_list_item_continuation_block(
     if paragraph_lines.is_empty() {
         None
     } else {
-        Some((Block::Paragraph(make_paragraph(paragraph_lines)), consumed))
+        Some((make_paragraph_like_block(paragraph_lines), consumed))
     }
 }
 
@@ -812,6 +876,24 @@ fn count_blank_lines(lines: &[&str]) -> usize {
     lines.iter().take_while(|line| line.trim().is_empty()).count()
 }
 
+fn make_paragraph_like_block(lines: Vec<String>) -> Block {
+    if let Some((variant, first_line)) = lines
+        .first()
+        .and_then(|line| parse_admonition_prefix(line.as_str()))
+        .map(|(variant, first_line)| (variant, first_line.to_owned()))
+    {
+        let mut paragraph_lines = lines;
+        paragraph_lines[0] = first_line;
+        return Block::Admonition(AdmonitionBlock {
+            variant,
+            blocks: vec![Block::Paragraph(make_paragraph(paragraph_lines))],
+            metadata: BlockMetadata::default(),
+        });
+    }
+
+    Block::Paragraph(make_paragraph(lines))
+}
+
 fn make_paragraph(lines: Vec<String>) -> Paragraph {
     Paragraph {
         inlines: parse_inlines(&lines.join("\n")),
@@ -829,7 +911,15 @@ fn append_to_last_paragraph(blocks: &mut Vec<Block>, line: String) {
         return;
     }
 
-    blocks.push(Block::Paragraph(make_paragraph(vec![line])));
+    if let Some(Block::Admonition(admonition)) = blocks.last_mut()
+        && let Some(Block::Paragraph(paragraph)) = admonition.blocks.last_mut()
+    {
+        paragraph.lines.push(line);
+        paragraph.inlines = parse_inlines(&paragraph.lines.join("\n"));
+        return;
+    }
+
+    blocks.push(make_paragraph_like_block(vec![line]));
 }
 
 fn flush_paragraph(
@@ -1213,6 +1303,30 @@ fn apply_anchor_to_heading(mut heading: Heading, anchor: Option<PendingAnchor>) 
     heading
 }
 
+fn parse_admonition_prefix(line: &str) -> Option<(AdmonitionVariant, &str)> {
+    let trimmed = line.trim_start();
+    for (prefix, variant) in [
+        ("NOTE:", AdmonitionVariant::Note),
+        ("TIP:", AdmonitionVariant::Tip),
+        ("IMPORTANT:", AdmonitionVariant::Important),
+        ("CAUTION:", AdmonitionVariant::Caution),
+        ("WARNING:", AdmonitionVariant::Warning),
+    ] {
+        let Some(remainder) = trimmed.strip_prefix(prefix) else {
+            continue;
+        };
+        if !remainder.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let content = remainder.trim();
+        if content.is_empty() {
+            continue;
+        }
+        return Some((variant, content));
+    }
+    None
+}
+
 fn parse_block_anchor(line: &str) -> Option<PendingAnchor> {
     let trimmed = line.trim();
 
@@ -1283,8 +1397,9 @@ fn is_valid_anchor_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, BlockMetadata, CompoundBlock, Heading, Inline, InlineForm, InlineVariant, ListItem, Listing,
-        OrderedList, Paragraph, UnorderedList,
+        AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Heading, Inline,
+        InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OrderedList, Paragraph,
+        UnorderedList,
     };
     use crate::parser::parse_document;
 
@@ -2253,6 +2368,34 @@ mod tests {
         assert_eq!(sidebar.metadata.role.as_deref(), Some("callout"));
         assert_eq!(sidebar.metadata.options, vec!["open"]);
         assert_eq!(sidebar.metadata.roles, vec!["callout"]);
+    }
+
+    #[test]
+    fn parses_admonition_paragraphs() {
+        let document = parse_document("NOTE: This is _important_.");
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::Admonition(AdmonitionBlock {
+                variant: AdmonitionVariant::Note,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    inlines: vec![
+                        Inline::Text("This is ".into()),
+                        Inline::Span(InlineSpan {
+                            variant: InlineVariant::Emphasis,
+                            form: InlineForm::Constrained,
+                            inlines: vec![Inline::Text("important".into())],
+                        }),
+                        Inline::Text(".".into()),
+                    ],
+                    lines: vec!["This is _important_.".into()],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata::default(),
+            })]
+        );
     }
 }
 

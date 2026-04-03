@@ -11,6 +11,7 @@ pub struct Document {
 pub enum Block {
     Heading(Heading),
     Paragraph(Paragraph),
+    Admonition(AdmonitionBlock),
     UnorderedList(UnorderedList),
     OrderedList(OrderedList),
     Listing(Listing),
@@ -33,6 +34,13 @@ pub struct Paragraph {
     pub inlines: Vec<Inline>,
     pub id: Option<String>,
     pub reftext: Option<String>,
+    pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmonitionBlock {
+    pub variant: AdmonitionVariant,
+    pub blocks: Vec<Block>,
     pub metadata: BlockMetadata,
 }
 
@@ -83,6 +91,15 @@ pub enum Inline {
     Link(InlineLink),
     Xref(InlineXref),
     Anchor(InlineAnchor),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmonitionVariant {
+    Note,
+    Tip,
+    Important,
+    Caution,
+    Warning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,5 +184,27 @@ impl Paragraph {
             .map(Inline::plain_text)
             .collect::<Vec<_>>()
             .join("")
+    }
+}
+
+impl AdmonitionVariant {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Note => "note",
+            Self::Tip => "tip",
+            Self::Important => "important",
+            Self::Caution => "caution",
+            Self::Warning => "warning",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Note => "Note",
+            Self::Tip => "Tip",
+            Self::Important => "Important",
+            Self::Caution => "Caution",
+            Self::Warning => "Warning",
+        }
     }
 }

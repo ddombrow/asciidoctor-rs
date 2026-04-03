@@ -31,6 +31,7 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
             html.push_str("</div>\n</div>\n");
         }
         PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
+        PreparedBlock::Admonition(admonition) => render_admonition(html, admonition),
         PreparedBlock::UnorderedList(list) => render_unordered_list(html, list),
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
@@ -159,6 +160,40 @@ fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBloc
     html.push_str("<p>");
     render_inlines(html, &paragraph.inlines);
     html.push_str("</p>\n</div>\n");
+}
+
+fn render_admonition(html: &mut String, admonition: &crate::prepare::AdmonitionBlock) {
+    html.push_str(&format!(
+        "<div class=\"admonitionblock {}\"",
+        escape_html(&admonition.variant)
+    ));
+    if let Some(id) = &admonition.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n<table>\n<tr>\n<td class=\"icon\">\n");
+    html.push_str(&format!(
+        "<div class=\"title\">{}</div>\n",
+        escape_html(admonition_label(&admonition.variant))
+    ));
+    html.push_str("</td>\n<td class=\"content\">\n");
+    if let Some(title) = &admonition.title {
+        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+    }
+    for block in &admonition.blocks {
+        render_block(html, block);
+    }
+    html.push_str("</td>\n</tr>\n</table>\n</div>\n");
+}
+
+fn admonition_label(variant: &str) -> &str {
+    match variant {
+        "note" => "Note",
+        "tip" => "Tip",
+        "important" => "Important",
+        "caution" => "Caution",
+        "warning" => "Warning",
+        _ => variant,
+    }
 }
 
 fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
@@ -860,6 +895,33 @@ mod tests {
         let html = render_html(&document);
 
         assert!(html.contains("<div class=\"title\">Exhibit A</div>"));
+    }
+
+    #[test]
+    fn renders_admonition_paragraphs() {
+        let document = Document {
+            attributes: Default::default(),
+            title: None,
+            blocks: vec![Block::Admonition(crate::ast::AdmonitionBlock {
+                variant: crate::ast::AdmonitionVariant::Note,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    lines: vec!["This is just a note.".into()],
+                    inlines: vec![Inline::Text("This is just a note.".into())],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata::default(),
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div class=\"admonitionblock note\">"));
+        assert!(html.contains("<td class=\"icon\">"));
+        assert!(html.contains("<div class=\"title\">Note</div>"));
+        assert!(html.contains("<td class=\"content\">"));
+        assert!(html.contains("<p>This is just a note.</p>"));
     }
 }
 
