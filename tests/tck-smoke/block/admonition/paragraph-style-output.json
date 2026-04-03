@@ -1,0 +1,33 @@
+{
+  "name": "document",
+  "type": "block",
+  "blocks": [
+    {
+      "name": "admonition",
+      "type": "block",
+      "form": "paragraph",
+      "blocks": [
+        {
+          "name": "paragraph",
+          "type": "block",
+          "inlines": [
+            {
+              "name": "text",
+              "type": "string",
+              "value": "Remember the milk.",
+              "location": [{ "line": 2, "col": 1 }, { "line": 2, "col": 18 }]
+            }
+          ],
+          "location": [{ "line": 2, "col": 1 }, { "line": 2, "col": 18 }]
+        }
+      ],
+      "variant": "note",
+      "metadata": {
+        "attributes": { "$1": "NOTE", "style": "NOTE" },
+        "location": [{ "line": 1, "col": 1 }, { "line": 1, "col": 6 }]
+      },
+      "location": [{ "line": 2, "col": 1 }, { "line": 2, "col": 18 }]
+    }
+  ],
+  "location": [{ "line": 1, "col": 1 }, { "line": 2, "col": 18 }]
+}

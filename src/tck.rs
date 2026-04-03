@@ -424,6 +424,20 @@ fn parse_blocks(
             continue;
         }
 
+        if let Some((block, consumed_lines)) = parse_styled_admonition_paragraph(lines, index, line_offset) {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            last_end = Some(block.location[1].clone());
+            blocks.push(block);
+            index += consumed_lines;
+            continue;
+        }
+
         if let Some((block, consumed_lines)) = parse_admonition_paragraph(lines, index, line_offset) {
             flush_paragraph(
                 &mut blocks,
@@ -569,6 +583,44 @@ fn parse_delimited_block(
     let inner_lines = &lines[delimiter_index + 1..closing_index];
     let consumed = closing_index - index + 1;
 
+    if delimiter == "===="
+        && let Some(variant) = prelude
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.attributes.get("style"))
+            .and_then(|style| admonition_variant_from_style(style))
+    {
+        let (children, _) = parse_blocks(inner_lines, start_line + 1, None);
+        return Some((
+            AsgBlock {
+                name: "admonition",
+                node_type: "block",
+                id: prelude.id.clone(),
+                title: prelude.title,
+                metadata: prelude.metadata,
+                level: None,
+                form: Some("delimited"),
+                delimiter: Some("===="),
+                inlines: None,
+                blocks: Some(children),
+                variant: Some(variant),
+                marker: None,
+                items: vec![],
+                location: [
+                    Position {
+                        line: start_line,
+                        col: 1,
+                    },
+                    Position {
+                        line: end_line,
+                        col: lines[closing_index].trim_end().len(),
+                    },
+                ],
+            },
+            consumed,
+        ));
+    }
+
     let mut block = AsgBlock {
         name,
         node_type: "block",
@@ -684,7 +736,7 @@ fn parse_block_prelude(lines: &[&str], index: usize, line_offset: usize) -> Pars
         && let Some(entries) = parse_attribute_list_line(line)
     {
         let next = cursor + 1;
-        if lines.get(next).is_some_and(|line| is_delimited_block_delimiter(line)) {
+        if lines.get(next).is_some_and(|line| !line.trim().is_empty()) {
             let attr_line = line_offset + cursor;
             apply_attribute_list(
                 &mut metadata_attributes,
@@ -945,6 +997,103 @@ fn parse_admonition_paragraph(
     ))
 }
 
+fn parse_styled_admonition_paragraph(
+    lines: &[&str],
+    index: usize,
+    line_offset: usize,
+) -> Option<(AsgBlock, usize)> {
+    let prelude = parse_block_prelude(lines, index, line_offset);
+    if prelude.consumed_lines == 0 {
+        return None;
+    }
+    let variant = prelude
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.attributes.get("style"))
+        .and_then(|style| admonition_variant_from_style(style))?;
+    let paragraph_index = index + prelude.consumed_lines;
+    let line = *lines.get(paragraph_index)?;
+    if line.trim().is_empty() || is_delimited_block_delimiter(line) {
+        return None;
+    }
+
+    let mut paragraph_lines = vec![line.to_owned()];
+    let mut consumed = prelude.consumed_lines + 1;
+    let mut cursor = paragraph_index + 1;
+
+    while let Some(line) = lines.get(cursor) {
+        if line.trim().is_empty()
+            || parse_heading_line(lines, cursor, 1).is_some()
+            || parse_list_item_line(line).is_some()
+            || is_delimited_block_delimiter(line)
+        {
+            break;
+        }
+        paragraph_lines.push((*line).to_owned());
+        cursor += 1;
+        consumed += 1;
+    }
+
+    let start_line = line_offset + paragraph_index;
+    let end_line = start_line + paragraph_lines.len() - 1;
+    let end_col = lines[index + consumed - 1].trim_end().len();
+    let value = paragraph_lines.join("\n");
+    let paragraph = AsgBlock {
+        name: "paragraph",
+        node_type: "block",
+        id: None,
+        title: None,
+        metadata: None,
+        level: None,
+        form: None,
+        delimiter: None,
+        inlines: Some(parse_tck_inlines_at(&value, start_line, 1)),
+        blocks: None,
+        variant: None,
+        marker: None,
+        items: vec![],
+        location: [
+            Position {
+                line: start_line,
+                col: 1,
+            },
+            Position {
+                line: end_line,
+                col: end_col,
+            },
+        ],
+    };
+
+    Some((
+        AsgBlock {
+            name: "admonition",
+            node_type: "block",
+            id: prelude.id.clone(),
+            title: prelude.title,
+            metadata: prelude.metadata,
+            level: None,
+            form: Some("paragraph"),
+            delimiter: None,
+            inlines: None,
+            blocks: Some(vec![paragraph]),
+            variant: Some(variant),
+            marker: None,
+            items: vec![],
+            location: [
+                Position {
+                    line: start_line,
+                    col: 1,
+                },
+                Position {
+                    line: end_line,
+                    col: end_col,
+                },
+            ],
+        },
+        consumed,
+    ))
+}
+
 fn parse_admonition_prefix(line: &str) -> Option<(&'static str, usize, &str)> {
     let trimmed = line.trim_start();
     let leading_ws = line.len() - trimmed.len();
@@ -968,6 +1117,22 @@ fn parse_admonition_prefix(line: &str) -> Option<(&'static str, usize, &str)> {
         return Some((variant, leading_ws + prefix.len() + 2, content));
     }
     None
+}
+
+fn admonition_variant_from_style(style: &str) -> Option<&'static str> {
+    if style.eq_ignore_ascii_case("NOTE") {
+        Some("note")
+    } else if style.eq_ignore_ascii_case("TIP") {
+        Some("tip")
+    } else if style.eq_ignore_ascii_case("IMPORTANT") {
+        Some("important")
+    } else if style.eq_ignore_ascii_case("CAUTION") {
+        Some("caution")
+    } else if style.eq_ignore_ascii_case("WARNING") {
+        Some("warning")
+    } else {
+        None
+    }
 }
 
 fn flush_paragraph(
@@ -1423,6 +1588,9 @@ fn parse_setext_heading_line(
     line_offset: usize,
 ) -> Option<(HeadingParse, [Position; 2], usize)> {
     let title_line = *lines.get(index)?;
+    if parse_attribute_list_line(title_line.trim()).is_some() {
+        return None;
+    }
     let underline = lines.get(index + 1)?.trim();
     let marker = underline.chars().next()?;
     if (marker != '=' && marker != '-') || !underline.chars().all(|ch| ch == marker) {
@@ -2019,5 +2187,32 @@ mod tests {
             panic!("expected text");
         };
         assert_eq!(text.value, "This is just a note.");
+    }
+
+    #[test]
+    fn renders_tck_styled_admonition_paragraph() {
+        let document = parse_tck_document("[NOTE]\nRemember the milk.");
+        let block = document.blocks.first().expect("admonition block");
+
+        assert_eq!(block.name, "admonition");
+        assert_eq!(block.form, Some("paragraph"));
+        assert_eq!(block.variant, Some("note"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(metadata.attributes.get("$1").map(String::as_str), Some("NOTE"));
+        assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("NOTE"));
+    }
+
+    #[test]
+    fn renders_tck_styled_delimited_admonition() {
+        let document = parse_tck_document("[TIP]\n====\nRemember the milk.\n====");
+        let block = document.blocks.first().expect("admonition block");
+
+        assert_eq!(block.name, "admonition");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.variant, Some("tip"));
+        assert_eq!(block.delimiter, Some("===="));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(metadata.attributes.get("$1").map(String::as_str), Some("TIP"));
+        assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("TIP"));
     }
 }

@@ -385,6 +385,24 @@ fn parse_delimited_block(
     let inner_lines = &lines[delimiter_index + 1..closing_index];
     let consumed = closing_index - index + 1;
 
+    if delimiter == "===="
+        && let Some(variant) = prelude
+            .metadata
+            .style
+            .as_deref()
+            .and_then(admonition_variant_from_style)
+    {
+        let mut nested_title = None;
+        return Some((
+            Block::Admonition(AdmonitionBlock {
+                variant,
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                metadata: prelude.metadata,
+            }),
+            consumed,
+        ));
+    }
+
     let block = match block_kind {
         "listing" => Block::Listing(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
@@ -778,13 +796,20 @@ fn parse_list_item_continuation_block(
         return None;
     }
 
-    if let Some((block, consumed)) = parse_delimited_block(lines, start, None) {
+    let continuation_prelude = try_parse_block_prelude(lines, start);
+    let continuation_start = start + continuation_prelude.as_ref().map_or(0, |prelude| prelude.consumed_lines);
+
+    if let Some(prelude) = continuation_prelude.as_ref() {
+        if let Some((block, consumed)) = parse_delimited_block(lines, continuation_start, Some(prelude)) {
+            return Some((block, blank_lines + prelude.consumed_lines + consumed));
+        }
+    } else if let Some((block, consumed)) = parse_delimited_block(lines, start, None) {
         return Some((block, blank_lines + consumed));
     }
 
     let mut paragraph_lines = Vec::new();
-    let mut consumed = blank_lines;
-    let mut cursor = start;
+    let mut consumed = blank_lines + continuation_prelude.as_ref().map_or(0, |prelude| prelude.consumed_lines);
+    let mut cursor = continuation_start;
 
     while let Some(line) = lines.get(cursor) {
         let trimmed = line.trim();
@@ -803,7 +828,17 @@ fn parse_list_item_continuation_block(
     if paragraph_lines.is_empty() {
         None
     } else {
-        Some((make_paragraph_like_block(paragraph_lines), consumed))
+        Some((
+            make_block_from_paragraph(
+                paragraph_lines,
+                None,
+                None,
+                continuation_prelude
+                    .map(|prelude| prelude.metadata)
+                    .unwrap_or_default(),
+            ),
+            consumed,
+        ))
     }
 }
 
@@ -891,7 +926,43 @@ fn make_paragraph_like_block(lines: Vec<String>) -> Block {
         });
     }
 
-    Block::Paragraph(make_paragraph(lines))
+    make_block_from_paragraph(lines, None, None, BlockMetadata::default())
+}
+
+fn make_block_from_paragraph(
+    lines: Vec<String>,
+    id: Option<String>,
+    reftext: Option<String>,
+    mut metadata: BlockMetadata,
+) -> Block {
+    if let Some(variant) = metadata
+        .style
+        .as_deref()
+        .and_then(admonition_variant_from_style)
+    {
+        if metadata.id.is_none() {
+            metadata.id = id;
+        }
+        return Block::Admonition(AdmonitionBlock {
+            variant,
+            blocks: vec![Block::Paragraph(Paragraph {
+                inlines: parse_inlines(&lines.join("\n")),
+                lines,
+                id: None,
+                reftext: None,
+                metadata: BlockMetadata::default(),
+            })],
+            metadata,
+        });
+    }
+
+    Block::Paragraph(Paragraph {
+        inlines: parse_inlines(&lines.join("\n")),
+        lines,
+        id,
+        reftext,
+        metadata,
+    })
 }
 
 fn make_paragraph(lines: Vec<String>) -> Paragraph {
@@ -942,13 +1013,12 @@ fn flush_paragraph(
         .as_ref()
         .map(|anchor| anchor.id.clone())
         .or_else(|| metadata.id.clone());
-    blocks.push(Block::Paragraph(Paragraph {
-        inlines: parse_inlines(&lines.join("\n")),
+    blocks.push(make_block_from_paragraph(
         lines,
         id,
-        reftext: anchor.and_then(|anchor| anchor.reftext),
+        anchor.and_then(|anchor| anchor.reftext),
         metadata,
-    }));
+    ));
 }
 
 fn parse_heading(lines: &[&str], index: usize) -> Option<(Heading, usize)> {
@@ -998,7 +1068,10 @@ fn parse_setext_heading(lines: &[&str], index: usize) -> Option<(Heading, usize)
     let title = lines.get(index)?.trim();
     let underline = lines.get(index + 1)?.trim();
 
-    if title.is_empty() || !title.chars().any(char::is_alphanumeric) {
+    if title.is_empty()
+        || !title.chars().any(char::is_alphanumeric)
+        || parse_attribute_list_line(title).is_some()
+    {
         return None;
     }
 
@@ -1325,6 +1398,22 @@ fn parse_admonition_prefix(line: &str) -> Option<(AdmonitionVariant, &str)> {
         return Some((variant, content));
     }
     None
+}
+
+fn admonition_variant_from_style(style: &str) -> Option<AdmonitionVariant> {
+    if style.eq_ignore_ascii_case("NOTE") {
+        Some(AdmonitionVariant::Note)
+    } else if style.eq_ignore_ascii_case("TIP") {
+        Some(AdmonitionVariant::Tip)
+    } else if style.eq_ignore_ascii_case("IMPORTANT") {
+        Some(AdmonitionVariant::Important)
+    } else if style.eq_ignore_ascii_case("CAUTION") {
+        Some(AdmonitionVariant::Caution)
+    } else if style.eq_ignore_ascii_case("WARNING") {
+        Some(AdmonitionVariant::Warning)
+    } else {
+        None
+    }
 }
 
 fn parse_block_anchor(line: &str) -> Option<PendingAnchor> {
@@ -2396,6 +2485,36 @@ mod tests {
                 metadata: BlockMetadata::default(),
             })]
         );
+    }
+
+    #[test]
+    fn parses_styled_admonition_paragraphs() {
+        let document = parse_document("[NOTE]\nRemember the milk.");
+
+        let [Block::Admonition(admonition)] = document.blocks.as_slice() else {
+            panic!("expected admonition");
+        };
+        assert_eq!(admonition.variant, AdmonitionVariant::Note);
+        assert_eq!(admonition.metadata.style.as_deref(), Some("NOTE"));
+        let [Block::Paragraph(paragraph)] = admonition.blocks.as_slice() else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.plain_text(), "Remember the milk.");
+    }
+
+    #[test]
+    fn parses_styled_delimited_admonition_blocks() {
+        let document = parse_document("[TIP]\n====\nRemember the milk.\n====");
+
+        let [Block::Admonition(admonition)] = document.blocks.as_slice() else {
+            panic!("expected admonition");
+        };
+        assert_eq!(admonition.variant, AdmonitionVariant::Tip);
+        assert_eq!(admonition.metadata.style.as_deref(), Some("TIP"));
+        let [Block::Paragraph(paragraph)] = admonition.blocks.as_slice() else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.plain_text(), "Remember the milk.");
     }
 }
 

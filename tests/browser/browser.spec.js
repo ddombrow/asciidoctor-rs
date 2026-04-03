@@ -525,6 +525,41 @@ NOTE: This is just a note.`;
   await expect(frame.locator(".admonitionblock.note .content p")).toHaveText("This is just a note.");
 });
 
+test("exports and renders block admonitions", async ({ page }) => {
+  const source = `= Sample Document
+
+[NOTE]
+Remember the milk.
+
+[TIP]
+====
+Ship it carefully.
+====`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks[0]).toMatchObject({
+    type: "admonition",
+    variant: "note",
+    style: "NOTE"
+  });
+  expect(preambleBlocks[1]).toMatchObject({
+    type: "admonition",
+    variant: "tip",
+    style: "TIP"
+  });
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.note .content p")).toHaveText("Remember the milk.");
+  await expect(frame.locator(".admonitionblock.tip .icon .title")).toHaveText("Tip");
+  await expect(frame.locator(".admonitionblock.tip .content p")).toHaveText("Ship it carefully.");
+});
+
 test("preview ignores header comments and preserves header attributes", async ({ page }) => {
   const source = `// leading comment
 = Sample Document

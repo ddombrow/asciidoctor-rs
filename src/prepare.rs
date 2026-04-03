@@ -2148,5 +2148,24 @@ mod tests {
         };
         assert_eq!(paragraph.content, "This is just a note.");
     }
+
+    #[test]
+    fn prepares_styled_block_admonitions() {
+        let document = parse_document("[TIP]\n====\nRemember the milk.\n====");
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Admonition(admonition) = &preamble.blocks[0] else {
+            panic!("expected admonition");
+        };
+
+        assert_eq!(admonition.variant, "tip");
+        assert_eq!(admonition.style.as_deref(), Some("TIP"));
+        let PreparedBlock::Paragraph(paragraph) = &admonition.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.content, "Remember the milk.");
+    }
 }
 
