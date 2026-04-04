@@ -763,6 +763,13 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                 collect_block_refs_into(&admonition.blocks, refs);
             }
             PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => {
+                if let Some(id) = &list.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: list.title.clone(),
+                        });
+                }
                 for item in &list.items {
                     collect_block_refs_into(&item.blocks, refs);
                 }
@@ -2061,6 +2068,49 @@ mod tests {
 
         assert_eq!(list.name, "ulist");
         assert_eq!(list.items.len(), 1);
+    }
+
+    #[test]
+    fn resolves_xrefs_to_anchored_lists() {
+        let document = parse_document("[[steps]]\n* one\n\nSee <<steps>>.");
+        let prepared = prepare_document(&document);
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[1] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref");
+        };
+        assert_eq!(xref.href, "#steps");
+    }
+
+    #[test]
+    fn prepares_anchored_delimited_blocks() {
+        let document = parse_document(
+            "[[code-sample]]\n----\nputs 'hello'\n----\n\n[[aside]]\n****\ninside sidebar\n****\n\n[[walkthrough]]\n====\ninside example\n====",
+        );
+        let prepared = prepare_document(&document);
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Listing(listing) = &preamble.blocks[0] else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.id.as_deref(), Some("code-sample"));
+
+        let PreparedBlock::Sidebar(sidebar) = &preamble.blocks[1] else {
+            panic!("expected sidebar");
+        };
+        assert_eq!(sidebar.id.as_deref(), Some("aside"));
+
+        let PreparedBlock::Example(example) = &preamble.blocks[2] else {
+            panic!("expected example");
+        };
+        assert_eq!(example.id.as_deref(), Some("walkthrough"));
     }
 
     #[test]

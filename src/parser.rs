@@ -228,11 +228,16 @@ fn parse_blocks_from_lines(
                 &mut current_paragraph_anchor,
                 &mut current_paragraph_prelude,
             );
-            blocks.push(Block::UnorderedList(apply_prelude_to_unordered_list(
-                list,
-                pending_block_prelude.take(),
-            )));
-            pending_anchor = None;
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                Block::UnorderedList(apply_prelude_to_unordered_list(
+                    list,
+                    pending_block_prelude.take(),
+                )),
+                pending_anchor.take(),
+            );
             index += consumed_lines;
             continue;
         }
@@ -244,11 +249,16 @@ fn parse_blocks_from_lines(
                 &mut current_paragraph_anchor,
                 &mut current_paragraph_prelude,
             );
-            blocks.push(Block::OrderedList(apply_prelude_to_ordered_list(
-                list,
-                pending_block_prelude.take(),
-            )));
-            pending_anchor = None;
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                Block::OrderedList(apply_prelude_to_ordered_list(
+                    list,
+                    pending_block_prelude.take(),
+                )),
+                pending_anchor.take(),
+            );
             index += consumed_lines;
             continue;
         }
@@ -319,6 +329,21 @@ fn push_block(
         Block::Admonition(admonition) => {
             blocks.push(Block::Admonition(apply_anchor_to_admonition(admonition, anchor)));
         }
+        Block::UnorderedList(list) => {
+            blocks.push(Block::UnorderedList(apply_anchor_to_unordered_list(list, anchor)));
+        }
+        Block::OrderedList(list) => {
+            blocks.push(Block::OrderedList(apply_anchor_to_ordered_list(list, anchor)));
+        }
+        Block::Listing(listing) => {
+            blocks.push(Block::Listing(apply_anchor_to_listing(listing, anchor)));
+        }
+        Block::Example(example) => {
+            blocks.push(Block::Example(apply_anchor_to_compound_block(example, anchor)));
+        }
+        Block::Sidebar(sidebar) => {
+            blocks.push(Block::Sidebar(apply_anchor_to_compound_block(sidebar, anchor)));
+        }
         other => blocks.push(other),
     }
 }
@@ -343,12 +368,36 @@ fn apply_prelude_to_unordered_list(
     list
 }
 
+fn apply_anchor_to_unordered_list(
+    mut list: UnorderedList,
+    anchor: Option<PendingAnchor>,
+) -> UnorderedList {
+    if let Some(anchor) = anchor
+        && list.metadata.id.is_none()
+    {
+        list.metadata.id = Some(anchor.id);
+    }
+    list
+}
+
 fn apply_prelude_to_ordered_list(
     mut list: OrderedList,
     prelude: Option<BlockPrelude>,
 ) -> OrderedList {
     if let Some(prelude) = prelude {
         list.metadata = prelude.metadata;
+    }
+    list
+}
+
+fn apply_anchor_to_ordered_list(
+    mut list: OrderedList,
+    anchor: Option<PendingAnchor>,
+) -> OrderedList {
+    if let Some(anchor) = anchor
+        && list.metadata.id.is_none()
+    {
+        list.metadata.id = Some(anchor.id);
     }
     list
 }
@@ -364,6 +413,27 @@ fn apply_prelude_to_admonition(
         admonition.metadata = prelude.metadata;
     }
     admonition
+}
+
+fn apply_anchor_to_listing(mut listing: Listing, anchor: Option<PendingAnchor>) -> Listing {
+    if let Some(anchor) = anchor
+        && listing.metadata.id.is_none()
+    {
+        listing.metadata.id = Some(anchor.id);
+    }
+    listing
+}
+
+fn apply_anchor_to_compound_block(
+    mut block: CompoundBlock,
+    anchor: Option<PendingAnchor>,
+) -> CompoundBlock {
+    if let Some(anchor) = anchor
+        && block.metadata.id.is_none()
+    {
+        block.metadata.id = Some(anchor.id);
+    }
+    block
 }
 
 fn apply_anchor_to_admonition(
@@ -2404,6 +2474,16 @@ mod tests {
     }
 
     #[test]
+    fn applies_anchor_to_delimited_listing_blocks() {
+        let document = parse_document("[[code-sample]]\n----\nputs 'hello'\n----");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.id.as_deref(), Some("code-sample"));
+    }
+
+    #[test]
     fn parses_delimited_sidebar_blocks() {
         let document = parse_document("****\n* one\n* two\n****");
 
@@ -2439,6 +2519,16 @@ mod tests {
     }
 
     #[test]
+    fn applies_anchor_to_delimited_sidebar_blocks() {
+        let document = parse_document("[[callouts]]\n****\ninside\n****");
+
+        let [Block::Sidebar(sidebar)] = document.blocks.as_slice() else {
+            panic!("expected sidebar");
+        };
+        assert_eq!(sidebar.metadata.id.as_deref(), Some("callouts"));
+    }
+
+    #[test]
     fn parses_delimited_example_blocks() {
         let document = parse_document("====\nA paragraph.\n====");
 
@@ -2455,6 +2545,16 @@ mod tests {
                 metadata: BlockMetadata::default(),
             })]
         );
+    }
+
+    #[test]
+    fn applies_anchor_to_delimited_example_blocks() {
+        let document = parse_document("[[walkthrough]]\n====\nA paragraph.\n====");
+
+        let [Block::Example(example)] = document.blocks.as_slice() else {
+            panic!("expected example");
+        };
+        assert_eq!(example.metadata.id.as_deref(), Some("walkthrough"));
     }
 
     #[test]
@@ -2486,6 +2586,26 @@ mod tests {
         assert_eq!(sidebar.metadata.role.as_deref(), Some("callout"));
         assert_eq!(sidebar.metadata.options, vec!["open"]);
         assert_eq!(sidebar.metadata.roles, vec!["callout"]);
+    }
+
+    #[test]
+    fn applies_anchor_to_unordered_lists() {
+        let document = parse_document("[[steps]]\n* one");
+
+        let [Block::UnorderedList(list)] = document.blocks.as_slice() else {
+            panic!("expected unordered list");
+        };
+        assert_eq!(list.metadata.id.as_deref(), Some("steps"));
+    }
+
+    #[test]
+    fn applies_anchor_to_ordered_lists() {
+        let document = parse_document("[[recipe]]\n. one");
+
+        let [Block::OrderedList(list)] = document.blocks.as_slice() else {
+            panic!("expected ordered list");
+        };
+        assert_eq!(list.metadata.id.as_deref(), Some("recipe"));
     }
 
     #[test]
@@ -2575,4 +2695,3 @@ mod tests {
         assert_eq!(admonition.variant, AdmonitionVariant::Tip);
     }
 }
-
