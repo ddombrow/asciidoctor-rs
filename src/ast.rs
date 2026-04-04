@@ -49,12 +49,14 @@ pub struct AdmonitionBlock {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     pub lines: Vec<String>,
+    pub reftext: Option<String>,
     pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompoundBlock {
     pub blocks: Vec<Block>,
+    pub reftext: Option<String>,
     pub metadata: BlockMetadata,
 }
 
@@ -72,12 +74,14 @@ pub struct BlockMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnorderedList {
     pub items: Vec<ListItem>,
+    pub reftext: Option<String>,
     pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderedList {
     pub items: Vec<ListItem>,
+    pub reftext: Option<String>,
     pub metadata: BlockMetadata,
 }
 

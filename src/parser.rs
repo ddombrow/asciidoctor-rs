@@ -376,6 +376,7 @@ fn apply_anchor_to_unordered_list(
         && list.metadata.id.is_none()
     {
         list.metadata.id = Some(anchor.id);
+        list.reftext = anchor.reftext;
     }
     list
 }
@@ -398,6 +399,7 @@ fn apply_anchor_to_ordered_list(
         && list.metadata.id.is_none()
     {
         list.metadata.id = Some(anchor.id);
+        list.reftext = anchor.reftext;
     }
     list
 }
@@ -420,6 +422,7 @@ fn apply_anchor_to_listing(mut listing: Listing, anchor: Option<PendingAnchor>) 
         && listing.metadata.id.is_none()
     {
         listing.metadata.id = Some(anchor.id);
+        listing.reftext = anchor.reftext;
     }
     listing
 }
@@ -432,6 +435,7 @@ fn apply_anchor_to_compound_block(
         && block.metadata.id.is_none()
     {
         block.metadata.id = Some(anchor.id);
+        block.reftext = anchor.reftext;
     }
     block
 }
@@ -499,12 +503,14 @@ fn parse_delimited_block(
     let block = match block_kind {
         "listing" => Block::Listing(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+            reftext: None,
             metadata: prelude.metadata,
         }),
         "example" => {
             let mut nested_title = None;
             Block::Example(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                reftext: None,
                 metadata: prelude.metadata,
             })
         }
@@ -512,6 +518,7 @@ fn parse_delimited_block(
             let mut nested_title = None;
             Block::Sidebar(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                reftext: None,
                 metadata: prelude.metadata,
             })
         }
@@ -758,6 +765,7 @@ fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, 
         (
             UnorderedList {
                 items,
+                reftext: None,
                 metadata: BlockMetadata::default(),
             },
             consumed,
@@ -770,6 +778,7 @@ fn parse_ordered_list(lines: &[&str], index: usize) -> Option<(OrderedList, usiz
         (
             OrderedList {
                 items,
+                reftext: None,
                 metadata: BlockMetadata::default(),
             },
             consumed,
@@ -942,10 +951,12 @@ fn parse_list_block(lines: &[&str], index: usize, kind: ListKind, level: usize) 
     let block = match kind {
         ListKind::Unordered => Block::UnorderedList(UnorderedList {
             items,
+            reftext: None,
             metadata: BlockMetadata::default(),
         }),
         ListKind::Ordered => Block::OrderedList(OrderedList {
             items,
+            reftext: None,
             metadata: BlockMetadata::default(),
         }),
     };
@@ -2252,6 +2263,7 @@ mod tests {
                         })],
                     },
                 ],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2284,6 +2296,7 @@ mod tests {
                         })],
                     },
                 ],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2368,6 +2381,7 @@ mod tests {
                         })],
                     },
                 ],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2400,6 +2414,7 @@ mod tests {
                                     metadata: BlockMetadata::default(),
                                     })],
                                 }],
+                                reftext: None,
                                 metadata: BlockMetadata::default(),
                             }),
                         ],
@@ -2414,6 +2429,7 @@ mod tests {
                         })],
                     },
                 ],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2455,6 +2471,7 @@ mod tests {
                         })],
                     },
                 ],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2468,6 +2485,7 @@ mod tests {
             document.blocks,
             vec![Block::Listing(Listing {
                 lines: vec!["def main".into(), "  puts 'hello'".into(), "end".into()],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2481,6 +2499,7 @@ mod tests {
             panic!("expected listing");
         };
         assert_eq!(listing.metadata.id.as_deref(), Some("code-sample"));
+        assert_eq!(listing.reftext, None);
     }
 
     #[test]
@@ -2511,8 +2530,10 @@ mod tests {
                             })],
                         },
                     ],
+                    reftext: None,
                     metadata: BlockMetadata::default(),
                 })],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2526,6 +2547,7 @@ mod tests {
             panic!("expected sidebar");
         };
         assert_eq!(sidebar.metadata.id.as_deref(), Some("callouts"));
+        assert_eq!(sidebar.reftext, None);
     }
 
     #[test]
@@ -2542,6 +2564,7 @@ mod tests {
                     reftext: None,
                 metadata: BlockMetadata::default(),
                 })],
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2555,6 +2578,7 @@ mod tests {
             panic!("expected example");
         };
         assert_eq!(example.metadata.id.as_deref(), Some("walkthrough"));
+        assert_eq!(example.reftext, None);
     }
 
     #[test]
@@ -2596,6 +2620,7 @@ mod tests {
             panic!("expected unordered list");
         };
         assert_eq!(list.metadata.id.as_deref(), Some("steps"));
+        assert_eq!(list.reftext, None);
     }
 
     #[test]
@@ -2606,6 +2631,31 @@ mod tests {
             panic!("expected ordered list");
         };
         assert_eq!(list.metadata.id.as_deref(), Some("recipe"));
+        assert_eq!(list.reftext, None);
+    }
+
+    #[test]
+    fn preserves_anchor_reftext_for_unordered_lists() {
+        let document = parse_document("[[steps,Setup Steps]]\n* one");
+
+        let [Block::UnorderedList(list)] = document.blocks.as_slice() else {
+            panic!("expected unordered list");
+        };
+        assert_eq!(list.metadata.id.as_deref(), Some("steps"));
+        assert_eq!(list.reftext.as_deref(), Some("Setup Steps"));
+    }
+
+    #[test]
+    fn preserves_anchor_reftext_for_delimited_blocks() {
+        let document = parse_document(
+            "[[code-sample,Code Sample]]\n----\nputs 'hello'\n----\n\n[[aside,Important Aside]]\n****\ninside\n****",
+        );
+
+        let [Block::Listing(listing), Block::Sidebar(sidebar)] = document.blocks.as_slice() else {
+            panic!("expected listing and sidebar");
+        };
+        assert_eq!(listing.reftext.as_deref(), Some("Code Sample"));
+        assert_eq!(sidebar.reftext.as_deref(), Some("Important Aside"));
     }
 
     #[test]

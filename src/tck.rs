@@ -140,6 +140,11 @@ enum TckListKind {
     Unordered,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingBlockAnchor {
+    id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TckListMarker<'a> {
     kind: TckListKind,
@@ -346,10 +351,24 @@ fn parse_blocks(
     let mut paragraph_start = None::<usize>;
     let mut paragraph_lines = Vec::new();
     let mut last_end = None;
+    let mut pending_anchor = None::<PendingBlockAnchor>;
 
     while index < lines.len() {
         let absolute_index = line_offset + index - 1;
         let line = lines[index];
+
+        if let Some(anchor) = parse_block_anchor(line) {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            pending_anchor = Some(anchor);
+            index += 1;
+            continue;
+        }
 
         if let Some((heading, heading_range, consumed_lines)) =
             parse_heading_line(lines, index, line_offset)
@@ -376,7 +395,7 @@ fn parse_blocks(
             );
 
             let end = child_end.unwrap_or_else(|| heading_range[1].clone());
-            blocks.push(AsgBlock {
+            let mut block = AsgBlock {
                 name: "section",
                 node_type: "block",
                 id: None,
@@ -402,7 +421,9 @@ fn parse_blocks(
                 marker: None,
                 items: vec![],
                 location: [heading_range[0].clone(), end.clone()],
-            });
+            };
+            apply_anchor_to_block(&mut block, pending_anchor.take());
+            blocks.push(block);
             last_end = Some(end);
 
             index = child_start
@@ -410,7 +431,7 @@ fn parse_blocks(
             continue;
         }
 
-        if let Some((block, consumed_lines)) = parse_delimited_block(lines, index, line_offset) {
+        if let Some((mut block, consumed_lines)) = parse_delimited_block(lines, index, line_offset) {
             flush_paragraph(
                 &mut blocks,
                 &mut paragraph_start,
@@ -418,13 +439,14 @@ fn parse_blocks(
                 line_offset,
                 &mut last_end,
             );
+            apply_anchor_to_block(&mut block, pending_anchor.take());
             last_end = Some(block.location[1].clone());
             blocks.push(block);
             index += consumed_lines;
             continue;
         }
 
-        if let Some((block, consumed_lines)) = parse_styled_admonition_paragraph(lines, index, line_offset) {
+        if let Some((mut block, consumed_lines)) = parse_styled_admonition_paragraph(lines, index, line_offset) {
             flush_paragraph(
                 &mut blocks,
                 &mut paragraph_start,
@@ -432,13 +454,14 @@ fn parse_blocks(
                 line_offset,
                 &mut last_end,
             );
+            apply_anchor_to_block(&mut block, pending_anchor.take());
             last_end = Some(block.location[1].clone());
             blocks.push(block);
             index += consumed_lines;
             continue;
         }
 
-        if let Some((block, consumed_lines)) = parse_admonition_paragraph(lines, index, line_offset) {
+        if let Some((mut block, consumed_lines)) = parse_admonition_paragraph(lines, index, line_offset) {
             flush_paragraph(
                 &mut blocks,
                 &mut paragraph_start,
@@ -446,6 +469,7 @@ fn parse_blocks(
                 line_offset,
                 &mut last_end,
             );
+            apply_anchor_to_block(&mut block, pending_anchor.take());
             last_end = Some(block.location[1].clone());
             blocks.push(block);
             index += consumed_lines;
@@ -492,7 +516,7 @@ fn parse_blocks(
 
             let list_start = Position { line: line_offset + index, col: 1 };
             let list_end = list_end.unwrap_or_else(|| list_start.clone());
-            blocks.push(AsgBlock {
+            let mut block = AsgBlock {
                 name: "list",
                 node_type: "block",
                 id: None,
@@ -510,7 +534,9 @@ fn parse_blocks(
                 marker: Some(list_marker.marker),
                 items,
                 location: [list_start, list_end.clone()],
-            });
+            };
+            apply_anchor_to_block(&mut block, pending_anchor.take());
+            blocks.push(block);
             last_end = Some(list_end);
             index = list_index;
             continue;
@@ -544,6 +570,14 @@ fn parse_blocks(
     );
 
     (blocks, last_end)
+}
+
+fn apply_anchor_to_block(block: &mut AsgBlock, anchor: Option<PendingBlockAnchor>) {
+    if let Some(anchor) = anchor
+        && block.id.is_none()
+    {
+        block.id = Some(anchor.id);
+    }
 }
 
 fn count_consumed_lines(lines: &[&str], stop_at_level: Option<u8>, current_level: u8) -> usize {
@@ -1133,6 +1167,33 @@ fn admonition_variant_from_style(style: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn parse_block_anchor(line: &str) -> Option<PendingBlockAnchor> {
+    let trimmed = line.trim();
+
+    if let Some(inner) = trimmed
+        .strip_prefix("[[")
+        .and_then(|rest| rest.strip_suffix("]]"))
+    {
+        let id = inner.split_once(',').map(|(id, _)| id).unwrap_or(inner).trim();
+        if !id.is_empty() {
+            return Some(PendingBlockAnchor { id: id.to_owned() });
+        }
+    }
+
+    if let Some(inner) = trimmed.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+        for part in split_attribute_list(inner) {
+            if let Some(id) = part.strip_prefix('#') {
+                let id = id.trim();
+                if !id.is_empty() {
+                    return Some(PendingBlockAnchor { id: id.to_owned() });
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn flush_paragraph(
@@ -2190,6 +2251,15 @@ mod tests {
     }
 
     #[test]
+    fn renders_tck_anchored_admonition_paragraph() {
+        let document = parse_tck_document("[[install-note]]\nNOTE: This is just a note.");
+        let block = document.blocks.first().expect("admonition block");
+
+        assert_eq!(block.name, "admonition");
+        assert_eq!(block.id.as_deref(), Some("install-note"));
+    }
+
+    #[test]
     fn renders_tck_styled_admonition_paragraph() {
         let document = parse_tck_document("[NOTE]\nRemember the milk.");
         let block = document.blocks.first().expect("admonition block");
@@ -2214,5 +2284,29 @@ mod tests {
         let metadata = block.metadata.as_ref().expect("metadata");
         assert_eq!(metadata.attributes.get("$1").map(String::as_str), Some("TIP"));
         assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("TIP"));
+    }
+
+    #[test]
+    fn renders_tck_anchored_list_block() {
+        let document = parse_tck_document("[[steps]]\n* one");
+        let block = document.blocks.first().expect("list block");
+
+        assert_eq!(block.name, "list");
+        assert_eq!(block.id.as_deref(), Some("steps"));
+        assert_eq!(block.variant, Some("unordered"));
+    }
+
+    #[test]
+    fn renders_tck_anchored_delimited_blocks() {
+        let document =
+            parse_tck_document("[[code-sample]]\n----\nputs 'hello'\n----\n\n[[aside]]\n****\ninside\n****");
+
+        let listing = document.blocks.first().expect("listing block");
+        assert_eq!(listing.name, "listing");
+        assert_eq!(listing.id.as_deref(), Some("code-sample"));
+
+        let sidebar = document.blocks.get(1).expect("sidebar block");
+        assert_eq!(sidebar.name, "sidebar");
+        assert_eq!(sidebar.id.as_deref(), Some("aside"));
     }
 }

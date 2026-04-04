@@ -107,6 +107,8 @@ pub struct AdmonitionBlock {
 pub struct ListBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
     pub items: Vec<ListItemBlock>,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
@@ -131,6 +133,8 @@ pub struct ListItemBlock {
 pub struct ListingBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
     pub content: String,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
@@ -234,6 +238,8 @@ pub struct SectionBlock {
 pub struct CompoundBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
     pub blocks: Vec<PreparedBlock>,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
@@ -577,6 +583,7 @@ fn prepare_unordered_list(list: &UnorderedList) -> ListBlock {
         level: 0,
         name: "ulist".into(),
         id: list.metadata.id.clone(),
+        reftext: list.reftext.clone(),
         style: list.metadata.style.clone(),
         role: list.metadata.role.clone(),
         title: list.metadata.title.clone(),
@@ -597,6 +604,7 @@ fn prepare_ordered_list(list: &OrderedList) -> ListBlock {
         level: 0,
         name: "olist".into(),
         id: list.metadata.id.clone(),
+        reftext: list.reftext.clone(),
         style: list.metadata.style.clone(),
         role: list.metadata.role.clone(),
         title: list.metadata.title.clone(),
@@ -606,6 +614,7 @@ fn prepare_ordered_list(list: &OrderedList) -> ListBlock {
 fn prepare_listing(listing: &AstListing) -> ListingBlock {
     ListingBlock {
         id: listing.metadata.id.clone(),
+        reftext: listing.reftext.clone(),
         content: listing.lines.join("\n"),
         attributes: listing.metadata.attributes.clone(),
         content_model: Some(ContentModel::Simple),
@@ -620,6 +629,7 @@ fn prepare_listing(listing: &AstListing) -> ListingBlock {
 fn prepare_compound_block(block: &AstCompoundBlock) -> CompoundBlock {
     CompoundBlock {
         id: block.metadata.id.clone(),
+        reftext: block.reftext.clone(),
         blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
         attributes: block.metadata.attributes.clone(),
         content_model: Some(ContentModel::Compound),
@@ -667,6 +677,7 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
 fn prepare_preamble(blocks: Vec<PreparedBlock>) -> CompoundBlock {
     CompoundBlock {
         id: None,
+        reftext: None,
         blocks,
         attributes: BTreeMap::new(),
         content_model: Some(ContentModel::Compound),
@@ -767,7 +778,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
                             id: id.clone(),
-                            title: list.title.clone(),
+                            title: list.reftext.clone().or_else(|| list.title.clone()),
                         });
                 }
                 for item in &list.items {
@@ -779,7 +790,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
                             id: id.clone(),
-                            title: listing.title.clone(),
+                            title: listing.reftext.clone().or_else(|| listing.title.clone()),
                         });
                 }
             }
@@ -788,7 +799,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
                             id: id.clone(),
-                            title: example.title.clone(),
+                            title: example.reftext.clone().or_else(|| example.title.clone()),
                         });
                 }
                 collect_block_refs_into(&example.blocks, refs);
@@ -2054,6 +2065,7 @@ mod tests {
                         metadata: BlockMetadata::default()
                     })],
                 }],
+                reftext: None,
                 metadata: BlockMetadata::default()
         })],
         };
@@ -2088,6 +2100,34 @@ mod tests {
     }
 
     #[test]
+    fn resolves_xrefs_to_list_anchor_reftext() {
+        let document = parse_document("[[steps,Setup Steps]]\n* one\n\nSee <<steps>>.");
+        let prepared = prepare_document(&document);
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::UnorderedList(list) = &preamble.blocks[0] else {
+            panic!("expected list");
+        };
+        assert_eq!(list.reftext.as_deref(), Some("Setup Steps"));
+
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[1] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref");
+        };
+        assert_eq!(xref.href, "#steps");
+        assert_eq!(
+            xref.inlines,
+            vec![PreparedInline::Text(TextInline {
+                value: "Setup Steps".into(),
+            })]
+        );
+    }
+
+    #[test]
     fn prepares_anchored_delimited_blocks() {
         let document = parse_document(
             "[[code-sample]]\n----\nputs 'hello'\n----\n\n[[aside]]\n****\ninside sidebar\n****\n\n[[walkthrough]]\n====\ninside example\n====",
@@ -2101,16 +2141,49 @@ mod tests {
             panic!("expected listing");
         };
         assert_eq!(listing.id.as_deref(), Some("code-sample"));
+        assert_eq!(listing.reftext, None);
 
         let PreparedBlock::Sidebar(sidebar) = &preamble.blocks[1] else {
             panic!("expected sidebar");
         };
         assert_eq!(sidebar.id.as_deref(), Some("aside"));
+        assert_eq!(sidebar.reftext, None);
 
         let PreparedBlock::Example(example) = &preamble.blocks[2] else {
             panic!("expected example");
         };
         assert_eq!(example.id.as_deref(), Some("walkthrough"));
+        assert_eq!(example.reftext, None);
+    }
+
+    #[test]
+    fn resolves_xrefs_to_delimited_block_anchor_reftext() {
+        let document = parse_document(
+            "[[code-sample,Code Sample]]\n----\nputs 'hello'\n----\n\nSee <<code-sample>>.",
+        );
+        let prepared = prepare_document(&document);
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Listing(listing) = &preamble.blocks[0] else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.reftext.as_deref(), Some("Code Sample"));
+
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[1] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref");
+        };
+        assert_eq!(xref.href, "#code-sample");
+        assert_eq!(
+            xref.inlines,
+            vec![PreparedInline::Text(TextInline {
+                value: "Code Sample".into(),
+            })]
+        );
     }
 
     #[test]
@@ -2121,6 +2194,7 @@ mod tests {
             blocks: vec![
                 Block::Listing(Listing {
                     lines: vec!["puts 'hello'".into()],
+                    reftext: None,
                     metadata: Default::default(),
                 }),
                 Block::Sidebar(AstCompoundBlock {
@@ -2131,6 +2205,7 @@ mod tests {
                         reftext: None,
                         metadata: BlockMetadata::default()
                     })],
+                    reftext: None,
                     metadata: Default::default(),
                 }),
                 Block::Example(AstCompoundBlock {
@@ -2141,6 +2216,7 @@ mod tests {
                         reftext: None,
                         metadata: BlockMetadata::default()
                     })],
+                    reftext: None,
                     metadata: Default::default(),
                 }),
             ],

@@ -737,6 +737,7 @@ mod tests {
                         })],
                     },
                 ],
+                reftext: None,
             metadata: BlockMetadata::default()
         })],
         };
@@ -764,6 +765,7 @@ mod tests {
                         metadata: BlockMetadata::default()
                     })],
                 }],
+                reftext: None,
             metadata: BlockMetadata::default()
         })],
         };
@@ -801,6 +803,7 @@ mod tests {
                                         metadata: BlockMetadata::default()
                                     })],
                                 }],
+                                reftext: None,
                                 metadata: BlockMetadata::default()
                             }),
                             Block::Paragraph(Paragraph {
@@ -822,6 +825,7 @@ mod tests {
                         })],
                     },
                 ],
+                reftext: None,
             metadata: BlockMetadata::default()
         })],
         };
@@ -843,6 +847,7 @@ mod tests {
             blocks: vec![
                 Block::Listing(Listing {
                     lines: vec!["puts 'hello'".into()],
+                    reftext: None,
                     metadata: BlockMetadata::default(),
                 }),
                 Block::Sidebar(CompoundBlock {
@@ -853,6 +858,7 @@ mod tests {
                         reftext: None,
                     metadata: BlockMetadata::default()
                 })],
+                    reftext: None,
                     metadata: BlockMetadata::default(),
                 }),
                 Block::Example(CompoundBlock {
@@ -863,6 +869,7 @@ mod tests {
                         reftext: None,
                     metadata: BlockMetadata::default()
                 })],
+                    reftext: None,
                     metadata: BlockMetadata::default(),
                 }),
             ],
@@ -885,6 +892,7 @@ mod tests {
             title: None,
             blocks: vec![Block::Listing(Listing {
                 lines: vec!["puts 'hello'".into()],
+                reftext: None,
                 metadata: BlockMetadata {
                     title: Some("Exhibit A".into()),
                     ..Default::default()
