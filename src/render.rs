@@ -911,6 +911,8 @@ mod tests {
                     reftext: None,
                     metadata: BlockMetadata::default(),
                 })],
+                id: None,
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })],
         };
@@ -924,4 +926,3 @@ mod tests {
         assert!(html.contains("<p>This is just a note.</p>"));
     }
 }
-

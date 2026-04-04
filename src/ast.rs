@@ -41,6 +41,8 @@ pub struct Paragraph {
 pub struct AdmonitionBlock {
     pub variant: AdmonitionVariant,
     pub blocks: Vec<Block>,
+    pub id: Option<String>,
+    pub reftext: Option<String>,
     pub metadata: BlockMetadata,
 }
 

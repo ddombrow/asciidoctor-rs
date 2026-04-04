@@ -85,6 +85,8 @@ pub struct ParagraphBlock {
 pub struct AdmonitionBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
     pub blocks: Vec<PreparedBlock>,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
@@ -547,7 +549,8 @@ fn prepare_paragraph(paragraph: &Paragraph) -> ParagraphBlock {
 
 fn prepare_admonition_block(block: &AstAdmonitionBlock) -> AdmonitionBlock {
     AdmonitionBlock {
-        id: block.metadata.id.clone(),
+        id: block.id.clone().or_else(|| block.metadata.id.clone()),
+        reftext: block.reftext.clone(),
         blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
         attributes: block.metadata.attributes.clone(),
         content_model: Some(ContentModel::Compound),
@@ -754,7 +757,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
                             id: id.clone(),
-                            title: admonition.title.clone(),
+                            title: admonition.reftext.clone().or_else(|| admonition.title.clone()),
                         });
                 }
                 collect_block_refs_into(&admonition.blocks, refs);
@@ -2167,5 +2170,44 @@ mod tests {
         };
         assert_eq!(paragraph.content, "Remember the milk.");
     }
-}
 
+    #[test]
+    fn prepares_anchored_admonitions_with_reftext() {
+        let document = parse_document("[[install-note,Install Note]]\nNOTE: Read this first.");
+        let prepared = prepare_document(&document);
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Admonition(admonition) = &preamble.blocks[0] else {
+            panic!("expected admonition");
+        };
+        assert_eq!(admonition.id.as_deref(), Some("install-note"));
+        assert_eq!(admonition.reftext.as_deref(), Some("Install Note"));
+    }
+
+    #[test]
+    fn resolves_xrefs_to_admonition_anchor_reftext() {
+        let document = parse_document(
+            "[[install-note,Install Note]]\nNOTE: Read this first.\n\nSee <<install-note>>.",
+        );
+        let prepared = prepare_document(&document);
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[1] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Xref(xref) = &paragraph.inlines[1] else {
+            panic!("expected xref");
+        };
+        assert_eq!(xref.href, "#install-note");
+        assert_eq!(
+            xref.inlines,
+            vec![PreparedInline::Text(TextInline {
+                value: "Install Note".into(),
+            })]
+        );
+    }
+}

@@ -316,6 +316,9 @@ fn push_block(
                 blocks.push(Block::Heading(heading));
             }
         }
+        Block::Admonition(admonition) => {
+            blocks.push(Block::Admonition(apply_anchor_to_admonition(admonition, anchor)));
+        }
         other => blocks.push(other),
     }
 }
@@ -355,7 +358,25 @@ fn apply_prelude_to_admonition(
     prelude: Option<BlockPrelude>,
 ) -> AdmonitionBlock {
     if let Some(prelude) = prelude {
+        if admonition.id.is_none() {
+            admonition.id = prelude.metadata.id.clone();
+        }
         admonition.metadata = prelude.metadata;
+    }
+    admonition
+}
+
+fn apply_anchor_to_admonition(
+    mut admonition: AdmonitionBlock,
+    anchor: Option<PendingAnchor>,
+) -> AdmonitionBlock {
+    if let Some(anchor) = anchor {
+        if admonition.id.is_none() {
+            admonition.id = Some(anchor.id);
+        }
+        if admonition.reftext.is_none() {
+            admonition.reftext = anchor.reftext;
+        }
     }
     admonition
 }
@@ -397,6 +418,8 @@ fn parse_delimited_block(
             Block::Admonition(AdmonitionBlock {
                 variant,
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                id: prelude.metadata.id.clone(),
+                reftext: None,
                 metadata: prelude.metadata,
             }),
             consumed,
@@ -457,6 +480,8 @@ fn parse_admonition_paragraph(
             AdmonitionBlock {
                 variant,
                 blocks: vec![make_paragraph_like_block(paragraph_lines)],
+                id: pending_prelude.and_then(|prelude| prelude.metadata.id.clone()),
+                reftext: None,
                 metadata: BlockMetadata::default(),
             },
             pending_prelude.cloned(),
@@ -922,6 +947,8 @@ fn make_paragraph_like_block(lines: Vec<String>) -> Block {
         return Block::Admonition(AdmonitionBlock {
             variant,
             blocks: vec![Block::Paragraph(make_paragraph(paragraph_lines))],
+            id: None,
+            reftext: None,
             metadata: BlockMetadata::default(),
         });
     }
@@ -952,6 +979,8 @@ fn make_block_from_paragraph(
                 reftext: None,
                 metadata: BlockMetadata::default(),
             })],
+            id: metadata.id.clone(),
+            reftext,
             metadata,
         });
     }
@@ -2482,6 +2511,8 @@ mod tests {
                     reftext: None,
                     metadata: BlockMetadata::default(),
                 })],
+                id: None,
+                reftext: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -2495,6 +2526,8 @@ mod tests {
             panic!("expected admonition");
         };
         assert_eq!(admonition.variant, AdmonitionVariant::Note);
+        assert_eq!(admonition.id, None);
+        assert_eq!(admonition.reftext, None);
         assert_eq!(admonition.metadata.style.as_deref(), Some("NOTE"));
         let [Block::Paragraph(paragraph)] = admonition.blocks.as_slice() else {
             panic!("expected paragraph");
@@ -2510,13 +2543,36 @@ mod tests {
             panic!("expected admonition");
         };
         assert_eq!(admonition.variant, AdmonitionVariant::Tip);
+        assert_eq!(admonition.id, None);
+        assert_eq!(admonition.reftext, None);
         assert_eq!(admonition.metadata.style.as_deref(), Some("TIP"));
         let [Block::Paragraph(paragraph)] = admonition.blocks.as_slice() else {
             panic!("expected paragraph");
         };
         assert_eq!(paragraph.plain_text(), "Remember the milk.");
     }
+
+    #[test]
+    fn applies_anchor_to_admonition_paragraphs() {
+        let document = parse_document("[[install-note,Install Note]]\nNOTE: Read this first.");
+
+        let [Block::Admonition(admonition)] = document.blocks.as_slice() else {
+            panic!("expected admonition");
+        };
+        assert_eq!(admonition.id.as_deref(), Some("install-note"));
+        assert_eq!(admonition.reftext.as_deref(), Some("Install Note"));
+    }
+
+    #[test]
+    fn applies_anchor_to_styled_delimited_admonitions() {
+        let document = parse_document("[[ship-tip,Shipping Tip]]\n[TIP]\n====\nShip it carefully.\n====");
+
+        let [Block::Admonition(admonition)] = document.blocks.as_slice() else {
+            panic!("expected admonition");
+        };
+        assert_eq!(admonition.id.as_deref(), Some("ship-tip"));
+        assert_eq!(admonition.reftext.as_deref(), Some("Shipping Tip"));
+        assert_eq!(admonition.variant, AdmonitionVariant::Tip);
+    }
 }
-
-
 
