@@ -75,9 +75,13 @@ module through a real page:
 
 ```powershell
 npm install
+npx playwright install
 npm run build:wasm:test
 npm run test:browser
 ```
+
+On a fresh machine, `npx playwright install` is required once to download Playwright's managed
+browser binaries.
 
 The browser build currently expects a locally downloaded `wasm-bindgen` binary. Install it with:
 

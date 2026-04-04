@@ -364,6 +364,49 @@ test("preview resolves explicit section anchors", async ({ page }) => {
   await expect(frame.locator("#install")).toHaveCount(1);
 });
 
+test("preview resolves anchored list reftext", async ({ page }) => {
+  const source = "= Sample Document\n\n[[steps,Setup Steps]]\n* one\n\nSee <<steps>>.\n";
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks[0]).toMatchObject({
+    type: "unordered_list",
+    id: "steps",
+    reftext: "Setup Steps"
+  });
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const link = frame.locator("a[href=\"#steps\"]").first();
+  await expect(link).toHaveText("Setup Steps");
+  await expect(frame.locator("#steps")).toHaveCount(1);
+});
+
+test("preview resolves anchored delimited block reftext", async ({ page }) => {
+  const source =
+    "= Sample Document\n\n[[code-sample,Code Sample]]\n----\nputs 'hello'\n----\n\nSee <<code-sample>>.\n";
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks[0]).toMatchObject({
+    type: "listing",
+    id: "code-sample",
+    reftext: "Code Sample"
+  });
+
+  await page.fill("#source", source);
+
+  const frame = page.frameLocator("#preview-frame");
+  const link = frame.locator("a[href=\"#code-sample\"]").first();
+  await expect(link).toHaveText("Code Sample");
+  await expect(frame.locator("#code-sample")).toHaveCount(1);
+});
+
 test("preview resolves inline anchors", async ({ page }) => {
   const source =
     "= Sample Document\n\nSee <<bookmark-a>> and [[bookmark-a,Marked Spot]]look here.\n";
