@@ -1,0 +1,8 @@
+{
+  "name": "asciidoctor-rs",
+  "version": "0.1.0",
+  "description": "Node.js bindings for asciidoctor-rs",
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "license": "MIT"
+}

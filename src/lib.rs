@@ -11,6 +11,9 @@ pub mod wasm;
 #[cfg(feature = "python")]
 pub mod python;
 
+#[cfg(feature = "node")]
+pub mod node;
+
 pub use ast::{
     AdmonitionBlock, AdmonitionVariant, Block, Document, Heading, Inline, InlineAnchor,
     InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref, Paragraph,

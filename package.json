@@ -5,14 +5,17 @@
   "scripts": {
     "install:wasm-bindgen": "node scripts/install-wasm-bindgen.mjs",
     "sync:preview-assets": "node scripts/sync-preview-assets.mjs",
+    "build:node:module": "napi build --features node --output-dir packages/node",
     "build:wasm:test": "node tests/browser/build-wasm.mjs",
     "preview:browser": "npm run build:wasm:test && node tests/browser/server.mjs",
     "test:browser": "npm run build:wasm:test && playwright test",
     "test:browser:headed": "npm run build:wasm:test && playwright test --headed",
+    "test:node": "npm run build:node:module && node tests/node/smoke.cjs",
     "test:tck": "node scripts/run-tck-full.mjs",
     "test:tck:smoke": "node scripts/run-tck-smoke.mjs"
   },
   "devDependencies": {
+    "@napi-rs/cli": "^3.5.0",
     "@playwright/test": "^1.55.1"
   }
 }

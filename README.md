@@ -93,12 +93,33 @@ npm run install:wasm-bindgen
 automatically retries online if required WASM crates have not been downloaded yet. To force strict
 offline mode, set `ASCIIDOCTOR_RS_WASM_BUILD_OFFLINE=1`.
 
+## Node Module
+
+There is also a feature-gated N-API Node module scaffold under `packages/node/` that mirrors the
+Python bindings:
+
+- `renderHtml(input)` / `render_html(input)`
+- `prepareDocumentJson(input)` / `prepare_document_json(input)`
+- `renderTckJson(input)` / `render_tck_json(input)`
+
+To build and smoke test it locally:
+
+```powershell
+npm install
+npm run build:node:module
+npm run test:node
+```
+
+The Rust side is gated behind the `node` Cargo feature and lives in `src/node.rs`.
+
 ## GitHub Actions
 
 The repository includes a GitHub Actions workflow at `.github/workflows/ci.yml` that runs the
 repo-local checks on pushes and pull requests:
 
 - `cargo test`
+- `uv run pytest tests/python/ --quiet`
+- `npm run test:node`
 - `npm run test:browser`
 
 The default CI workflow does not run `npm run test:tck` because the full TCK harness depends on the

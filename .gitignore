@@ -14,5 +14,7 @@ __pycache__/
 *.pyc
 *.pyo
 /.venv/
+/packages/node/index.node
+/packages/node/*.node
 
 /.claude/*
