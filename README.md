@@ -1,7 +1,7 @@
 # asciidoctor-rs
 
 `asciidoctor-rs` is a Rust port of the upstream
-[Asciidoctor](C:\Users\ddomb\src\asciidoctor) project.
+[Asciidoctor](https://asciidoctor.org/) project.
 
 ## Goals
 
@@ -26,32 +26,59 @@
 
 ## Running
 
-```powershell
-cargo run -- examples\sample.adoc
-cargo run -- --format json examples\sample.adoc
-cargo run -- --format tck-json examples\sample.adoc
+```sh
+cargo run -- examples/sample.adoc
+cargo run -- --format json examples/sample.adoc
+cargo run -- --format tck-json examples/sample.adoc
 cargo test
 ```
+
+## Just
+
+This repo also includes a `Justfile` for cross-language task running. Install `just` with one of:
+
+```sh
+brew install just
+cargo install just
+sudo apt install just
+```
+
+Useful commands:
+
+```sh
+just bootstrap
+just test
+just test-rust
+just test-python
+just test-node
+just test-browser
+just build-python
+just build-node
+just build-wasm
+```
+
+`just bootstrap` installs the local Python environment, npm dependencies, `wasm-bindgen`, and
+Playwright's managed browser binaries for a fresh machine.
 
 ## TCK Adapter
 
 There is an initial AsciiDoc TCK adapter mode for block and simple inline parsing. It can read
 the TCK stdin envelope and emit ASG JSON on stdout:
 
-```powershell
-Get-Content request.json | cargo run -- --format tck-json --stdin
-node C:\Users\ddomb\src\asciidoc-tck\harness\bin\asciidoc-tck.js cli --adapter-command "node C:\Users\ddomb\src\asciidoctor-rs\scripts\tck-adapter.mjs"
+```sh
+cargo run -- --format tck-json --stdin < request.json
+node ../asciidoc-tck/harness/bin/asciidoc-tck.js cli --adapter-command "node ./scripts/tck-adapter.mjs"
 ```
 
 There is also a local smoke suite wired to the real TCK harness:
 
-```powershell
+```sh
 npm run test:tck:smoke
 ```
 
-To run the full sibling `..\asciidoc-tck` test suite through this adapter and see all failures:
+To run the full sibling `../asciidoc-tck` test suite through this adapter and see all failures:
 
-```powershell
+```sh
 npm run test:tck
 ```
 
@@ -66,14 +93,14 @@ exists for:
 
 Browser-oriented smoke tests live in `tests/browser_exports.rs` and are intended to run with:
 
-```powershell
+```sh
 cargo test --target wasm32-unknown-unknown --features wasm
 ```
 
 There is also a Playwright-based browser integration harness that exercises the generated WASM
 module through a real page:
 
-```powershell
+```sh
 npm install
 npx playwright install
 npm run build:wasm:test
@@ -85,7 +112,7 @@ browser binaries.
 
 The browser build currently expects a locally downloaded `wasm-bindgen` binary. Install it with:
 
-```powershell
+```sh
 npm run install:wasm-bindgen
 ```
 
@@ -104,7 +131,7 @@ Python bindings:
 
 To build and smoke test it locally:
 
-```powershell
+```sh
 npm install
 npm run build:node:module
 npm run test:node
@@ -123,7 +150,7 @@ repo-local checks on pushes and pull requests:
 - `npm run test:browser`
 
 The default CI workflow does not run `npm run test:tck` because the full TCK harness depends on the
-separate sibling `..\asciidoc-tck` repository rather than files that live entirely inside this
+separate sibling `../asciidoc-tck` repository rather than files that live entirely inside this
 repository.
 
 The browser preview uses the upstream Asciidoctor font and stylesheet assets:
@@ -132,7 +159,7 @@ and `https://cdn.jsdelivr.net/gh/asciidoctor/asciidoctor@2.0/data/stylesheets/as
 
 To vendor those exact preview assets locally, run:
 
-```powershell
+```sh
 npm run sync:preview-assets
 ```
 
