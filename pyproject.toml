@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "asciidoctor-rs"
+version = "0.1.0"
+description = "Python bindings for asciidoctor-rs"
+requires-python = ">=3.9"
+
+[tool.maturin]
+features = ["python"]
+module-name = "asciidoctor_rs"
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "**/*.rs" }
+]
+config-settings = { build-args = "--profile=dev" }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]

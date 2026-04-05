@@ -15,28 +15,36 @@ pub fn render_prepared_html(document: &DocumentBlock) -> String {
 
     html.push_str("<div id=\"content\">\n");
     for block in &document.blocks {
-        render_block(&mut html, block);
+        render_block(&mut html, block, &document.attributes);
     }
     html.push_str("</div>\n");
     html
 }
 
-fn render_block(html: &mut String, block: &PreparedBlock) {
+fn render_block(
+    html: &mut String,
+    block: &PreparedBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
     match block {
         PreparedBlock::Preamble(preamble) => {
             html.push_str("<div id=\"preamble\">\n<div class=\"sectionbody\">\n");
             for block in &preamble.blocks {
-                render_block(html, block);
+                render_block(html, block, document_attributes);
             }
             html.push_str("</div>\n</div>\n");
         }
         PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
-        PreparedBlock::Admonition(admonition) => render_admonition(html, admonition),
-        PreparedBlock::UnorderedList(list) => render_unordered_list(html, list),
-        PreparedBlock::OrderedList(list) => render_ordered_list(html, list),
+        PreparedBlock::Admonition(admonition) => {
+            render_admonition(html, admonition, document_attributes)
+        }
+        PreparedBlock::UnorderedList(list) => render_unordered_list(html, list, document_attributes),
+        PreparedBlock::OrderedList(list) => render_ordered_list(html, list, document_attributes),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
-        PreparedBlock::Example(example) => render_compound(html, "exampleblock", example),
-        PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar),
+        PreparedBlock::Example(example) => {
+            render_compound(html, "exampleblock", example, document_attributes)
+        }
+        PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, document_attributes),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -51,7 +59,7 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
             html.push_str("<div class=\"sectionbody\">\n");
 
             for block in &section.blocks {
-                render_block(html, block);
+                render_block(html, block, document_attributes);
             }
 
             html.push_str("</div>\n</div>\n");
@@ -59,7 +67,11 @@ fn render_block(html: &mut String, block: &PreparedBlock) {
     }
 }
 
-fn render_unordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
+fn render_unordered_list(
+    html: &mut String,
+    list: &crate::prepare::ListBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
     html.push_str("<div class=\"ulist\"");
     if let Some(id) = &list.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -72,14 +84,18 @@ fn render_unordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
     for item in &list.items {
         html.push_str("<li>\n");
         for block in &item.blocks {
-            render_block(html, block);
+            render_block(html, block, document_attributes);
         }
         html.push_str("</li>\n");
     }
     html.push_str("</ul>\n</div>\n");
 }
 
-fn render_ordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
+fn render_ordered_list(
+    html: &mut String,
+    list: &crate::prepare::ListBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
     html.push_str("<div class=\"olist arabic\"");
     if let Some(id) = &list.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -92,7 +108,7 @@ fn render_ordered_list(html: &mut String, list: &crate::prepare::ListBlock) {
     for item in &list.items {
         html.push_str("<li>\n");
         for block in &item.blocks {
-            render_block(html, block);
+            render_block(html, block, document_attributes);
         }
         html.push_str("</li>\n");
     }
@@ -117,6 +133,7 @@ fn render_compound(
     html: &mut String,
     class_name: &str,
     block: &crate::prepare::CompoundBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
 ) {
     html.push_str(&format!("<div class=\"{class_name}\""));
     if let Some(id) = &block.id {
@@ -128,12 +145,16 @@ fn render_compound(
     }
     html.push_str("<div class=\"content\">\n");
     for child in &block.blocks {
-        render_block(html, child);
+        render_block(html, child, document_attributes);
     }
     html.push_str("</div>\n</div>\n");
 }
 
-fn render_sidebar(html: &mut String, block: &crate::prepare::CompoundBlock) {
+fn render_sidebar(
+    html: &mut String,
+    block: &crate::prepare::CompoundBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
     html.push_str("<div class=\"sidebarblock\"");
     if let Some(id) = &block.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -143,7 +164,7 @@ fn render_sidebar(html: &mut String, block: &crate::prepare::CompoundBlock) {
         html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
     }
     for child in &block.blocks {
-        render_block(html, child);
+        render_block(html, child, document_attributes);
     }
     html.push_str("</div>\n</div>\n");
 }
@@ -162,7 +183,11 @@ fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBloc
     html.push_str("</p>\n</div>\n");
 }
 
-fn render_admonition(html: &mut String, admonition: &crate::prepare::AdmonitionBlock) {
+fn render_admonition(
+    html: &mut String,
+    admonition: &crate::prepare::AdmonitionBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
     html.push_str(&format!(
         "<div class=\"admonitionblock {}\"",
         escape_html(&admonition.variant)
@@ -173,19 +198,34 @@ fn render_admonition(html: &mut String, admonition: &crate::prepare::AdmonitionB
     html.push_str(">\n<table>\n<tr>\n<td class=\"icon\">\n");
     html.push_str(&format!(
         "<div class=\"title\">{}</div>\n",
-        escape_html(admonition_label(&admonition.variant))
+        escape_html(admonition_label(
+            &admonition.variant,
+            &admonition.attributes,
+            document_attributes,
+        ))
     ));
     html.push_str("</td>\n<td class=\"content\">\n");
     if let Some(title) = &admonition.title {
         html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
     }
     for block in &admonition.blocks {
-        render_block(html, block);
+        render_block(html, block, document_attributes);
     }
     html.push_str("</td>\n</tr>\n</table>\n</div>\n");
 }
 
-fn admonition_label(variant: &str) -> &str {
+fn admonition_label<'a>(
+    variant: &'a str,
+    block_attributes: &'a std::collections::BTreeMap<String, String>,
+    document_attributes: &'a std::collections::BTreeMap<String, String>,
+) -> &'a str {
+    if let Some(caption) = block_attributes.get("caption").filter(|caption| !caption.is_empty()) {
+        return caption;
+    }
+    let key = format!("{variant}-caption");
+    if let Some(caption) = document_attributes.get(&key).filter(|caption| !caption.is_empty()) {
+        return caption;
+    }
     match variant {
         "note" => "Note",
         "tip" => "Tip",
@@ -932,5 +972,66 @@ mod tests {
         assert!(html.contains("<div class=\"title\">Note</div>"));
         assert!(html.contains("<td class=\"content\">"));
         assert!(html.contains("<p>This is just a note.</p>"));
+    }
+
+    #[test]
+    fn uses_document_caption_for_admonition_label() {
+        let document = Document {
+            attributes: [("tip-caption".to_string(), "Pro Tip".to_string())]
+                .into_iter()
+                .collect(),
+            title: None,
+            blocks: vec![Block::Admonition(crate::ast::AdmonitionBlock {
+                id: None,
+                reftext: None,
+                variant: crate::ast::AdmonitionVariant::Tip,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    lines: vec!["Ship it carefully.".into()],
+                    inlines: vec![Inline::Text("Ship it carefully.".into())],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata::default(),
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div class=\"title\">Pro Tip</div>"));
+        assert!(!html.contains("<td class=\"icon\">\n<div class=\"title\">Tip</div>"));
+    }
+
+    #[test]
+    fn block_caption_overrides_document_caption_for_admonition_label() {
+        let document = Document {
+            attributes: [("tip-caption".to_string(), "Pro Tip".to_string())]
+                .into_iter()
+                .collect(),
+            title: None,
+            blocks: vec![Block::Admonition(crate::ast::AdmonitionBlock {
+                id: None,
+                reftext: None,
+                variant: crate::ast::AdmonitionVariant::Tip,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    lines: vec!["Ship it carefully.".into()],
+                    inlines: vec![Inline::Text("Ship it carefully.".into())],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata {
+                    attributes: [("caption".to_string(), "Custom Tip".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..BlockMetadata::default()
+                },
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<div class=\"title\">Custom Tip</div>"));
+        assert!(!html.contains("<td class=\"icon\">\n<div class=\"title\">Pro Tip</div>"));
     }
 }

@@ -126,9 +126,21 @@ function highlightJsonLine(line) {
     .replace(/([{}[\],])/g, '<span class="json-punc">$1</span>');
 }
 
+function getAttribute(attributes, key) {
+  if (!attributes) {
+    return undefined;
+  }
+
+  if (typeof attributes.get === "function") {
+    return attributes.get(key);
+  }
+
+  return attributes[key];
+}
+
 function renderDocument(document) {
   const title = document.title ? `<h1>${escapeHtml(document.title)}</h1>` : "";
-  const blocks = renderBlocks(document.blocks ?? []);
+  const blocks = renderBlocks(document.blocks ?? [], 0, document.attributes ?? {});
 
   return `
     <div id="header">
@@ -165,16 +177,16 @@ function renderHeadMetadata(document) {
   return [...authorTags, ...revisionTags].join("\n");
 }
 
-function renderBlocks(blocks, sectionLevel = 0) {
-  return blocks.map((block) => renderBlock(block, sectionLevel)).join("");
+function renderBlocks(blocks, sectionLevel = 0, documentAttributes = {}) {
+  return blocks.map((block) => renderBlock(block, sectionLevel, documentAttributes)).join("");
 }
 
-function renderBlock(block, parentSectionLevel = 0) {
+function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
   if (block.type === "preamble") {
     return `
       <div id="preamble">
         <div class="sectionbody">
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
         </div>
       </div>
     `;
@@ -194,7 +206,7 @@ function renderBlock(block, parentSectionLevel = 0) {
   if (block.type === "admonition") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
-    const label = renderAdmonitionLabel(block.variant ?? "");
+    const label = renderAdmonitionLabel(block.variant ?? "", block.attributes ?? {}, documentAttributes);
     return `
       <div class="admonitionblock ${escapeHtml(block.variant ?? "")}"${id}>
         <table>
@@ -204,7 +216,7 @@ function renderBlock(block, parentSectionLevel = 0) {
             </td>
             <td class="content">
               ${title}
-              ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+              ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
             </td>
           </tr>
         </table>
@@ -215,7 +227,6 @@ function renderBlock(block, parentSectionLevel = 0) {
   if (block.type === "section") {
     const level = Math.min((block.level ?? 1) + 1, 6);
     const sectionClass = `sect${block.level ?? Math.max(parentSectionLevel + 1, 1)}`;
-    const blocks = renderBlocks(block.blocks ?? [], block.level ?? parentSectionLevel + 1);
     const number =
       block.numbered && block.num
         ? `<span class="section-num">${escapeHtml(block.num)}</span>`
@@ -225,7 +236,7 @@ function renderBlock(block, parentSectionLevel = 0) {
       <div class="${sectionClass}"${id}>
         <h${level}>${number}${escapeHtml(block.title ?? "")}</h${level}>
         <div class="sectionbody">
-          ${blocks}
+          ${renderBlocks(block.blocks ?? [], block.level ?? parentSectionLevel + 1, documentAttributes)}
         </div>
       </div>
     `;
@@ -238,7 +249,7 @@ function renderBlock(block, parentSectionLevel = 0) {
       .map(
         (item) => `
           <li>
-            ${renderBlocks(item.blocks ?? [], parentSectionLevel)}
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes)}
           </li>
         `
       )
@@ -260,7 +271,7 @@ function renderBlock(block, parentSectionLevel = 0) {
       .map(
         (item) => `
           <li>
-            ${renderBlocks(item.blocks ?? [], parentSectionLevel)}
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes)}
           </li>
         `
       )
@@ -299,7 +310,7 @@ function renderBlock(block, parentSectionLevel = 0) {
       <div class="exampleblock"${id}>
         ${title}
         <div class="content">
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
         </div>
       </div>
     `;
@@ -314,7 +325,7 @@ function renderBlock(block, parentSectionLevel = 0) {
       <div class="sidebarblock"${id}>
         <div class="content">
           ${title}
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
         </div>
       </div>
     `;
@@ -410,7 +421,17 @@ function renderPreview(document) {
   doc.close();
 }
 
-function renderAdmonitionLabel(variant) {
+function renderAdmonitionLabel(variant, blockAttributes = {}, documentAttributes = {}) {
+  const caption = getAttribute(blockAttributes, "caption");
+  if (typeof caption === "string" && caption.length > 0) {
+    return caption;
+  }
+
+  const documentCaption = getAttribute(documentAttributes, `${variant}-caption`);
+  if (typeof documentCaption === "string" && documentCaption.length > 0) {
+    return documentCaption;
+  }
+
   if (variant === "note") return "Note";
   if (variant === "tip") return "Tip";
   if (variant === "important") return "Important";

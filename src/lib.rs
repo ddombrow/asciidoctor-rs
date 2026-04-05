@@ -4,8 +4,12 @@ pub mod parser;
 pub mod prepare;
 pub mod render;
 pub mod tck;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;
+
+#[cfg(feature = "python")]
+pub mod python;
 
 pub use ast::{
     AdmonitionBlock, AdmonitionVariant, Block, Document, Heading, Inline, InlineAnchor,
@@ -24,5 +28,6 @@ pub use tck::{
     parse_tck_document, parse_tck_inlines, render_tck_inline_json, render_tck_json,
     render_tck_json_from_request,
 };
+
 #[cfg(feature = "wasm")]
 pub use wasm::{prepare_document_json, prepare_document_value};

@@ -54,6 +54,10 @@ struct BlockPrelude {
 }
 
 pub fn parse_document(input: &str) -> Document {
+    if input.is_empty() {
+        return Document::default();
+    }
+    
     let lines: Vec<&str> = input.lines().collect();
     let (mut title, attributes, index) = parse_document_header(&lines);
     let blocks = parse_blocks_from_lines(&lines[index..], &mut title, true);
@@ -1132,6 +1136,7 @@ fn flush_paragraph(
 }
 
 fn parse_heading(lines: &[&str], index: usize) -> Option<(Heading, usize)> {
+
     parse_atx_heading(lines[index])
         .map(|heading| (heading, 1))
         .or_else(|| parse_setext_heading(lines, index))

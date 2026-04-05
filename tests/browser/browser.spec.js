@@ -603,6 +603,34 @@ Ship it carefully.
   await expect(frame.locator(".admonitionblock.tip .content p")).toHaveText("Ship it carefully.");
 });
 
+test("renders admonition caption overrides", async ({ page }) => {
+  const source = `= Sample Document
+:tip-caption: Pro Tip
+
+[caption="Custom Tip"]
+TIP: Use the override closest to the block.
+
+TIP: Fall back to the document caption.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks[0]).toMatchObject({
+    type: "admonition",
+    variant: "tip",
+    attributes: { caption: "Custom Tip" }
+  });
+  expect(document.attributes["tip-caption"]).toBe("Pro Tip");
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.tip .icon .title").nth(0)).toHaveText("Custom Tip");
+  await expect(frame.locator(".admonitionblock.tip .icon .title").nth(1)).toHaveText("Pro Tip");
+});
+
 test("preview ignores header comments and preserves header attributes", async ({ page }) => {
   const source = `// leading comment
 = Sample Document

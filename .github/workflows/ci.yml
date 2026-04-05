@@ -26,6 +26,35 @@ jobs:
       - name: Run Rust tests
         run: cargo test --quiet
 
+  python:
+    name: Python tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Create virtualenv
+        run: uv venv
+
+      - name: Build and install Python bindings
+        run: uv run maturin develop --features python
+
+      - name: Run Python tests
+        run: uv run pytest tests/python/ --quiet
+
   browser:
     name: Browser tests
     runs-on: ubuntu-latest
