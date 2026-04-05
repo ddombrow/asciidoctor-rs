@@ -46,11 +46,8 @@ jobs:
       - name: Set up Python
         run: uv python install
 
-      - name: Create virtualenv
-        run: uv venv
-
-      - name: Build and install Python bindings
-        run: uv run maturin develop --features python
+      - name: Sync Python environment
+        run: uv sync --group dev
 
       - name: Run Python tests
         run: uv run pytest tests/python/ --quiet
