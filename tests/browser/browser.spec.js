@@ -631,6 +631,110 @@ TIP: Fall back to the document caption.`;
   await expect(frame.locator(".admonitionblock.tip .icon .title").nth(1)).toHaveText("Pro Tip");
 });
 
+test("renders image admonition icons when icons are enabled", async ({ page }) => {
+  const source = `= Sample Document
+:icons:
+:iconsdir: assets/icons
+
+TIP: Ship it carefully.`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveAttribute("src", "assets/icons/tip.png");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveAttribute("alt", "Tip");
+  await expect(frame.locator(".admonitionblock.tip .icon .title")).toHaveCount(0);
+});
+
+test("renders custom image admonition icons from block attributes", async ({ page }) => {
+  const source = `= Sample Document
+:icons:
+
+[TIP,icon=hint,iconsdir=custom/icons,icontype=svg,caption="Custom Tip"]
+Ship it carefully.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  expect(document.blocks[0].blocks[0]).toMatchObject({
+    type: "admonition",
+    attributes: {
+      icon: "hint",
+      iconsdir: "custom/icons",
+      icontype: "svg",
+      caption: "Custom Tip"
+    }
+  });
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveAttribute("src", "custom/icons/hint.svg");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveAttribute("alt", "Custom Tip");
+});
+
+test("renders custom image admonition icons in no-header documents", async ({ page }) => {
+  const source = `:icons:
+:iconsdir: /site/icons
+
+[TIP,icon=hint,icontype=svg,caption="Custom Tip"]
+Ship it carefully.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.noHeader).toBe(true);
+  expect(document.attributes).toMatchObject({
+    icons: "",
+    iconsdir: "/site/icons"
+  });
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveAttribute("src", "/site/icons/hint.svg");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveAttribute("alt", "Custom Tip");
+  await expect(frame.locator("text=:icons:")).toHaveCount(0);
+  await expect
+    .poll(async () =>
+      frame
+        .locator(".admonitionblock.tip .icon img")
+        .evaluate((img) => ({ complete: img.complete, width: img.naturalWidth }))
+    )
+    .toEqual({ complete: true, width: 150 });
+});
+
+test("renders custom image admonition icons after earlier content", async ({ page }) => {
+  const source = `= Demo
+
+Intro paragraph.
+
+:icons:
+:iconsdir: /site/icons
+
+[TIP,icon=hint,icontype=svg,caption="Custom Tip"]
+Ship it carefully.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+
+  expect(document.attributes).toMatchObject({
+    icons: "",
+    iconsdir: "/site/icons"
+  });
+  expect(document.blocks[0].blocks).toHaveLength(2);
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("#preamble .paragraph p").first()).toHaveText("Intro paragraph.");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveAttribute("src", "/site/icons/hint.svg");
+  await expect(frame.locator("text=:iconsdir: /site/icons")).toHaveCount(0);
+});
+
 test("preview ignores header comments and preserves header attributes", async ({ page }) => {
   const source = `// leading comment
 = Sample Document

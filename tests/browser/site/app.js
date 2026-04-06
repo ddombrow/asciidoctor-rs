@@ -207,12 +207,13 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
     const label = renderAdmonitionLabel(block.variant ?? "", block.attributes ?? {}, documentAttributes);
+    const icon = renderAdmonitionIcon(block.variant ?? "", block.attributes ?? {}, documentAttributes, label);
     return `
       <div class="admonitionblock ${escapeHtml(block.variant ?? "")}"${id}>
         <table>
           <tr>
             <td class="icon">
-              <div class="title">${escapeHtml(label)}</div>
+              ${icon}
             </td>
             <td class="content">
               ${title}
@@ -446,6 +447,51 @@ function renderAdmonitionLabel(variant, blockAttributes = {}, documentAttributes
   if (variant === "caution") return "Caution";
   if (variant === "warning") return "Warning";
   return variant;
+}
+
+function renderAdmonitionIcon(variant, blockAttributes = {}, documentAttributes = {}, label = variant) {
+  const iconTarget = resolveAdmonitionIconTarget(variant, blockAttributes, documentAttributes);
+  if (!iconTarget) {
+    return `<div class="title">${escapeHtml(label)}</div>`;
+  }
+
+  return `<img src="${escapeHtml(iconTarget)}" alt="${escapeHtml(label)}" />`;
+}
+
+function resolveAdmonitionIconTarget(variant, blockAttributes = {}, documentAttributes = {}) {
+  const icons = getNamedAttribute(blockAttributes, documentAttributes, "icons");
+  if (typeof icons !== "string" || icons === "font") {
+    return undefined;
+  }
+
+  const iconName = getNamedAttribute(blockAttributes, documentAttributes, "icon") || variant;
+  const iconsdir = getNamedAttribute(blockAttributes, documentAttributes, "iconsdir") || "./images/icons";
+  const separator = iconsdir.endsWith("/") || iconsdir.endsWith("\\") ? "" : "/";
+
+  if (iconNameHasExtension(iconName)) {
+    return `${iconsdir}${separator}${iconName}`;
+  }
+
+  const iconType =
+    getNamedAttribute(blockAttributes, documentAttributes, "icontype") ||
+    (icons !== "" && icons !== "image" ? icons : "png");
+
+  return `${iconsdir}${separator}${iconName}.${iconType}`;
+}
+
+function getNamedAttribute(blockAttributes, documentAttributes, key) {
+  const blockValue = getAttribute(blockAttributes, key);
+  if (typeof blockValue === "string") {
+    return blockValue;
+  }
+
+  const documentValue = getAttribute(documentAttributes, key);
+  return typeof documentValue === "string" ? documentValue : undefined;
+}
+
+function iconNameHasExtension(iconName) {
+  const fileName = String(iconName).split(/[\\/]/).pop() ?? String(iconName);
+  return fileName.includes(".");
 }
 
 function renderPreviewError(message) {

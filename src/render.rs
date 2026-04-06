@@ -192,6 +192,11 @@ fn render_admonition(
     admonition: &crate::prepare::AdmonitionBlock,
     document_attributes: &std::collections::BTreeMap<String, String>,
 ) {
+    let label = admonition_label(
+        &admonition.variant,
+        &admonition.attributes,
+        document_attributes,
+    );
     html.push_str(&format!(
         "<div class=\"admonitionblock {}\"",
         escape_html(&admonition.variant)
@@ -200,14 +205,19 @@ fn render_admonition(
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n<table>\n<tr>\n<td class=\"icon\">\n");
-    html.push_str(&format!(
-        "<div class=\"title\">{}</div>\n",
-        escape_html(admonition_label(
-            &admonition.variant,
-            &admonition.attributes,
-            document_attributes,
-        ))
-    ));
+    if let Some(icon_target) = admonition_icon_target(
+        &admonition.variant,
+        &admonition.attributes,
+        document_attributes,
+    ) {
+        html.push_str(&format!(
+            "<img src=\"{}\" alt=\"{}\">\n",
+            escape_html(&icon_target),
+            escape_html(label)
+        ));
+    } else {
+        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(label)));
+    }
     html.push_str("</td>\n<td class=\"content\">\n");
     if let Some(title) = &admonition.title {
         html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
@@ -238,6 +248,59 @@ fn admonition_label<'a>(
         "warning" => "Warning",
         _ => variant,
     }
+}
+
+fn admonition_icon_target(
+    variant: &str,
+    block_attributes: &std::collections::BTreeMap<String, String>,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let icons = named_attribute(block_attributes, document_attributes, "icons")?;
+    if icons == "font" {
+        return None;
+    }
+
+    let icon_name = named_attribute(block_attributes, document_attributes, "icon")
+        .filter(|icon| !icon.is_empty())
+        .unwrap_or(variant);
+    let iconsdir = named_attribute(block_attributes, document_attributes, "iconsdir")
+        .filter(|iconsdir| !iconsdir.is_empty())
+        .unwrap_or("./images/icons");
+    let separator = if iconsdir.ends_with('/') || iconsdir.ends_with('\\') {
+        ""
+    } else {
+        "/"
+    };
+
+    if icon_name_has_extension(icon_name) {
+        return Some(format!("{iconsdir}{separator}{icon_name}"));
+    }
+
+    let extension = named_attribute(block_attributes, document_attributes, "icontype")
+        .filter(|icontype| !icontype.is_empty())
+        .or_else(|| match icons {
+            "" | "image" => None,
+            other => Some(other),
+        })
+        .unwrap_or("png");
+
+    Some(format!("{iconsdir}{separator}{icon_name}.{extension}"))
+}
+
+fn named_attribute<'a>(
+    block_attributes: &'a std::collections::BTreeMap<String, String>,
+    document_attributes: &'a std::collections::BTreeMap<String, String>,
+    name: &str,
+) -> Option<&'a str> {
+    block_attributes
+        .get(name)
+        .map(String::as_str)
+        .or_else(|| document_attributes.get(name).map(String::as_str))
+}
+
+fn icon_name_has_extension(icon_name: &str) -> bool {
+    let file_name = icon_name.rsplit(['/', '\\']).next().unwrap_or(icon_name);
+    file_name.contains('.')
 }
 
 fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
@@ -1038,6 +1101,72 @@ mod tests {
 
         assert!(html.contains("<div class=\"title\">Custom Tip</div>"));
         assert!(!html.contains("<td class=\"icon\">\n<div class=\"title\">Pro Tip</div>"));
+    }
+
+    #[test]
+    fn renders_image_admonition_icons_from_document_attributes() {
+        let document = Document {
+            attributes: [
+                ("icons".to_string(), String::new()),
+                ("iconsdir".to_string(), "assets/icons".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            title: None,
+            blocks: vec![Block::Admonition(crate::ast::AdmonitionBlock {
+                id: None,
+                reftext: None,
+                variant: crate::ast::AdmonitionVariant::Tip,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    lines: vec!["Ship it carefully.".into()],
+                    inlines: vec![Inline::Text("Ship it carefully.".into())],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata::default(),
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<img src=\"assets/icons/tip.png\" alt=\"Tip\">"));
+        assert!(!html.contains("<div class=\"title\">Tip</div>"));
+    }
+
+    #[test]
+    fn block_icon_attributes_override_default_admonition_icon() {
+        let document = Document {
+            attributes: [("icons".to_string(), String::new())].into_iter().collect(),
+            title: None,
+            blocks: vec![Block::Admonition(crate::ast::AdmonitionBlock {
+                id: None,
+                reftext: None,
+                variant: crate::ast::AdmonitionVariant::Tip,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    lines: vec!["Ship it carefully.".into()],
+                    inlines: vec![Inline::Text("Ship it carefully.".into())],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata {
+                    attributes: [
+                        ("icon".to_string(), "hint".to_string()),
+                        ("iconsdir".to_string(), "custom/icons".to_string()),
+                        ("icontype".to_string(), "svg".to_string()),
+                        ("caption".to_string(), "Custom Tip".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    ..BlockMetadata::default()
+                },
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<img src=\"custom/icons/hint.svg\" alt=\"Custom Tip\">"));
     }
 
     #[test]

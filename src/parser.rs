@@ -59,8 +59,8 @@ pub fn parse_document(input: &str) -> Document {
     }
     
     let lines: Vec<&str> = input.lines().collect();
-    let (mut title, attributes, index) = parse_document_header(&lines);
-    let blocks = parse_blocks_from_lines(&lines[index..], &mut title, true);
+    let (mut title, mut attributes, index) = parse_document_header(&lines);
+    let blocks = parse_blocks_from_lines(&lines[index..], &mut title, true, Some(&mut attributes));
 
     Document {
         title,
@@ -83,28 +83,31 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
             index += consumed_lines;
             Some(heading)
         }
-        _ => return (None, attributes, index),
+        _ => None,
     };
 
-    index = skip_header_comments(lines, index);
-
-    if let Some(author_line) =
-        lines.get(index).and_then(|line| parse_implicit_author_line(lines, index, line))
-    {
-        insert_author_attributes(&mut attributes, &author_line.authors);
-        index += 1;
+    if title.is_some() {
         index = skip_header_comments(lines, index);
 
-        if let Some(revision_line) = lines.get(index).and_then(|line| parse_implicit_revision_line(line))
+        if let Some(author_line) =
+            lines.get(index).and_then(|line| parse_implicit_author_line(lines, index, line))
         {
-            attributes.insert("revnumber".to_owned(), revision_line.number);
-            if let Some(date) = revision_line.date {
-                attributes.insert("revdate".to_owned(), date);
-            }
-            if let Some(remark) = revision_line.remark {
-                attributes.insert("revremark".to_owned(), remark);
-            }
+            insert_author_attributes(&mut attributes, &author_line.authors);
             index += 1;
+            index = skip_header_comments(lines, index);
+
+            if let Some(revision_line) =
+                lines.get(index).and_then(|line| parse_implicit_revision_line(line))
+            {
+                attributes.insert("revnumber".to_owned(), revision_line.number);
+                if let Some(date) = revision_line.date {
+                    attributes.insert("revdate".to_owned(), date);
+                }
+                if let Some(remark) = revision_line.remark {
+                    attributes.insert("revremark".to_owned(), remark);
+                }
+                index += 1;
+            }
         }
     }
 
@@ -153,6 +156,7 @@ fn parse_blocks_from_lines(
     lines: &[&str],
     title: &mut Option<Heading>,
     allow_document_title: bool,
+    document_attributes: Option<&mut BTreeMap<String, String>>,
 ) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut index = 0;
@@ -161,6 +165,7 @@ fn parse_blocks_from_lines(
     let mut current_paragraph_prelude = None::<BlockPrelude>;
     let mut pending_anchor = None;
     let mut pending_block_prelude = None::<BlockPrelude>;
+    let mut document_attributes = document_attributes;
 
     while index < lines.len() {
         let line = lines[index];
@@ -265,6 +270,16 @@ fn parse_blocks_from_lines(
             );
             index += consumed_lines;
             continue;
+        }
+
+        if current_paragraph.is_empty() && pending_block_prelude.is_none() && pending_anchor.is_none() {
+            if let Some((name, value)) = parse_attribute_entry(line) {
+                if let Some(attributes) = document_attributes.as_deref_mut() {
+                    attributes.insert(name, value);
+                    index += 1;
+                    continue;
+                }
+            }
         }
 
         if current_paragraph.is_empty() {
@@ -496,7 +511,7 @@ fn parse_delimited_block(
         return Some((
             Block::Admonition(AdmonitionBlock {
                 variant,
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 id: prelude.metadata.id.clone(),
                 reftext: None,
                 metadata: prelude.metadata,
@@ -515,7 +530,7 @@ fn parse_delimited_block(
         "example" => {
             let mut nested_title = None;
             Block::Example(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 reftext: None,
                 metadata: prelude.metadata,
             })
@@ -523,7 +538,7 @@ fn parse_delimited_block(
         "sidebar" => {
             let mut nested_title = None;
             Block::Sidebar(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false),
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 reftext: None,
                 metadata: prelude.metadata,
             })
@@ -2146,18 +2161,48 @@ mod tests {
 
         assert_eq!(
             document.attributes,
-            [("toc".to_owned(), "left".to_owned())].into_iter().collect()
+            [
+                ("body-attr".to_owned(), "value".to_owned()),
+                ("toc".to_owned(), "left".to_owned())
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(document.blocks.is_empty());
+    }
+
+    #[test]
+    fn parses_top_level_attributes_without_document_title() {
+        let document = parse_document(":icons:\n:iconsdir: /site/icons\n\nTIP: Ship it carefully.");
+
+        assert_eq!(
+            document.attributes,
+            [
+                ("icons".to_owned(), String::new()),
+                ("iconsdir".to_owned(), "/site/icons".to_owned()),
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(document.title, None);
+        assert_eq!(document.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_body_attributes_before_later_blocks_without_rendering_them() {
+        let document = parse_document(
+            "= Demo\n\nIntro paragraph.\n\n:icons:\n:iconsdir: /site/icons\n\n[TIP,icon=hint,icontype=svg,caption=\"Custom Tip\"]\nShip it carefully.",
+        );
+
+        assert_eq!(
+            document.attributes.get("icons").map(String::as_str),
+            Some("")
         );
         assert_eq!(
-            document.blocks,
-            vec![Block::Paragraph(Paragraph {
-                inlines: vec![Inline::Text(":body-attr: value".into())],
-                lines: vec![":body-attr: value".into()],
-                id: None,
-                reftext: None,
-            metadata: BlockMetadata::default(),
-            })]
+            document.attributes.get("iconsdir").map(String::as_str),
+            Some("/site/icons")
         );
+        assert_eq!(document.blocks.len(), 2);
     }
 
     #[test]

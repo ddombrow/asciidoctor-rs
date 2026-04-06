@@ -294,7 +294,50 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
         }
     }
 
-    let (blocks, end) = parse_blocks(&lines[index..], index + 1, None);
+    while header.is_none() && index < lines.len() {
+        let line = lines[index];
+        if line.trim().is_empty() {
+            index += 1;
+            break;
+        }
+
+        if is_comment_line(line) {
+            index += 1;
+            continue;
+        }
+
+        if let Some((name, value, _end_col)) = parse_attribute_entry(line) {
+            match name.as_str() {
+                "author" => saw_explicit_author = true,
+                "authors" => saw_explicit_authors = true,
+                "authorinitials" => saw_explicit_authorinitials = true,
+                _ => {}
+            }
+            attributes.insert(name, value);
+            index += 1;
+            continue;
+        }
+
+        break;
+    }
+
+    if header.is_none() {
+        if saw_explicit_authors {
+            normalize_explicit_author_attributes(
+                &mut attributes,
+                "authors",
+                saw_explicit_authorinitials,
+            );
+        } else if saw_explicit_author {
+            normalize_explicit_author_attributes(
+                &mut attributes,
+                "author",
+                saw_explicit_authorinitials,
+            );
+        }
+    }
+
+    let (blocks, end) = parse_blocks(&lines[index..], index + 1, None, Some(&mut attributes));
     let start = header
         .as_ref()
         .map(|header| header.location[0].clone())
@@ -345,6 +388,7 @@ fn parse_blocks(
     lines: &[&str],
     line_offset: usize,
     stop_at_level: Option<u8>,
+    document_attributes: Option<&mut BTreeMap<String, String>>,
 ) -> (Vec<AsgBlock>, Option<Position>) {
     let mut blocks = Vec::new();
     let mut index = 0;
@@ -352,6 +396,7 @@ fn parse_blocks(
     let mut paragraph_lines = Vec::new();
     let mut last_end = None;
     let mut pending_anchor = None::<PendingBlockAnchor>;
+    let mut document_attributes = document_attributes;
 
     while index < lines.len() {
         let absolute_index = line_offset + index - 1;
@@ -392,6 +437,7 @@ fn parse_blocks(
                 &lines[child_start..],
                 line_offset + child_start,
                 Some(heading.level),
+                None,
             );
 
             let end = child_end.unwrap_or_else(|| heading_range[1].clone());
@@ -474,6 +520,16 @@ fn parse_blocks(
             blocks.push(block);
             index += consumed_lines;
             continue;
+        }
+
+        if paragraph_start.is_none() && pending_anchor.is_none() {
+            if let Some((name, value, _end_col)) = parse_attribute_entry(line) {
+                if let Some(attributes) = document_attributes.as_deref_mut() {
+                    attributes.insert(name, value);
+                    index += 1;
+                    continue;
+                }
+            }
         }
 
         if let Some(list_marker) = parse_list_item_line(line).filter(|marker| marker.level == 1) {
@@ -624,7 +680,7 @@ fn parse_delimited_block(
             .and_then(|metadata| metadata.attributes.get("style"))
             .and_then(|style| admonition_variant_from_style(style))
     {
-        let (children, _) = parse_blocks(inner_lines, start_line + 1, None);
+        let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
         return Some((
             AsgBlock {
                 name: "admonition",
@@ -707,7 +763,7 @@ fn parse_delimited_block(
             }
         }
         "example" | "sidebar" => {
-            let (children, _) = parse_blocks(inner_lines, start_line + 1, None);
+            let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
             block.blocks = Some(children);
         }
         _ => {}
@@ -1992,6 +2048,33 @@ mod tests {
         );
         assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
         assert_eq!(document.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_top_level_attributes_without_header_in_tck_document() {
+        let document = parse_tck_document(":icons:\n:iconsdir: /site/icons\n\nTIP: Ship it carefully.");
+
+        assert!(document.header.is_none());
+        assert_eq!(document.attributes.get("icons").map(String::as_str), Some(""));
+        assert_eq!(
+            document.attributes.get("iconsdir").map(String::as_str),
+            Some("/site/icons")
+        );
+        assert_eq!(document.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_body_attributes_before_later_blocks_in_tck_document() {
+        let document = parse_tck_document(
+            "= Demo\n\nIntro paragraph.\n\n:icons:\n:iconsdir: /site/icons\n\nTIP: Ship it carefully.",
+        );
+
+        assert_eq!(document.attributes.get("icons").map(String::as_str), Some(""));
+        assert_eq!(
+            document.attributes.get("iconsdir").map(String::as_str),
+            Some("/site/icons")
+        );
+        assert_eq!(document.blocks.len(), 2);
     }
 
     #[test]

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Hint icon</title>
+  <desc id="desc">A warm light bulb icon for custom admonitions in the browser preview.</desc>
+  <defs>
+    <linearGradient id="bulbGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffd86b"/>
+      <stop offset="100%" stop-color="#f0a500"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="#fff8e6"/>
+  <path d="M32 10c-9.4 0-17 7.4-17 16.6 0 5.8 3 10.3 6.8 14 2.5 2.4 4.2 4.5 4.6 7.4h11.2c.4-2.9 2.1-5 4.6-7.4 3.8-3.7 6.8-8.2 6.8-14C49 17.4 41.4 10 32 10Z" fill="url(#bulbGlow)" stroke="#9b6500" stroke-width="2"/>
+  <path d="M26 49h12v4c0 3.3-2.7 6-6 6s-6-2.7-6-6v-4Z" fill="#5d6673"/>
+  <path d="M26 45h12" stroke="#5d6673" stroke-width="3" stroke-linecap="round"/>
+  <path d="M24 21c1.7-3.7 4.7-6.1 8.8-7" stroke="#fff3c4" stroke-width="3" stroke-linecap="round" fill="none"/>
+</svg>

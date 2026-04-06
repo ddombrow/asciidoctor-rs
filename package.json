@@ -7,7 +7,7 @@
     "sync:preview-assets": "node scripts/sync-preview-assets.mjs",
     "build:node:module": "napi build --features node --output-dir packages/node",
     "build:wasm:test": "node tests/browser/build-wasm.mjs",
-    "preview:browser": "npm run build:wasm:test && node tests/browser/server.mjs",
+    "preview:browser": "node tests/browser/preview.mjs",
     "test:browser": "npm run build:wasm:test && playwright test",
     "test:browser:headed": "npm run build:wasm:test && playwright test --headed",
     "test:node": "npm run build:node:module && node tests/node/smoke.cjs",
