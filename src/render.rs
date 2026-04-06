@@ -49,6 +49,7 @@ fn render_block(
             html.push_str(&p.content);
             html.push('\n');
         }
+        PreparedBlock::Image(image) => render_image_block(html, image, document_attributes),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -303,6 +304,94 @@ fn icon_name_has_extension(icon_name: &str) -> bool {
     file_name.contains('.')
 }
 
+fn render_image_block(
+    html: &mut String,
+    image: &crate::prepare::ImageBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
+    let mut classes = vec!["imageblock".to_owned()];
+    if let Some(float) = &image.float {
+        classes.push(float.clone());
+    }
+    if let Some(align) = &image.align {
+        classes.push(format!("text-{}", align));
+    }
+    if let Some(role) = &image.role {
+        classes.push(role.clone());
+    }
+
+    html.push_str(&format!("<div class=\"{}\"", classes.join(" ")));
+    if let Some(id) = &image.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n<div class=\"content\">\n");
+
+    let src = resolve_image_src(&image.target, document_attributes);
+
+    let link = image.link.as_deref().map(|l| {
+        if l == "self" {
+            src.clone()
+        } else {
+            l.to_owned()
+        }
+    });
+
+    if let Some(href) = &link {
+        html.push_str(&format!(
+            "<a class=\"image\" href=\"{}\">",
+            escape_html(href)
+        ));
+    }
+
+    html.push_str(&format!(
+        "<img src=\"{}\" alt=\"{}\"",
+        escape_html(&src),
+        escape_html(&image.alt)
+    ));
+    if let Some(width) = &image.width {
+        html.push_str(&format!(" width=\"{}\"", escape_html(width)));
+    }
+    if let Some(height) = &image.height {
+        html.push_str(&format!(" height=\"{}\"", escape_html(height)));
+    }
+    html.push_str(">");
+
+    if link.is_some() {
+        html.push_str("</a>");
+    }
+
+    html.push_str("\n</div>\n");
+
+    if let Some(title) = &image.title {
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
+    }
+
+    html.push_str("</div>\n");
+}
+
+fn resolve_image_src(
+    target: &str,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) -> String {
+    if target.starts_with("http://")
+        || target.starts_with("https://")
+        || target.starts_with("data:")
+        || target.starts_with('/')
+    {
+        return target.to_owned();
+    }
+
+    if let Some(imagesdir) = document_attributes.get("imagesdir").filter(|d| !d.is_empty()) {
+        let dir = imagesdir.trim_end_matches('/');
+        format!("{}/{}", dir, target)
+    } else {
+        target.to_owned()
+    }
+}
+
 fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
     for inline in inlines {
         match inline {
@@ -343,6 +432,22 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 render_inlines(html, &anchor.inlines);
             }
             PreparedInline::Passthrough(p) => html.push_str(&p.value),
+            PreparedInline::Image(image) => {
+                html.push_str("<span class=\"image\">");
+                html.push_str(&format!(
+                    "<img src=\"{}\" alt=\"{}\"",
+                    escape_html(&image.target),
+                    escape_html(&image.alt)
+                ));
+                if let Some(width) = &image.width {
+                    html.push_str(&format!(" width=\"{}\"", escape_html(width)));
+                }
+                if let Some(height) = &image.height {
+                    html.push_str(&format!(" height=\"{}\"", escape_html(height)));
+                }
+                html.push_str(">");
+                html.push_str("</span>");
+            }
         }
     }
 }
@@ -1192,5 +1297,76 @@ mod tests {
         let html = render_html(&crate::parser::parse_document("See pass:[<br>] here.\n"));
         assert!(html.contains("<br>"));
         assert!(!html.contains("&lt;br&gt;"));
+    }
+
+    #[test]
+    fn renders_block_image_with_alt_and_src() {
+        let html = render_html(&crate::parser::parse_document("image::tiger.png[Tiger]"));
+        assert!(html.contains("<div class=\"imageblock\">"));
+        assert!(html.contains("<img src=\"tiger.png\" alt=\"Tiger\">"));
+    }
+
+    #[test]
+    fn renders_block_image_with_dimensions() {
+        let html =
+            render_html(&crate::parser::parse_document("image::tiger.png[Tiger, 200, 300]"));
+        assert!(html.contains("<img src=\"tiger.png\" alt=\"Tiger\" width=\"200\" height=\"300\">"));
+    }
+
+    #[test]
+    fn renders_block_image_with_imagesdir() {
+        let html = render_html(&crate::parser::parse_document(
+            ":imagesdir: images\n\nimage::tiger.png[Tiger]",
+        ));
+        assert!(html.contains("<img src=\"images/tiger.png\" alt=\"Tiger\">"));
+    }
+
+    #[test]
+    fn renders_block_image_uri_bypasses_imagesdir() {
+        let html = render_html(&crate::parser::parse_document(
+            ":imagesdir: images\n\nimage::http://example.com/tiger.png[Tiger]",
+        ));
+        assert!(html.contains("<img src=\"http://example.com/tiger.png\" alt=\"Tiger\">"));
+    }
+
+    #[test]
+    fn renders_block_image_with_title() {
+        let html = render_html(&crate::parser::parse_document(
+            ".The AsciiDoc Tiger\nimage::tiger.png[Tiger]",
+        ));
+        assert!(html.contains("<div class=\"title\">The AsciiDoc Tiger</div>"));
+    }
+
+    #[test]
+    fn renders_block_image_with_link() {
+        let html = render_html(&crate::parser::parse_document(
+            "image::tiger.png[Tiger, link='http://example.com']",
+        ));
+        assert!(html.contains("<a class=\"image\" href=\"http://example.com\">"));
+        assert!(html.contains("<img src=\"tiger.png\" alt=\"Tiger\">"));
+        assert!(html.contains("</a>"));
+    }
+
+    #[test]
+    fn renders_block_image_with_auto_generated_alt() {
+        let html =
+            render_html(&crate::parser::parse_document("image::lions-and-tigers.png[]"));
+        assert!(html.contains("alt=\"lions and tigers\""));
+    }
+
+    #[test]
+    fn renders_inline_image() {
+        let html = render_html(&crate::parser::parse_document(
+            "Click image:icon.png[Icon] to continue.",
+        ));
+        assert!(html.contains("<span class=\"image\"><img src=\"icon.png\" alt=\"Icon\"></span>"));
+    }
+
+    #[test]
+    fn renders_inline_image_with_dimensions() {
+        let html = render_html(&crate::parser::parse_document(
+            "image:icon.png[Icon, 16, 16]",
+        ));
+        assert!(html.contains("<img src=\"icon.png\" alt=\"Icon\" width=\"16\" height=\"16\">"));
     }
 }

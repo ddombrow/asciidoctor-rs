@@ -18,6 +18,16 @@ pub enum Block {
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
     Passthrough(String),
+    Image(ImageBlock),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageBlock {
+    pub target: String,
+    pub alt: String,
+    pub width: Option<String>,
+    pub height: Option<String>,
+    pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +109,15 @@ pub enum Inline {
     Xref(InlineXref),
     Anchor(InlineAnchor),
     Passthrough(String),
+    Image(InlineImage),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineImage {
+    pub target: String,
+    pub alt: String,
+    pub width: Option<String>,
+    pub height: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +201,7 @@ impl Inline {
                 .collect::<Vec<_>>()
                 .join(""),
             Self::Passthrough(raw) => raw.clone(),
+            Self::Image(image) => image.alt.clone(),
         }
     }
 }

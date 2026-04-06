@@ -1,5 +1,6 @@
 use crate::ast::{
-    Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref,
+    Inline, InlineAnchor, InlineForm, InlineImage, InlineLink, InlineSpan, InlineVariant,
+    InlineXref,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +77,17 @@ fn parse_spanned_inlines_with_base(chars: &[char], base: usize) -> Vec<SpannedIn
 
             result.push(xref);
             index += consumed;
+        } else if let Some((link, consumed)) = parse_inline_image(chars, index, base) {
+            if let Some(start) = text_start.take() {
+                result.push(SpannedInline {
+                    inline: Inline::Text(std::mem::take(&mut text)),
+                    start: base + start,
+                    end: base + index,
+                });
+            }
+
+            result.push(link);
+            index += consumed;
         } else if let Some((link, consumed)) = parse_link(chars, index, base) {
             if let Some(start) = text_start.take() {
                 result.push(SpannedInline {
@@ -150,6 +162,105 @@ fn parse_span(chars: &[char], start: usize, base: usize) -> Option<(SpannedInlin
 
 fn parse_link(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
     parse_link_macro(chars, start, base).or_else(|| parse_raw_url(chars, start, base))
+}
+
+fn parse_inline_image(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
+    // Must match `image:target[attrs]` — single colon only (block uses `::`)
+    let prefix: Vec<char> = "image:".chars().collect();
+    if start + prefix.len() >= chars.len() {
+        return None;
+    }
+    for (i, &expected) in prefix.iter().enumerate() {
+        if chars.get(start + i).copied() != Some(expected) {
+            return None;
+        }
+    }
+    // Reject block form `image::` — that is parsed at block level
+    if chars.get(start + prefix.len()).copied() == Some(':') {
+        return None;
+    }
+
+    let target_start = start + prefix.len();
+    let mut i = target_start;
+    while i < chars.len() && chars[i] != '[' {
+        i += 1;
+    }
+    if i >= chars.len() || chars[i] != '[' {
+        return None;
+    }
+    let target: String = chars[target_start..i].iter().collect();
+    let target = target.trim().to_owned();
+    if target.is_empty() {
+        return None;
+    }
+
+    let bracket_start = i;
+    i += 1;
+    let mut depth = 1;
+    while i < chars.len() && depth > 0 {
+        if chars[i] == '[' {
+            depth += 1;
+        } else if chars[i] == ']' {
+            depth -= 1;
+        }
+        i += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+
+    let attr_text: String = chars[bracket_start + 1..i - 1].iter().collect();
+    let (alt, width, height) = parse_inline_image_attributes(&attr_text, &target);
+
+    let consumed = i - start;
+    Some((
+        SpannedInline {
+            inline: Inline::Image(InlineImage {
+                target,
+                alt,
+                width,
+                height,
+            }),
+            start: base + start,
+            end: base + i,
+        },
+        consumed,
+    ))
+}
+
+fn parse_inline_image_attributes(
+    attr_text: &str,
+    target: &str,
+) -> (String, Option<String>, Option<String>) {
+    let mut positional = Vec::new();
+
+    if !attr_text.is_empty() {
+        for part in attr_text.split(',') {
+            let part = part.trim();
+            if part.contains('=') {
+                // Named attribute — skip for inline images (we don't use them yet)
+                continue;
+            }
+            positional.push(part.to_owned());
+        }
+    }
+
+    let alt = positional
+        .first()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .unwrap_or_else(|| inline_auto_generate_alt(target));
+    let width = positional.get(1).filter(|s| !s.is_empty()).cloned();
+    let height = positional.get(2).filter(|s| !s.is_empty()).cloned();
+
+    (alt, width, height)
+}
+
+fn inline_auto_generate_alt(target: &str) -> String {
+    let filename = target.rsplit('/').next().unwrap_or(target);
+    let filename = filename.rsplit('\\').next().unwrap_or(filename);
+    let stem = filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename);
+    stem.replace('-', " ").replace('_', " ")
 }
 
 fn parse_xref(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {

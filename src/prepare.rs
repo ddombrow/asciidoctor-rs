@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::ast::{
     AdmonitionBlock as AstAdmonitionBlock, Block, CompoundBlock as AstCompoundBlock, Document,
-    Inline, InlineForm, InlineVariant, Listing as AstListing, OrderedList, Paragraph,
-    UnorderedList,
+    ImageBlock as AstImageBlock, Inline, InlineForm, InlineVariant, Listing as AstListing,
+    OrderedList, Paragraph, UnorderedList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +56,7 @@ pub enum PreparedBlock {
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
     Passthrough(PassthroughBlock),
+    Image(ImageBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +160,7 @@ pub enum PreparedInline {
     Xref(XrefInline),
     Anchor(AnchorInline),
     Passthrough(PassthroughInline),
+    Image(ImageInline),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,6 +211,45 @@ pub struct PassthroughInline {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PassthroughBlock {
     pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
+    pub target: String,
+    pub alt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<String>,
+    pub attributes: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub float: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInline {
+    pub target: String,
+    pub alt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -501,6 +542,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::Image(image) => {
+                let image = PreparedBlock::Image(prepare_image_block(image));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(image);
+                } else {
+                    prepared.push(image);
+                }
+                index += 1;
+            }
             Block::Heading(heading) => {
                 if wrap_document_preamble && !seen_section && !preamble_blocks.is_empty() {
                     prepared.push(PreparedBlock::Preamble(prepare_preamble(std::mem::take(
@@ -695,8 +745,40 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
             Inline::Passthrough(raw) => PreparedInline::Passthrough(PassthroughInline {
                 value: raw.clone(),
             }),
+            Inline::Image(image) => PreparedInline::Image(ImageInline {
+                target: image.target.clone(),
+                alt: image.alt.clone(),
+                width: image.width.clone(),
+                height: image.height.clone(),
+            }),
         })
         .collect()
+}
+
+fn prepare_image_block(image: &AstImageBlock) -> ImageBlock {
+    let named = |name: &str| -> Option<String> {
+        image
+            .metadata
+            .attributes
+            .get(name)
+            .cloned()
+            .filter(|v| !v.is_empty())
+    };
+    ImageBlock {
+        id: image.metadata.id.clone(),
+        reftext: None,
+        target: image.target.clone(),
+        alt: image.alt.clone(),
+        width: image.width.clone(),
+        height: image.height.clone(),
+        attributes: image.metadata.attributes.clone(),
+        title: image.metadata.title.clone(),
+        style: image.metadata.style.clone(),
+        role: image.metadata.role.clone(),
+        link: named("link"),
+        float: named("float"),
+        align: named("align"),
+    }
 }
 
 fn prepare_preamble(blocks: Vec<PreparedBlock>) -> CompoundBlock {
@@ -738,6 +820,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::Example(_)
             | PreparedBlock::Sidebar(_)
             | PreparedBlock::Passthrough(_) => None,
+            PreparedBlock::Image(_) => None,
         })
         .collect()
 }
@@ -842,6 +925,15 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                 collect_block_refs_into(&section.blocks, refs);
             }
             PreparedBlock::Passthrough(_) => {}
+            PreparedBlock::Image(image) => {
+                if let Some(id) = &image.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: image.reftext.clone().or_else(|| image.title.clone()),
+                        });
+                }
+            }
         }
     }
 }
@@ -869,7 +961,7 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
             PreparedInline::Span(span) => collect_inline_anchor_refs(&span.inlines, refs),
             PreparedInline::Link(link) => collect_inline_anchor_refs(&link.inlines, refs),
             PreparedInline::Xref(xref) => collect_inline_anchor_refs(&xref.inlines, refs),
-            PreparedInline::Text(_) | PreparedInline::Passthrough(_) => {}
+            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {}
         }
     }
 }
@@ -901,7 +993,7 @@ fn resolve_xrefs_in_blocks(
                     resolve_xrefs_in_blocks(&mut item.blocks, section_refs, block_refs);
                 }
             }
-            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) => {}
+            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) | PreparedBlock::Image(_) => {}
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
             }
@@ -919,7 +1011,7 @@ fn resolve_xrefs_in_inlines(
 ) {
     for inline in inlines {
         match inline {
-            PreparedInline::Text(_) | PreparedInline::Link(_) | PreparedInline::Passthrough(_) => {}
+            PreparedInline::Text(_) | PreparedInline::Link(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {}
             PreparedInline::Anchor(anchor) => {
                 resolve_xrefs_in_inlines(&mut anchor.inlines, section_refs, block_refs)
             }
@@ -1070,6 +1162,7 @@ fn prepared_inline_plain_text(inline: &PreparedInline) -> String {
             .collect::<Vec<_>>()
             .join(""),
         PreparedInline::Passthrough(p) => p.value.clone(),
+        PreparedInline::Image(image) => image.alt.clone(),
     }
 }
 

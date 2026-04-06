@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::ast::{
     AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Document, Heading,
-    ListItem, Listing, OrderedList, Paragraph, UnorderedList,
+    ImageBlock, ListItem, Listing, OrderedList, Paragraph, UnorderedList,
 };
 use crate::inline::parse_inlines;
 
@@ -283,6 +283,26 @@ fn parse_blocks_from_lines(
         }
 
         if current_paragraph.is_empty() {
+            if let Some(image) = parse_block_image(line) {
+                flush_paragraph(
+                    &mut blocks,
+                    &mut current_paragraph,
+                    &mut current_paragraph_anchor,
+                    &mut current_paragraph_prelude,
+                );
+                push_block(
+                    &mut blocks,
+                    title,
+                    allow_document_title,
+                    Block::Image(apply_prelude_to_image(image, pending_block_prelude.take())),
+                    pending_anchor.take(),
+                );
+                index += 1;
+                continue;
+            }
+        }
+
+        if current_paragraph.is_empty() {
             if let Some((admonition, consumed_lines)) =
                 parse_admonition_paragraph(lines, index, pending_block_prelude.as_ref())
             {
@@ -434,6 +454,99 @@ fn apply_prelude_to_admonition(
         admonition.metadata = prelude.metadata;
     }
     admonition
+}
+
+fn apply_prelude_to_image(mut image: ImageBlock, prelude: Option<BlockPrelude>) -> ImageBlock {
+    if let Some(prelude) = prelude {
+        image.metadata = prelude.metadata;
+    }
+    image
+}
+
+fn parse_block_image(line: &str) -> Option<ImageBlock> {
+    let rest = line.strip_prefix("image::")?;
+    let bracket_start = rest.find('[')?;
+    let bracket_end = rest.rfind(']')?;
+    if bracket_end <= bracket_start {
+        return None;
+    }
+    let target = rest[..bracket_start].trim().to_owned();
+    if target.is_empty() {
+        return None;
+    }
+    let attr_text = &rest[bracket_start + 1..bracket_end];
+    let (alt, width, height, named_attrs) = parse_image_attributes(attr_text, &target);
+
+    Some(ImageBlock {
+        target,
+        alt,
+        width,
+        height,
+        metadata: BlockMetadata {
+            attributes: named_attrs,
+            ..Default::default()
+        },
+    })
+}
+
+fn parse_image_attributes(
+    attr_text: &str,
+    target: &str,
+) -> (String, Option<String>, Option<String>, BTreeMap<String, String>) {
+    let mut named_attrs = BTreeMap::new();
+    let mut positional = Vec::new();
+
+    if !attr_text.is_empty() {
+        for part in split_image_attrs(attr_text) {
+            let part = part.trim();
+            if let Some((key, value)) = part.split_once('=') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                named_attrs.insert(key.to_owned(), value.to_owned());
+            } else {
+                positional.push(part.to_owned());
+            }
+        }
+    }
+
+    let alt = positional
+        .first()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .unwrap_or_else(|| auto_generate_alt(target));
+    let width = positional.get(1).filter(|s| !s.is_empty()).cloned();
+    let height = positional.get(2).filter(|s| !s.is_empty()).cloned();
+
+    (alt, width, height, named_attrs)
+}
+
+/// Split on commas but respect quoted values.
+fn split_image_attrs(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quote = false;
+    let mut quote_char = '"';
+    for ch in text.chars() {
+        if !in_quote && (ch == '"' || ch == '\'') {
+            in_quote = true;
+            quote_char = ch;
+        } else if in_quote && ch == quote_char {
+            in_quote = false;
+        } else if !in_quote && ch == ',' {
+            parts.push(std::mem::take(&mut current));
+            continue;
+        }
+        current.push(ch);
+    }
+    parts.push(current);
+    parts
+}
+
+fn auto_generate_alt(target: &str) -> String {
+    let filename = target.rsplit('/').next().unwrap_or(target);
+    let filename = filename.rsplit('\\').next().unwrap_or(filename);
+    let stem = filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename);
+    stem.replace('-', " ").replace('_', " ")
 }
 
 fn apply_anchor_to_listing(mut listing: Listing, anchor: Option<PendingAnchor>) -> Listing {
@@ -1618,7 +1731,7 @@ fn is_valid_anchor_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Heading, Inline,
+        AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Heading, ImageBlock, Inline,
         InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OrderedList, Paragraph,
         UnorderedList,
     };
@@ -2795,5 +2908,82 @@ mod tests {
         assert_eq!(admonition.id.as_deref(), Some("ship-tip"));
         assert_eq!(admonition.reftext.as_deref(), Some("Shipping Tip"));
         assert_eq!(admonition.variant, AdmonitionVariant::Tip);
+    }
+
+    #[test]
+    fn parses_block_image_with_alt_text() {
+        let document = parse_document("image::tiger.png[Tiger]");
+
+        let [Block::Image(image)] = document.blocks.as_slice() else {
+            panic!("expected image block, got: {:?}", document.blocks);
+        };
+        assert_eq!(image.target, "tiger.png");
+        assert_eq!(image.alt, "Tiger");
+        assert_eq!(image.width, None);
+        assert_eq!(image.height, None);
+    }
+
+    #[test]
+    fn parses_block_image_with_dimensions() {
+        let document = parse_document("image::images/tiger.png[Tiger, 200, 300]");
+
+        let [Block::Image(image)] = document.blocks.as_slice() else {
+            panic!("expected image block");
+        };
+        assert_eq!(image.target, "images/tiger.png");
+        assert_eq!(image.alt, "Tiger");
+        assert_eq!(image.width.as_deref(), Some("200"));
+        assert_eq!(image.height.as_deref(), Some("300"));
+    }
+
+    #[test]
+    fn parses_block_image_with_auto_generated_alt() {
+        let document = parse_document("image::images/lions-and-tigers.png[]");
+
+        let [Block::Image(image)] = document.blocks.as_slice() else {
+            panic!("expected image block");
+        };
+        assert_eq!(image.target, "images/lions-and-tigers.png");
+        assert_eq!(image.alt, "lions and tigers");
+    }
+
+    #[test]
+    fn parses_block_image_with_named_attributes() {
+        let document = parse_document("image::tiger.png[Tiger, link='http://example.com']");
+
+        let [Block::Image(image)] = document.blocks.as_slice() else {
+            panic!("expected image block");
+        };
+        assert_eq!(image.target, "tiger.png");
+        assert_eq!(image.alt, "Tiger");
+        assert_eq!(
+            image.metadata.attributes.get("link").map(String::as_str),
+            Some("http://example.com")
+        );
+    }
+
+    #[test]
+    fn applies_prelude_to_block_image() {
+        let document = parse_document(".The AsciiDoc Tiger\nimage::tiger.png[Tiger]");
+
+        let [Block::Image(image)] = document.blocks.as_slice() else {
+            panic!("expected image block");
+        };
+        assert_eq!(image.metadata.title.as_deref(), Some("The AsciiDoc Tiger"));
+        assert_eq!(image.target, "tiger.png");
+    }
+
+    #[test]
+    fn parses_block_image_with_subdirectory_path() {
+        let document = parse_document("image::assets/mupdate-update-flow/initial-inventory.png[]");
+
+        let [Block::Image(image)] = document.blocks.as_slice() else {
+            panic!("expected image block");
+        };
+        assert_eq!(
+            image.target,
+            "assets/mupdate-update-flow/initial-inventory.png"
+        );
+        assert_eq!(image.alt, "initial inventory");
     }
 }

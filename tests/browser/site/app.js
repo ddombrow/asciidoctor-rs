@@ -336,6 +336,32 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
     return block.content ?? "";
   }
 
+  if (block.type === "image") {
+    const classes = ["imageblock"];
+    if (block.float) classes.push(block.float);
+    if (block.align) classes.push(`text-${block.align}`);
+    if (block.role) classes.push(block.role);
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const src = resolveImageSrc(block.target ?? "", documentAttributes);
+    const widthAttr = block.width ? ` width="${escapeHtml(block.width)}"` : "";
+    const heightAttr = block.height ? ` height="${escapeHtml(block.height)}"` : "";
+    const imgTag = `<img src="${escapeHtml(src)}" alt="${escapeHtml(block.alt ?? "")}"${widthAttr}${heightAttr}>`;
+    let content = imgTag;
+    if (block.link) {
+      const href = block.link === "self" ? src : block.link;
+      content = `<a class="image" href="${escapeHtml(href)}">${imgTag}</a>`;
+    }
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    return `
+      <div class="${classes.join(" ")}"${id}>
+        <div class="content">
+          ${content}
+        </div>
+        ${title}
+      </div>
+    `;
+  }
+
   return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;
 }
 
@@ -375,6 +401,12 @@ function renderInlines(inlines) {
 
       if (inline.type === "passthrough") {
         return inline.value ?? "";
+      }
+
+      if (inline.type === "image") {
+        const widthAttr = inline.width ? ` width="${escapeHtml(inline.width)}"` : "";
+        const heightAttr = inline.height ? ` height="${escapeHtml(inline.height)}"` : "";
+        return `<span class="image"><img src="${escapeHtml(inline.target ?? "")}" alt="${escapeHtml(inline.alt ?? "")}"${widthAttr}${heightAttr}></span>`;
       }
 
       return escapeHtml(JSON.stringify(inline));
@@ -523,6 +555,18 @@ function renderPreviewError(message) {
 function updateStatus(kind, message) {
   statusEl.dataset.kind = kind;
   statusEl.textContent = message;
+}
+
+function resolveImageSrc(target, documentAttributes) {
+  if (target.startsWith("http://") || target.startsWith("https://") || target.startsWith("data:") || target.startsWith("/")) {
+    return target;
+  }
+  const imagesdir = getAttribute(documentAttributes, "imagesdir");
+  if (imagesdir) {
+    const dir = imagesdir.replace(/\/+$/, "");
+    return `${dir}/${target}`;
+  }
+  return target;
 }
 
 function escapeHtml(value) {
