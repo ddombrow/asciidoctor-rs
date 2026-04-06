@@ -17,6 +17,7 @@ pub enum Block {
     Listing(Listing),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
+    Passthrough(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +98,7 @@ pub enum Inline {
     Link(InlineLink),
     Xref(InlineXref),
     Anchor(InlineAnchor),
+    Passthrough(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +181,7 @@ impl Inline {
                 .map(Self::plain_text)
                 .collect::<Vec<_>>()
                 .join(""),
+            Self::Passthrough(raw) => raw.clone(),
         }
     }
 }

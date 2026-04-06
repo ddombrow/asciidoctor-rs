@@ -55,6 +55,7 @@ pub enum PreparedBlock {
     Listing(ListingBlock),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
+    Passthrough(PassthroughBlock),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +158,7 @@ pub enum PreparedInline {
     Link(LinkInline),
     Xref(XrefInline),
     Anchor(AnchorInline),
+    Passthrough(PassthroughInline),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,6 +199,16 @@ pub struct AnchorInline {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reftext: Option<String>,
     pub inlines: Vec<PreparedInline>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PassthroughInline {
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PassthroughBlock {
+    pub content: String,
 }
 
 #[derive(Debug, Clone)]
@@ -479,6 +491,16 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::Passthrough(content) => {
+                let passthrough =
+                    PreparedBlock::Passthrough(PassthroughBlock { content: content.clone() });
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(passthrough);
+                } else {
+                    prepared.push(passthrough);
+                }
+                index += 1;
+            }
             Block::Heading(heading) => {
                 if wrap_document_preamble && !seen_section && !preamble_blocks.is_empty() {
                     prepared.push(PreparedBlock::Preamble(prepare_preamble(std::mem::take(
@@ -670,6 +692,9 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
                 reftext: anchor.reftext.clone(),
                 inlines: prepare_inlines(&anchor.inlines),
             }),
+            Inline::Passthrough(raw) => PreparedInline::Passthrough(PassthroughInline {
+                value: raw.clone(),
+            }),
         })
         .collect()
 }
@@ -711,7 +736,8 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::OrderedList(_)
             | PreparedBlock::Listing(_)
             | PreparedBlock::Example(_)
-            | PreparedBlock::Sidebar(_) => None,
+            | PreparedBlock::Sidebar(_)
+            | PreparedBlock::Passthrough(_) => None,
         })
         .collect()
 }
@@ -815,6 +841,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     });
                 collect_block_refs_into(&section.blocks, refs);
             }
+            PreparedBlock::Passthrough(_) => {}
         }
     }
 }
@@ -842,7 +869,7 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
             PreparedInline::Span(span) => collect_inline_anchor_refs(&span.inlines, refs),
             PreparedInline::Link(link) => collect_inline_anchor_refs(&link.inlines, refs),
             PreparedInline::Xref(xref) => collect_inline_anchor_refs(&xref.inlines, refs),
-            PreparedInline::Text(_) => {}
+            PreparedInline::Text(_) | PreparedInline::Passthrough(_) => {}
         }
     }
 }
@@ -874,7 +901,7 @@ fn resolve_xrefs_in_blocks(
                     resolve_xrefs_in_blocks(&mut item.blocks, section_refs, block_refs);
                 }
             }
-            PreparedBlock::Listing(_) => {}
+            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) => {}
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
             }
@@ -892,7 +919,7 @@ fn resolve_xrefs_in_inlines(
 ) {
     for inline in inlines {
         match inline {
-            PreparedInline::Text(_) | PreparedInline::Link(_) => {}
+            PreparedInline::Text(_) | PreparedInline::Link(_) | PreparedInline::Passthrough(_) => {}
             PreparedInline::Anchor(anchor) => {
                 resolve_xrefs_in_inlines(&mut anchor.inlines, section_refs, block_refs)
             }
@@ -1042,6 +1069,7 @@ fn prepared_inline_plain_text(inline: &PreparedInline) -> String {
             .map(prepared_inline_plain_text)
             .collect::<Vec<_>>()
             .join(""),
+        PreparedInline::Passthrough(p) => p.value.clone(),
     }
 }
 

@@ -45,6 +45,10 @@ fn render_block(
             render_compound(html, "exampleblock", example, document_attributes)
         }
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, document_attributes),
+        PreparedBlock::Passthrough(p) => {
+            html.push_str(&p.content);
+            html.push('\n');
+        }
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -275,6 +279,7 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 html.push_str(&format!("<a id=\"{}\"></a>", escape_html(&anchor.id)));
                 render_inlines(html, &anchor.inlines);
             }
+            PreparedInline::Passthrough(p) => html.push_str(&p.value),
         }
     }
 }
@@ -1033,5 +1038,30 @@ mod tests {
 
         assert!(html.contains("<div class=\"title\">Custom Tip</div>"));
         assert!(!html.contains("<td class=\"icon\">\n<div class=\"title\">Pro Tip</div>"));
+    }
+
+    #[test]
+    fn renders_block_passthrough_as_raw_html() {
+        let html = render_html(&crate::parser::parse_document(
+            "++++\n<video src=\"video.mp4\" controls></video>\n++++\n",
+        ));
+        assert!(html.contains("<video src=\"video.mp4\" controls></video>"));
+        assert!(!html.contains("&lt;video"));
+    }
+
+    #[test]
+    fn renders_inline_triple_plus_passthrough_unescaped() {
+        let html = render_html(&crate::parser::parse_document(
+            "See +++<del>this</del>+++ example.\n",
+        ));
+        assert!(html.contains("<del>this</del>"));
+        assert!(!html.contains("&lt;del&gt;"));
+    }
+
+    #[test]
+    fn renders_inline_pass_macro_unescaped() {
+        let html = render_html(&crate::parser::parse_document("See pass:[<br>] here.\n"));
+        assert!(html.contains("<br>"));
+        assert!(!html.contains("&lt;br&gt;"));
     }
 }

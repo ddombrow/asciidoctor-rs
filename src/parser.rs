@@ -474,6 +474,7 @@ fn parse_delimited_block(
         "----" => "listing",
         "====" => "example",
         "****" => "sidebar",
+        "++++" => "passthrough",
         _ => return None,
     };
 
@@ -505,6 +506,7 @@ fn parse_delimited_block(
     }
 
     let block = match block_kind {
+        "passthrough" => Block::Passthrough(inner_lines.join("\n")),
         "listing" => Block::Listing(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
             reftext: None,
@@ -597,7 +599,7 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****")
+    matches!(line.trim(), "----" | "====" | "****" | "++++")
 }
 
 fn parse_block_title(line: &str) -> Option<String> {

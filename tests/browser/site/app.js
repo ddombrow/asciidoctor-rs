@@ -331,6 +331,10 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
     `;
   }
 
+  if (block.type === "passthrough") {
+    return block.content ?? "";
+  }
+
   return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;
 }
 
@@ -366,6 +370,10 @@ function renderInlines(inlines) {
 
       if (inline.type === "anchor") {
         return `<a id="${escapeHtml(inline.id ?? "")}"></a>${renderInlines(inline.inlines ?? [])}`;
+      }
+
+      if (inline.type === "passthrough") {
+        return inline.value ?? "";
       }
 
       return escapeHtml(JSON.stringify(inline));

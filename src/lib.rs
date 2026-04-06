@@ -22,9 +22,9 @@ pub use inline::{SpannedInline, parse_inlines, parse_spanned_inlines};
 pub use parser::parse_document;
 pub use prepare::{
     AdmonitionBlock as PreparedAdmonitionBlock, AnchorInline, Author, CompoundBlock, DocumentBlock,
-    DocumentSection, Footnote, LinkInline, ParagraphBlock, PreparedBlock, PreparedInline,
-    Revision, SectionBlock, SpanInline, TextInline, XrefInline, prepare_document,
-    prepared_document_to_json,
+    DocumentSection, Footnote, LinkInline, ParagraphBlock, PassthroughBlock, PassthroughInline,
+    PreparedBlock, PreparedInline, Revision, SectionBlock, SpanInline, TextInline, XrefInline,
+    prepare_document, prepared_document_to_json,
 };
 pub use render::{render_html, render_prepared_html};
 pub use tck::{

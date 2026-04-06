@@ -1865,6 +1865,15 @@ fn map_inline(
                 offset_to_end_position(end, line_starts, base_line, base_col),
             ],
         }),
+        Inline::Passthrough(value) => AsgInline::Text(InlineText {
+            name: "text",
+            node_type: "string",
+            value: value.clone(),
+            location: [
+                offset_to_position(start, line_starts, base_line, base_col),
+                offset_to_end_position(end, line_starts, base_line, base_col),
+            ],
+        }),
     }
 }
 

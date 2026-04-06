@@ -43,7 +43,18 @@ fn parse_spanned_inlines_with_base(chars: &[char], base: usize) -> Vec<SpannedIn
             }
         }
 
-        if let Some((anchor, consumed)) = parse_inline_anchor(chars, index, base) {
+        if let Some((passthrough, consumed)) = parse_passthrough(chars, index, base) {
+            if let Some(start) = text_start.take() {
+                result.push(SpannedInline {
+                    inline: Inline::Text(std::mem::take(&mut text)),
+                    start: base + start,
+                    end: base + index,
+                });
+            }
+
+            result.push(passthrough);
+            index += consumed;
+        } else if let Some((anchor, consumed)) = parse_inline_anchor(chars, index, base) {
             if let Some(start) = text_start.take() {
                 result.push(SpannedInline {
                     inline: Inline::Text(std::mem::take(&mut text)),
@@ -601,6 +612,68 @@ fn parse_link_attrs(chars: &[char]) -> LinkAttrs {
     LinkAttrs { text, window }
 }
 
+fn parse_passthrough(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
+    parse_triple_plus_passthrough(chars, start, base)
+        .or_else(|| parse_pass_macro(chars, start, base))
+}
+
+fn parse_triple_plus_passthrough(
+    chars: &[char],
+    start: usize,
+    base: usize,
+) -> Option<(SpannedInline, usize)> {
+    if !starts_with(chars, start, "+++") {
+        return None;
+    }
+
+    let content_start = start + 3;
+    let mut index = content_start;
+    while index + 2 < chars.len() {
+        if chars[index] == '+' && chars[index + 1] == '+' && chars[index + 2] == '+' {
+            let raw = chars[content_start..index].iter().collect::<String>();
+            let end = index + 3;
+            return Some((
+                SpannedInline {
+                    inline: Inline::Passthrough(raw),
+                    start: base + start,
+                    end: base + end,
+                },
+                end - start,
+            ));
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn parse_pass_macro(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
+    const PREFIX: &str = "pass:[";
+    if !starts_with(chars, start, PREFIX) {
+        return None;
+    }
+
+    let content_start = start + PREFIX.len();
+    let mut index = content_start;
+    while index < chars.len() {
+        if chars[index] == ']' {
+            let raw = chars[content_start..index].iter().collect::<String>();
+            let end = index + 1;
+            return Some((
+                SpannedInline {
+                    inline: Inline::Passthrough(raw),
+                    start: base + start,
+                    end: base + end,
+                },
+                end - start,
+            ));
+        }
+        index += 1;
+    }
+
+    None
+}
+
 fn parse_unconstrained_span(
     chars: &[char],
     start: usize,
@@ -986,6 +1059,46 @@ mod tests {
                 reftext: None,
                 inlines: vec![Inline::Text("visible text".into())],
             })]
+        );
+    }
+
+    #[test]
+    fn parses_triple_plus_passthrough() {
+        assert_eq!(
+            parse_inlines("+++<del>strike</del>+++"),
+            vec![Inline::Passthrough("<del>strike</del>".into())]
+        );
+    }
+
+    #[test]
+    fn parses_triple_plus_passthrough_mid_sentence() {
+        assert_eq!(
+            parse_inlines("See +++<br>+++ here."),
+            vec![
+                Inline::Text("See ".into()),
+                Inline::Passthrough("<br>".into()),
+                Inline::Text(" here.".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_pass_macro() {
+        assert_eq!(
+            parse_inlines("pass:[<br>]"),
+            vec![Inline::Passthrough("<br>".into())]
+        );
+    }
+
+    #[test]
+    fn parses_pass_macro_mid_sentence() {
+        assert_eq!(
+            parse_inlines("before pass:[<em>raw</em>] after"),
+            vec![
+                Inline::Text("before ".into()),
+                Inline::Passthrough("<em>raw</em>".into()),
+                Inline::Text(" after".into()),
+            ]
         );
     }
 }
