@@ -145,6 +145,7 @@ function getAttribute(attributes, key) {
 function renderDocument(document) {
   const title = document.title ? `<h1>${escapeHtml(document.title)}</h1>` : "";
   const blocks = renderBlocks(document.blocks ?? [], 0, document.attributes ?? {});
+  const footnotes = renderFootnotes(document.footnotes ?? []);
 
   return `
     <div id="header">
@@ -153,6 +154,7 @@ function renderDocument(document) {
     <div id="content">
       ${blocks}
     </div>
+    ${footnotes}
   `;
 }
 
@@ -457,9 +459,38 @@ function renderInlines(inlines) {
         return `<span class="image"><img src="${escapeHtml(inline.target ?? "")}" alt="${escapeHtml(inline.alt ?? "")}"${widthAttr}${heightAttr}></span>`;
       }
 
+      if (inline.type === "footnote") {
+        const index = inline.index ?? 0;
+        return `<sup class="footnote" id="_footnoteref_${index}"><a href="#_footnotedef_${index}">${index}</a></sup>`;
+      }
+
       return escapeHtml(JSON.stringify(inline));
     })
     .join("");
+}
+
+function renderFootnotes(footnotes) {
+  if (!footnotes.length) {
+    return "";
+  }
+
+  const items = footnotes
+    .map((footnote) => {
+      const index = footnote.index ?? 0;
+      return `
+        <div class="footnote" id="_footnotedef_${index}">
+          <a href="#_footnoteref_${index}">${index}</a>. ${renderInlines(footnote.inlines ?? [])}
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div id="footnotes">
+      <hr />
+      ${items}
+    </div>
+  `;
 }
 
 function renderPreview(document) {

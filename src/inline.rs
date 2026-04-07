@@ -1,6 +1,6 @@
 use crate::ast::{
-    Inline, InlineAnchor, InlineForm, InlineImage, InlineLink, InlineSpan, InlineVariant,
-    InlineXref,
+    Inline, InlineAnchor, InlineFootnote, InlineForm, InlineImage, InlineLink, InlineSpan,
+    InlineVariant, InlineXref,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +76,17 @@ fn parse_spanned_inlines_with_base(chars: &[char], base: usize) -> Vec<SpannedIn
             }
 
             result.push(xref);
+            index += consumed;
+        } else if let Some((footnote, consumed)) = parse_footnote(chars, index, base) {
+            if let Some(start) = text_start.take() {
+                result.push(SpannedInline {
+                    inline: Inline::Text(std::mem::take(&mut text)),
+                    start: base + start,
+                    end: base + index,
+                });
+            }
+
+            result.push(footnote);
             index += consumed;
         } else if let Some((link, consumed)) = parse_inline_image(chars, index, base) {
             if let Some(start) = text_start.take() {
@@ -265,6 +276,29 @@ fn inline_auto_generate_alt(target: &str) -> String {
 
 fn parse_xref(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
     parse_xref_macro(chars, start, base).or_else(|| parse_xref_shorthand(chars, start, base))
+}
+
+fn parse_footnote(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
+    const PREFIX: &str = "footnote:[";
+    if !starts_with(chars, start, PREFIX) {
+        return None;
+    }
+
+    let (text_start, text_end, consumed) = parse_bracket_text(chars, start + PREFIX.len() - 1)?;
+    let source = chars[text_start..text_end].iter().collect::<String>();
+    let inlines = parse_spanned_inlines_with_base(&source.chars().collect::<Vec<_>>(), base + text_start)
+        .into_iter()
+        .map(|inline| inline.inline)
+        .collect();
+
+    Some((
+        SpannedInline {
+            inline: Inline::Footnote(InlineFootnote { inlines }),
+            start: base + start,
+            end: base + consumed,
+        },
+        consumed - start,
+    ))
 }
 
 fn parse_inline_anchor(
@@ -887,7 +921,8 @@ fn parse_constrained_span(
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Inline, InlineAnchor, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref,
+        Inline, InlineAnchor, InlineFootnote, InlineForm, InlineLink, InlineSpan, InlineVariant,
+        InlineXref,
     };
     use crate::inline::parse_inlines;
 
@@ -1128,6 +1163,27 @@ mod tests {
                 shorthand: false,
                 explicit_text: true,
             })]
+        );
+    }
+
+    #[test]
+    fn parses_footnote_macro() {
+        assert_eq!(
+            parse_inlines("Look herefootnote:[Read *this* first.]"),
+            vec![
+                Inline::Text("Look here".into()),
+                Inline::Footnote(InlineFootnote {
+                    inlines: vec![
+                        Inline::Text("Read ".into()),
+                        Inline::Span(InlineSpan {
+                            variant: InlineVariant::Strong,
+                            form: InlineForm::Constrained,
+                            inlines: vec![Inline::Text("this".into())],
+                        }),
+                        Inline::Text(" first.".into()),
+                    ],
+                }),
+            ]
         );
     }
 

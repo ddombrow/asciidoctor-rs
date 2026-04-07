@@ -941,3 +941,42 @@ test("renders inline images in paragraphs", async ({ page }) => {
   await expect(img).toHaveAttribute("src", "icon.png");
   await expect(img).toHaveAttribute("alt", "Icon");
 });
+
+test("exports and renders footnotes", async ({ page }) => {
+  const source = `= Sample Document
+
+A notefootnote:[Read *this* first.] here.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const paragraph = document.blocks[0].blocks[0];
+
+  expect(document.footnotes).toEqual([
+    {
+      index: 1,
+      text: "Read this first.",
+      inlines: [
+        { type: "text", value: "Read " },
+        {
+          type: "span",
+          variant: "strong",
+          form: "constrained",
+          inlines: [{ type: "text", value: "this" }]
+        },
+        { type: "text", value: " first." }
+      ]
+    }
+  ]);
+  expect(paragraph.inlines[1]).toMatchObject({
+    type: "footnote",
+    index: 1
+  });
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("sup.footnote a")).toHaveText("1");
+  await expect(frame.locator("#footnotes .footnote")).toHaveText("1. Read this first.");
+  await expect(frame.locator("#footnotes .footnote strong")).toHaveText("this");
+});

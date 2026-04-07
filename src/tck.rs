@@ -1939,6 +1939,50 @@ fn map_inline(
                 offset_to_end_position(end, line_starts, base_line, base_col),
             ],
         }),
+        Inline::Footnote(footnote) => AsgInline::Span(InlineSpanNode {
+            name: "footnote",
+            node_type: "inline",
+            variant: "footnote",
+            form: "macro",
+            inlines: footnote
+                .inlines
+                .iter()
+                .enumerate()
+                .map(|(idx, child)| {
+                    let child_text = child.plain_text();
+                    let child_start = footnote
+                        .inlines
+                        .iter()
+                        .take(idx)
+                        .map(Inline::plain_text)
+                        .collect::<String>()
+                        .len();
+                    map_inline(
+                        child,
+                        child_start,
+                        child_start + child_text.len(),
+                        &footnote
+                            .inlines
+                            .iter()
+                            .map(Inline::plain_text)
+                            .collect::<String>(),
+                        &compute_line_starts(
+                            &footnote
+                                .inlines
+                                .iter()
+                                .map(Inline::plain_text)
+                                .collect::<String>(),
+                        ),
+                        base_line,
+                        base_col,
+                    )
+                })
+                .collect(),
+            location: [
+                offset_to_position(start, line_starts, base_line, base_col),
+                offset_to_end_position(end, line_starts, base_line, base_col),
+            ],
+        }),
     }
 }
 

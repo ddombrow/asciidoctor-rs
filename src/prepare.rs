@@ -198,6 +198,7 @@ pub enum PreparedInline {
     Anchor(AnchorInline),
     Passthrough(PassthroughInline),
     Image(ImageInline),
+    Footnote(FootnoteInline),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,6 +290,14 @@ pub struct ImageInline {
     pub height: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FootnoteInline {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    pub inlines: Vec<PreparedInline>,
+}
+
 #[derive(Debug, Clone)]
 struct SectionRef {
     id: String,
@@ -351,6 +360,8 @@ pub struct Footnote {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inlines: Vec<PreparedInline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -376,9 +387,11 @@ pub struct Revision {
 pub fn prepare_document(document: &Document) -> DocumentBlock {
     let mut next_section_ids = Vec::new();
     let mut blocks = prepare_blocks(&document.blocks, true, &mut next_section_ids);
+    let mut footnotes = collect_footnotes(&mut blocks);
     let section_refs = collect_section_refs(&blocks);
     let block_refs = collect_block_refs(&blocks);
     resolve_xrefs_in_blocks(&mut blocks, &section_refs, &block_refs);
+    resolve_xrefs_in_footnotes(&mut footnotes, &section_refs, &block_refs);
     let sections = collect_sections(&blocks);
 
     DocumentBlock {
@@ -394,7 +407,7 @@ pub fn prepare_document(document: &Document) -> DocumentBlock {
         revision: prepare_revision(document),
         blocks,
         content_model: Some(ContentModel::Compound),
-        footnotes: Vec::new(),
+        footnotes,
         sections,
         authors: prepare_authors(document),
     }
@@ -826,6 +839,10 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
                 width: image.width.clone(),
                 height: image.height.clone(),
             }),
+            Inline::Footnote(footnote) => PreparedInline::Footnote(FootnoteInline {
+                index: None,
+                inlines: prepare_inlines(&footnote.inlines),
+            }),
         })
         .collect()
 }
@@ -1052,6 +1069,7 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
             PreparedInline::Span(span) => collect_inline_anchor_refs(&span.inlines, refs),
             PreparedInline::Link(link) => collect_inline_anchor_refs(&link.inlines, refs),
             PreparedInline::Xref(xref) => collect_inline_anchor_refs(&xref.inlines, refs),
+            PreparedInline::Footnote(footnote) => collect_inline_anchor_refs(&footnote.inlines, refs),
             PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {}
         }
     }
@@ -1126,6 +1144,144 @@ fn resolve_xrefs_in_table_row(
     }
 }
 
+fn collect_footnotes(blocks: &mut [PreparedBlock]) -> Vec<Footnote> {
+    let mut footnotes = Vec::new();
+    let mut next_index = 1;
+    collect_footnotes_from_blocks(blocks, &mut footnotes, &mut next_index);
+    footnotes
+}
+
+fn collect_footnotes_from_blocks(
+    blocks: &mut [PreparedBlock],
+    footnotes: &mut Vec<Footnote>,
+    next_index: &mut u32,
+) {
+    for block in blocks {
+        match block {
+            PreparedBlock::Preamble(preamble) => {
+                collect_footnotes_from_blocks(&mut preamble.blocks, footnotes, next_index)
+            }
+            PreparedBlock::Paragraph(paragraph) => {
+                collect_footnotes_from_inlines(&mut paragraph.inlines, footnotes, next_index);
+                paragraph.content = paragraph
+                    .inlines
+                    .iter()
+                    .map(prepared_inline_plain_text)
+                    .collect::<Vec<_>>()
+                    .join("");
+            }
+            PreparedBlock::Admonition(admonition) => {
+                collect_footnotes_from_blocks(&mut admonition.blocks, footnotes, next_index)
+            }
+            PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => {
+                for item in &mut list.items {
+                    collect_footnotes_from_blocks(&mut item.blocks, footnotes, next_index);
+                }
+            }
+            PreparedBlock::Table(table) => {
+                if let Some(header) = &mut table.header {
+                    collect_footnotes_from_table_row(header, footnotes, next_index);
+                }
+                for row in &mut table.rows {
+                    collect_footnotes_from_table_row(row, footnotes, next_index);
+                }
+            }
+            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) | PreparedBlock::Image(_) => {}
+            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
+                collect_footnotes_from_blocks(&mut example.blocks, footnotes, next_index)
+            }
+            PreparedBlock::Section(section) => {
+                collect_footnotes_from_blocks(&mut section.blocks, footnotes, next_index)
+            }
+        }
+    }
+}
+
+fn collect_footnotes_from_inlines(
+    inlines: &mut [PreparedInline],
+    footnotes: &mut Vec<Footnote>,
+    next_index: &mut u32,
+) {
+    for inline in inlines {
+        match inline {
+            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {}
+            PreparedInline::Span(span) => {
+                collect_footnotes_from_inlines(&mut span.inlines, footnotes, next_index)
+            }
+            PreparedInline::Link(link) => {
+                collect_footnotes_from_inlines(&mut link.inlines, footnotes, next_index)
+            }
+            PreparedInline::Xref(xref) => {
+                collect_footnotes_from_inlines(&mut xref.inlines, footnotes, next_index)
+            }
+            PreparedInline::Anchor(anchor) => {
+                collect_footnotes_from_inlines(&mut anchor.inlines, footnotes, next_index)
+            }
+            PreparedInline::Footnote(footnote) => {
+                collect_footnotes_from_inlines(&mut footnote.inlines, footnotes, next_index);
+                let index = *next_index;
+                *next_index += 1;
+                footnote.index = Some(index);
+                footnotes.push(Footnote {
+                    text: Some(
+                        footnote
+                            .inlines
+                            .iter()
+                            .map(prepared_inline_plain_text)
+                            .collect::<Vec<_>>()
+                            .join(""),
+                    ),
+                    index: Some(index),
+                    inlines: footnote.inlines.clone(),
+                });
+            }
+        }
+    }
+}
+
+fn collect_footnotes_from_table_row(
+    row: &mut TableRow,
+    footnotes: &mut Vec<Footnote>,
+    next_index: &mut u32,
+) {
+    for cell in &mut row.cells {
+        collect_footnotes_from_blocks(&mut cell.blocks, footnotes, next_index);
+        if let [PreparedBlock::Paragraph(paragraph)] = cell.blocks.as_slice() {
+            cell.inlines = paragraph.inlines.clone();
+            cell.content = paragraph.content.clone();
+        } else {
+            collect_footnotes_from_inlines(&mut cell.inlines, footnotes, next_index);
+            cell.content = if cell.inlines.is_empty() {
+                prepared_blocks_plain_text(&cell.blocks)
+            } else {
+                cell.inlines
+                    .iter()
+                    .map(prepared_inline_plain_text)
+                    .collect::<Vec<_>>()
+                    .join("")
+            };
+        }
+    }
+}
+
+fn resolve_xrefs_in_footnotes(
+    footnotes: &mut [Footnote],
+    section_refs: &BTreeMap<String, SectionRef>,
+    block_refs: &BTreeMap<String, BlockRef>,
+) {
+    for footnote in footnotes {
+        resolve_xrefs_in_inlines(&mut footnote.inlines, section_refs, block_refs);
+        footnote.text = Some(
+            footnote
+                .inlines
+                .iter()
+                .map(prepared_inline_plain_text)
+                .collect::<Vec<_>>()
+                .join(""),
+        );
+    }
+}
+
 fn prepared_blocks_plain_text(blocks: &[PreparedBlock]) -> String {
     blocks
         .iter()
@@ -1174,6 +1330,9 @@ fn resolve_xrefs_in_inlines(
             }
             PreparedInline::Span(span) => {
                 resolve_xrefs_in_inlines(&mut span.inlines, section_refs, block_refs)
+            }
+            PreparedInline::Footnote(footnote) => {
+                resolve_xrefs_in_inlines(&mut footnote.inlines, section_refs, block_refs)
             }
             PreparedInline::Xref(xref) => {
                 if let Some(section_ref) = resolve_section_ref(&xref.target, section_refs) {
@@ -1320,6 +1479,7 @@ fn prepared_inline_plain_text(inline: &PreparedInline) -> String {
             .join(""),
         PreparedInline::Passthrough(p) => p.value.clone(),
         PreparedInline::Image(image) => image.alt.clone(),
+        PreparedInline::Footnote(footnote) => format!("[{}]", footnote.index.unwrap_or(0)),
     }
 }
 
@@ -1342,8 +1502,8 @@ fn inline_form_name(form: InlineForm) -> &'static str {
 mod tests {
     use crate::ast::{
         Block, BlockMetadata, CompoundBlock as AstCompoundBlock, Document, Heading, Inline,
-        InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref, ListItem, Listing,
-        Paragraph, UnorderedList,
+        InlineFootnote, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref, ListItem,
+        Listing, Paragraph, UnorderedList,
     };
     use crate::parser::parse_document;
     use crate::prepare::{
@@ -2699,5 +2859,52 @@ mod tests {
                 value: "Install Note".into(),
             })]
         );
+    }
+
+    #[test]
+    fn collects_and_numbers_footnotes() {
+        let document = Document {
+            attributes: Default::default(),
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["A notefootnote:[Read *this* first.] here.".into()],
+                inlines: vec![
+                    Inline::Text("A note".into()),
+                    Inline::Footnote(InlineFootnote {
+                        inlines: vec![
+                            Inline::Text("Read ".into()),
+                            Inline::Span(InlineSpan {
+                                variant: InlineVariant::Strong,
+                                form: InlineForm::Constrained,
+                                inlines: vec![Inline::Text("this".into())],
+                            }),
+                            Inline::Text(" first.".into()),
+                        ],
+                    }),
+                    Inline::Text(" here.".into()),
+                ],
+                id: None,
+                reftext: None,
+                metadata: BlockMetadata::default(),
+            })],
+        };
+
+        let prepared = prepare_document(&document);
+
+        assert_eq!(prepared.footnotes.len(), 1);
+        assert_eq!(prepared.footnotes[0].index, Some(1));
+        assert_eq!(prepared.footnotes[0].text.as_deref(), Some("Read this first."));
+
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Paragraph(paragraph) = &preamble.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        let PreparedInline::Footnote(footnote) = &paragraph.inlines[1] else {
+            panic!("expected footnote");
+        };
+        assert_eq!(footnote.index, Some(1));
+        assert_eq!(paragraph.content, "A note[1] here.");
     }
 }
