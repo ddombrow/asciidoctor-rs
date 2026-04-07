@@ -852,12 +852,8 @@ fn block_plain_text(block: &Block) -> String {
 
 fn table_column_count(metadata: &BlockMetadata) -> Option<usize> {
     let cols = metadata.attributes.get("cols")?;
-    let count = cols
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .count();
-    (count > 0).then_some(count)
+    let parts = cols.split(',').map(str::trim).collect::<Vec<_>>();
+    (!parts.is_empty() && parts.iter().any(|part| !part.is_empty())).then_some(parts.len())
 }
 
 fn apply_anchor_to_listing(mut listing: Listing, anchor: Option<PendingAnchor>) -> Listing {
