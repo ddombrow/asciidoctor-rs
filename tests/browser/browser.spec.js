@@ -494,6 +494,39 @@ inside example
   await expect(frame.locator(".exampleblock p")).toHaveText("inside example");
 });
 
+test("exports and renders tables", async ({ page }) => {
+  const source = `= Sample Document
+
+.Agents
+[%header,cols="30%,"]
+|===
+|Name|Email
+|Peter|peter@example.com
+|Adam|adam@example.com
+|===`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks[0]).toMatchObject({
+    type: "table",
+    title: "Agents",
+    header: {
+      cells: [{ content: "Name" }, { content: "Email" }]
+    }
+  });
+  expect(preambleBlocks[0].rows).toHaveLength(2);
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("table.tableblock caption.title")).toHaveText("Agents");
+  await expect(frame.locator("table.tableblock thead th").nth(0)).toHaveText("Name");
+  await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(0)).toHaveText("Adam");
+});
+
 test("exports and renders delimited block titles and attributes", async ({ page }) => {
   const source = `= Sample Document
 

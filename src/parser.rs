@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{
     AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Document, Heading,
-    ImageBlock, ListItem, Listing, OrderedList, Paragraph, UnorderedList,
+    ImageBlock, ListItem, Listing, OrderedList, Paragraph, TableBlock, TableCell, TableRow,
+    UnorderedList,
 };
 use crate::inline::parse_inlines;
 
@@ -272,6 +273,26 @@ fn parse_blocks_from_lines(
             continue;
         }
 
+        if let Some((table, consumed_lines)) =
+            parse_table(lines, index, pending_block_prelude.as_ref())
+        {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
+            );
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                Block::Table(apply_prelude_to_table(table, pending_block_prelude.take())),
+                pending_anchor.take(),
+            );
+            index += consumed_lines;
+            continue;
+        }
+
         if current_paragraph.is_empty() && pending_block_prelude.is_none() && pending_anchor.is_none() {
             if let Some((name, value)) = parse_attribute_entry(line) {
                 if let Some(attributes) = document_attributes.as_deref_mut() {
@@ -377,6 +398,9 @@ fn push_block(
         Block::Listing(listing) => {
             blocks.push(Block::Listing(apply_anchor_to_listing(listing, anchor)));
         }
+        Block::Table(table) => {
+            blocks.push(Block::Table(apply_anchor_to_table(table, anchor)));
+        }
         Block::Example(example) => {
             blocks.push(Block::Example(apply_anchor_to_compound_block(example, anchor)));
         }
@@ -430,6 +454,13 @@ fn apply_prelude_to_ordered_list(
     list
 }
 
+fn apply_prelude_to_table(mut table: TableBlock, prelude: Option<BlockPrelude>) -> TableBlock {
+    if let Some(prelude) = prelude {
+        table.metadata = prelude.metadata;
+    }
+    table
+}
+
 fn apply_anchor_to_ordered_list(
     mut list: OrderedList,
     anchor: Option<PendingAnchor>,
@@ -441,6 +472,16 @@ fn apply_anchor_to_ordered_list(
         list.reftext = anchor.reftext;
     }
     list
+}
+
+fn apply_anchor_to_table(mut table: TableBlock, anchor: Option<PendingAnchor>) -> TableBlock {
+    if let Some(anchor) = anchor
+        && table.metadata.id.is_none()
+    {
+        table.metadata.id = Some(anchor.id);
+        table.reftext = anchor.reftext;
+    }
+    table
 }
 
 fn apply_prelude_to_admonition(
@@ -547,6 +588,112 @@ fn auto_generate_alt(target: &str) -> String {
     let filename = filename.rsplit('\\').next().unwrap_or(filename);
     let stem = filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename);
     stem.replace('-', " ").replace('_', " ")
+}
+
+fn parse_table(
+    lines: &[&str],
+    index: usize,
+    pending_block_prelude: Option<&BlockPrelude>,
+) -> Option<(TableBlock, usize)> {
+    let delimiter = lines.get(index)?.trim();
+    if !is_table_delimiter(delimiter) {
+        return None;
+    }
+
+    let header_enabled = pending_block_prelude
+        .map(|prelude| table_has_header_option(&prelude.metadata))
+        .unwrap_or(false);
+    let mut rows = Vec::new();
+    let mut consumed = 1;
+    let mut closed = false;
+
+    while index + consumed < lines.len() {
+        let line = lines[index + consumed];
+        let trimmed = line.trim();
+        if is_table_delimiter(trimmed) {
+            consumed += 1;
+            closed = true;
+            break;
+        }
+        if trimmed.is_empty() {
+            consumed += 1;
+            continue;
+        }
+
+        let cells = split_table_row_cells(line);
+        if cells.is_empty() {
+            return None;
+        }
+
+        rows.push(TableRow {
+            cells: cells
+                .into_iter()
+                .map(|content| TableCell {
+                    inlines: parse_inlines(&content),
+                    content,
+                })
+                .collect(),
+        });
+        consumed += 1;
+    }
+
+    if !closed || consumed < 2 || rows.is_empty() || index + consumed > lines.len() {
+        return None;
+    }
+
+    let header = header_enabled.then(|| rows.remove(0));
+    Some((
+        TableBlock {
+            header,
+            rows,
+            reftext: None,
+            metadata: BlockMetadata::default(),
+        },
+        consumed,
+    ))
+}
+
+fn is_table_delimiter(line: &str) -> bool {
+    line.starts_with("|===") && line.chars().skip(1).all(|ch| ch == '=')
+}
+
+fn split_table_row_cells(line: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek() == Some(&'|') {
+            current.push('|');
+            chars.next();
+            continue;
+        }
+
+        if ch == '|' {
+            if !cells.is_empty() || !current.trim().is_empty() {
+                cells.push(current.trim().to_owned());
+            }
+            current.clear();
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    if !current.trim().is_empty() {
+        cells.push(current.trim().to_owned());
+    }
+
+    cells
+}
+
+fn table_has_header_option(metadata: &BlockMetadata) -> bool {
+    metadata.options.iter().any(|option| option == "header")
+        || metadata
+            .attributes
+            .get("options")
+            .is_some_and(|options| options.split(',').any(|option| option.trim() == "header"))
+        || metadata.attributes.contains_key("header-option")
 }
 
 fn apply_anchor_to_listing(mut listing: Listing, anchor: Option<PendingAnchor>) -> Listing {
@@ -1731,7 +1878,7 @@ fn is_valid_anchor_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Heading, ImageBlock, Inline,
+        AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Heading, Inline,
         InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OrderedList, Paragraph,
         UnorderedList,
     };
@@ -2654,6 +2801,33 @@ mod tests {
                 metadata: BlockMetadata::default(),
             })]
         );
+    }
+
+    #[test]
+    fn parses_tables_with_header_option() {
+        let document =
+            parse_document(".Agents\n[%header,cols=\"30%,\"]\n|===\n|Name|Email\n|Peter|peter@example.com\n|Adam|adam@example.com\n|===");
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.metadata.title.as_deref(), Some("Agents"));
+        assert_eq!(table.metadata.options, vec!["header"]);
+        assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
+        assert_eq!(table.header.as_ref().map(|row| row.cells[0].content.as_str()), Some("Name"));
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
+    }
+
+    #[test]
+    fn applies_anchor_to_tables() {
+        let document = parse_document("[[deploy-table,Deployment Table]]\n|===\n|Name|Email\n|Peter|peter@example.com\n|===");
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.metadata.id.as_deref(), Some("deploy-table"));
+        assert_eq!(table.reftext.as_deref(), Some("Deployment Table"));
     }
 
     #[test]

@@ -291,6 +291,50 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
     `;
   }
 
+  if (block.type === "table") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title
+      ? `<caption class="title">${escapeHtml(block.title)}</caption>`
+      : "";
+    const header = block.header
+      ? `
+        <thead>
+          <tr>
+            ${(block.header.cells ?? [])
+              .map(
+                (cell) =>
+                  `<th class="tableblock halign-left valign-top">${renderInlines(cell.inlines ?? [])}</th>`
+              )
+              .join("")}
+          </tr>
+        </thead>
+      `
+      : "";
+    const rows = (block.rows ?? [])
+      .map(
+        (row) => `
+          <tr>
+            ${(row.cells ?? [])
+              .map(
+                (cell) =>
+                  `<td class="tableblock halign-left valign-top"><p class="tableblock">${renderInlines(cell.inlines ?? [])}</p></td>`
+              )
+              .join("")}
+          </tr>
+        `
+      )
+      .join("");
+    return `
+      <table class="tableblock frame-all grid-all stretch"${id}>
+        ${title}
+        ${header}
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    `;
+  }
+
   if (block.type === "listing") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title

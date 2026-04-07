@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::ast::{
     AdmonitionBlock as AstAdmonitionBlock, Block, CompoundBlock as AstCompoundBlock, Document,
     ImageBlock as AstImageBlock, Inline, InlineForm, InlineVariant, Listing as AstListing,
-    OrderedList, Paragraph, UnorderedList,
+    OrderedList, Paragraph, TableBlock as AstTableBlock, TableCell as AstTableCell,
+    TableRow as AstTableRow, UnorderedList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +53,7 @@ pub enum PreparedBlock {
     Section(SectionBlock),
     UnorderedList(ListBlock),
     OrderedList(ListBlock),
+    Table(TableBlock),
     Listing(ListingBlock),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
@@ -149,6 +151,40 @@ pub struct ListingBlock {
     pub level: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<TableRow>,
+    pub rows: Vec<TableRow>,
+    pub attributes: BTreeMap<String, String>,
+    pub content_model: Option<ContentModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub level: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableRow {
+    pub cells: Vec<TableCell>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableCell {
+    pub content: String,
+    pub inlines: Vec<PreparedInline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -505,6 +541,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::Table(table) => {
+                let table = PreparedBlock::Table(prepare_table(table));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(table);
+                } else {
+                    prepared.push(table);
+                }
+                index += 1;
+            }
             Block::Listing(listing) => {
                 let listing = PreparedBlock::Listing(prepare_listing(listing));
                 if wrap_document_preamble && !seen_section {
@@ -698,6 +743,34 @@ fn prepare_listing(listing: &AstListing) -> ListingBlock {
     }
 }
 
+fn prepare_table(table: &AstTableBlock) -> TableBlock {
+    TableBlock {
+        id: table.metadata.id.clone(),
+        reftext: table.reftext.clone(),
+        header: table.header.as_ref().map(prepare_table_row),
+        rows: table.rows.iter().map(prepare_table_row).collect(),
+        attributes: table.metadata.attributes.clone(),
+        content_model: Some(ContentModel::Compound),
+        style: table.metadata.style.clone(),
+        role: table.metadata.role.clone(),
+        level: 0,
+        title: table.metadata.title.clone(),
+    }
+}
+
+fn prepare_table_row(row: &AstTableRow) -> TableRow {
+    TableRow {
+        cells: row.cells.iter().map(prepare_table_cell).collect(),
+    }
+}
+
+fn prepare_table_cell(cell: &AstTableCell) -> TableCell {
+    TableCell {
+        content: cell.content.clone(),
+        inlines: prepare_inlines(&cell.inlines),
+    }
+}
+
 fn prepare_compound_block(block: &AstCompoundBlock) -> CompoundBlock {
     CompoundBlock {
         id: block.metadata.id.clone(),
@@ -816,6 +889,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::Admonition(_)
             | PreparedBlock::UnorderedList(_)
             | PreparedBlock::OrderedList(_)
+            | PreparedBlock::Table(_)
             | PreparedBlock::Listing(_)
             | PreparedBlock::Example(_)
             | PreparedBlock::Sidebar(_)
@@ -903,6 +977,21 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                         });
                 }
             }
+            PreparedBlock::Table(table) => {
+                if let Some(id) = &table.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: table.reftext.clone().or_else(|| table.title.clone()),
+                        });
+                }
+                if let Some(header) = &table.header {
+                    collect_table_row_inline_anchor_refs(header, refs);
+                }
+                for row in &table.rows {
+                    collect_table_row_inline_anchor_refs(row, refs);
+                }
+            }
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 if let Some(id) = &example.id {
                     refs.entry(normalize_section_ref_key(id))
@@ -966,6 +1055,12 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
     }
 }
 
+fn collect_table_row_inline_anchor_refs(row: &TableRow, refs: &mut BTreeMap<String, BlockRef>) {
+    for cell in &row.cells {
+        collect_inline_anchor_refs(&cell.inlines, refs);
+    }
+}
+
 fn resolve_xrefs_in_blocks(
     blocks: &mut [PreparedBlock],
     section_refs: &BTreeMap<String, SectionRef>,
@@ -993,6 +1088,14 @@ fn resolve_xrefs_in_blocks(
                     resolve_xrefs_in_blocks(&mut item.blocks, section_refs, block_refs);
                 }
             }
+            PreparedBlock::Table(table) => {
+                if let Some(header) = &mut table.header {
+                    resolve_xrefs_in_table_row(header, section_refs, block_refs);
+                }
+                for row in &mut table.rows {
+                    resolve_xrefs_in_table_row(row, section_refs, block_refs);
+                }
+            }
             PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) | PreparedBlock::Image(_) => {}
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
@@ -1001,6 +1104,22 @@ fn resolve_xrefs_in_blocks(
                 resolve_xrefs_in_blocks(&mut section.blocks, section_refs, block_refs)
             }
         }
+    }
+}
+
+fn resolve_xrefs_in_table_row(
+    row: &mut TableRow,
+    section_refs: &BTreeMap<String, SectionRef>,
+    block_refs: &BTreeMap<String, BlockRef>,
+) {
+    for cell in &mut row.cells {
+        resolve_xrefs_in_inlines(&mut cell.inlines, section_refs, block_refs);
+        cell.content = cell
+            .inlines
+            .iter()
+            .map(prepared_inline_plain_text)
+            .collect::<Vec<_>>()
+            .join("");
     }
 }
 
@@ -2362,6 +2481,29 @@ mod tests {
             panic!("expected example");
         };
         assert_eq!(example.blocks.len(), 1);
+    }
+
+    #[test]
+    fn prepares_tables() {
+        let document = parse_document(
+            ".Agents\n[%header,cols=\"30%,\"]\n|===\n|Name|Email\n|Peter|peter@example.com\n|Adam|adam@example.com\n|===",
+        );
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Table(table) = &preamble.blocks[0] else {
+            panic!("expected table");
+        };
+
+        assert_eq!(table.title.as_deref(), Some("Agents"));
+        assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
+        assert_eq!(
+            table.header.as_ref().map(|row| row.cells[0].content.as_str()),
+            Some("Name")
+        );
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[1].cells[0].content, "Adam");
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub enum Block {
     Admonition(AdmonitionBlock),
     UnorderedList(UnorderedList),
     OrderedList(OrderedList),
+    Table(TableBlock),
     Listing(Listing),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
@@ -69,6 +70,25 @@ pub struct CompoundBlock {
     pub blocks: Vec<Block>,
     pub reftext: Option<String>,
     pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableBlock {
+    pub header: Option<TableRow>,
+    pub rows: Vec<TableRow>,
+    pub reftext: Option<String>,
+    pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRow {
+    pub cells: Vec<TableCell>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableCell {
+    pub content: String,
+    pub inlines: Vec<Inline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

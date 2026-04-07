@@ -40,6 +40,7 @@ fn render_block(
         }
         PreparedBlock::UnorderedList(list) => render_unordered_list(html, list, document_attributes),
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list, document_attributes),
+        PreparedBlock::Table(table) => render_table(html, table),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
         PreparedBlock::Example(example) => {
             render_compound(html, "exampleblock", example, document_attributes)
@@ -118,6 +119,40 @@ fn render_ordered_list(
         html.push_str("</li>\n");
     }
     html.push_str("</ol>\n</div>\n");
+}
+
+fn render_table(html: &mut String, table: &crate::prepare::TableBlock) {
+    html.push_str("<table class=\"tableblock frame-all grid-all stretch\"");
+    if let Some(id) = &table.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n");
+    if let Some(title) = &table.title {
+        html.push_str(&format!(
+            "<caption class=\"title\">{}</caption>\n",
+            escape_html(title)
+        ));
+    }
+    if let Some(header) = &table.header {
+        html.push_str("<thead>\n<tr>\n");
+        for cell in &header.cells {
+            html.push_str("<th class=\"tableblock halign-left valign-top\">");
+            render_inlines(html, &cell.inlines);
+            html.push_str("</th>\n");
+        }
+        html.push_str("</tr>\n</thead>\n");
+    }
+    html.push_str("<tbody>\n");
+    for row in &table.rows {
+        html.push_str("<tr>\n");
+        for cell in &row.cells {
+            html.push_str("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">");
+            render_inlines(html, &cell.inlines);
+            html.push_str("</p></td>\n");
+        }
+        html.push_str("</tr>\n");
+    }
+    html.push_str("</tbody>\n</table>\n");
 }
 
 fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
@@ -1146,6 +1181,19 @@ mod tests {
         let html = render_html(&document);
 
         assert!(html.contains("<div class=\"title\">Exhibit A</div>"));
+    }
+
+    #[test]
+    fn renders_tables() {
+        let html = render_html(&crate::parser::parse_document(
+            ".Agents\n[%header,cols=\"30%,\"]\n|===\n|Name|Email\n|Peter|peter@example.com\n|Adam|adam@example.com\n|===",
+        ));
+
+        assert!(html.contains("<table class=\"tableblock frame-all grid-all stretch\">"));
+        assert!(html.contains("<caption class=\"title\">Agents</caption>"));
+        assert!(html.contains("<thead>"));
+        assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Name</th>"));
+        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Peter</p></td>"));
     }
 
     #[test]
