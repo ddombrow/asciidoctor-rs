@@ -498,12 +498,14 @@ test("exports and renders tables", async ({ page }) => {
   const source = `= Sample Document
 
 .Agents
-[%header,cols="30%,70%"]
+[%header]
 |===
 |Name
 |Email
+
 |Peter
 |peter@example.com
+
 |Adam
 |adam@example.com
 |===`;

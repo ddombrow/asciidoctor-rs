@@ -605,7 +605,8 @@ fn parse_table(
         .unwrap_or(false);
     let expected_columns =
         pending_block_prelude.and_then(|prelude| table_column_count(&prelude.metadata));
-    let mut all_cells = Vec::new();
+    let mut row_groups: Vec<Vec<String>> = Vec::new();
+    let mut pending_group: Vec<String> = Vec::new();
     let mut consumed = 1;
     let mut closed = false;
 
@@ -618,6 +619,9 @@ fn parse_table(
             break;
         }
         if trimmed.is_empty() {
+            if !pending_group.is_empty() {
+                row_groups.push(std::mem::take(&mut pending_group));
+            }
             consumed += 1;
             continue;
         }
@@ -627,36 +631,30 @@ fn parse_table(
             return None;
         }
 
-        all_cells.extend(cells);
+        if cells.len() > 1 {
+            if !pending_group.is_empty() {
+                row_groups.push(std::mem::take(&mut pending_group));
+            }
+            row_groups.push(cells);
+        } else {
+            pending_group.extend(cells);
+        }
         consumed += 1;
     }
 
-    if !closed || consumed < 2 || all_cells.is_empty() || index + consumed > lines.len() {
+    if !pending_group.is_empty() {
+        row_groups.push(pending_group);
+    }
+
+    if !closed || consumed < 2 || row_groups.is_empty() || index + consumed > lines.len() {
         return None;
     }
 
-    let column_count = expected_columns.unwrap_or_else(|| infer_table_column_count(lines, index + 1, consumed - 2));
-    if column_count == 0 {
-        return None;
-    }
-
-    let mut rows = Vec::new();
-    let mut current_row = Vec::new();
-    for content in all_cells {
-        current_row.push(TableCell {
-            inlines: parse_inlines(&content),
-            content,
-        });
-        if current_row.len() == column_count {
-            rows.push(TableRow {
-                cells: std::mem::take(&mut current_row),
-            });
-        }
-    }
-
-    if !current_row.is_empty() {
-        rows.push(TableRow { cells: current_row });
-    }
+    let mut rows = if let Some(column_count) = expected_columns {
+        assemble_table_rows_with_known_columns(&row_groups, column_count)?
+    } else {
+        assemble_table_rows_without_known_columns(&row_groups)?
+    };
 
     let header = header_enabled.then(|| rows.remove(0));
     Some((
@@ -713,6 +711,56 @@ fn table_has_header_option(metadata: &BlockMetadata) -> bool {
         || metadata.attributes.contains_key("header-option")
 }
 
+fn assemble_table_rows_with_known_columns(
+    row_groups: &[Vec<String>],
+    column_count: usize,
+) -> Option<Vec<TableRow>> {
+    if column_count == 0 {
+        return None;
+    }
+
+    let mut rows = Vec::new();
+    let mut current_row = Vec::new();
+    for content in row_groups.iter().flatten() {
+        current_row.push(TableCell {
+            inlines: parse_inlines(content),
+            content: content.clone(),
+        });
+        if current_row.len() == column_count {
+            rows.push(TableRow {
+                cells: std::mem::take(&mut current_row),
+            });
+        }
+    }
+
+    if !current_row.is_empty() {
+        rows.push(TableRow { cells: current_row });
+    }
+
+    Some(rows)
+}
+
+fn assemble_table_rows_without_known_columns(row_groups: &[Vec<String>]) -> Option<Vec<TableRow>> {
+    if row_groups.is_empty() {
+        return None;
+    }
+
+    Some(
+        row_groups
+            .iter()
+            .map(|group| TableRow {
+                cells: group
+                    .iter()
+                    .map(|content| TableCell {
+                        inlines: parse_inlines(content),
+                        content: content.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    )
+}
+
 fn table_column_count(metadata: &BlockMetadata) -> Option<usize> {
     let cols = metadata.attributes.get("cols")?;
     let count = cols
@@ -721,17 +769,6 @@ fn table_column_count(metadata: &BlockMetadata) -> Option<usize> {
         .filter(|part| !part.is_empty())
         .count();
     (count > 0).then_some(count)
-}
-
-fn infer_table_column_count(lines: &[&str], start: usize, line_count: usize) -> usize {
-    for offset in 0..line_count {
-        let line = lines.get(start + offset).copied().unwrap_or_default();
-        let cells = split_table_row_cells(line);
-        if cells.len() > 1 {
-            return cells.len();
-        }
-    }
-    1
 }
 
 fn apply_anchor_to_listing(mut listing: Listing, anchor: Option<PendingAnchor>) -> Listing {
@@ -2872,6 +2909,23 @@ mod tests {
         assert_eq!(table.rows.len(), 2);
         assert_eq!(table.rows[0].cells[0].content, "Peter");
         assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
+    }
+
+    #[test]
+    fn parses_tables_with_stacked_cells_without_cols_when_rows_are_separated() {
+        let document = parse_document(
+            ".Agents\n[%header]\n|===\n|Name\n|Email\n\n|Peter\n|peter@example.com\n\n|Adam\n|adam@example.com\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells[0].content, "Peter");
+        assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
+        assert_eq!(table.rows[1].cells[0].content, "Adam");
+        assert_eq!(table.rows[1].cells[1].content, "adam@example.com");
     }
 
     #[test]

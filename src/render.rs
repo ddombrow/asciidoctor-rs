@@ -1209,6 +1209,18 @@ mod tests {
     }
 
     #[test]
+    fn renders_tables_with_stacked_cells_without_cols() {
+        let html = render_html(&crate::parser::parse_document(
+            ".Agents\n[%header]\n|===\n|Name\n|Email\n\n|Peter\n|peter@example.com\n\n|Adam\n|adam@example.com\n|===",
+        ));
+
+        assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Name</th>"));
+        assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Email</th>"));
+        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Adam</p></td>"));
+        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">adam@example.com</p></td>"));
+    }
+
+    #[test]
     fn renders_admonition_paragraphs() {
         let document = Document {
             attributes: Default::default(),
