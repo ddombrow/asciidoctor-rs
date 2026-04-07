@@ -2507,6 +2507,25 @@ mod tests {
     }
 
     #[test]
+    fn prepares_tables_with_stacked_cells() {
+        let document = parse_document(
+            ".Agents\n[%header,cols=\"30%,70%\"]\n|===\n|Name\n|Email\n|Peter\n|peter@example.com\n|Adam\n|adam@example.com\n|===",
+        );
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Table(table) = &preamble.blocks[0] else {
+            panic!("expected table");
+        };
+
+        assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells[0].content, "Peter");
+        assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
+    }
+
+    #[test]
     fn prepares_delimited_block_metadata() {
         let document = parse_document(".Exhibit A\n[source,rust]\n----\nfn main() {}\n----");
         let prepared = prepare_document(&document);

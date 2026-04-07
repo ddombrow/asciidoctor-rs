@@ -603,7 +603,9 @@ fn parse_table(
     let header_enabled = pending_block_prelude
         .map(|prelude| table_has_header_option(&prelude.metadata))
         .unwrap_or(false);
-    let mut rows = Vec::new();
+    let expected_columns =
+        pending_block_prelude.and_then(|prelude| table_column_count(&prelude.metadata));
+    let mut all_cells = Vec::new();
     let mut consumed = 1;
     let mut closed = false;
 
@@ -625,20 +627,35 @@ fn parse_table(
             return None;
         }
 
-        rows.push(TableRow {
-            cells: cells
-                .into_iter()
-                .map(|content| TableCell {
-                    inlines: parse_inlines(&content),
-                    content,
-                })
-                .collect(),
-        });
+        all_cells.extend(cells);
         consumed += 1;
     }
 
-    if !closed || consumed < 2 || rows.is_empty() || index + consumed > lines.len() {
+    if !closed || consumed < 2 || all_cells.is_empty() || index + consumed > lines.len() {
         return None;
+    }
+
+    let column_count = expected_columns.unwrap_or_else(|| infer_table_column_count(lines, index + 1, consumed - 2));
+    if column_count == 0 {
+        return None;
+    }
+
+    let mut rows = Vec::new();
+    let mut current_row = Vec::new();
+    for content in all_cells {
+        current_row.push(TableCell {
+            inlines: parse_inlines(&content),
+            content,
+        });
+        if current_row.len() == column_count {
+            rows.push(TableRow {
+                cells: std::mem::take(&mut current_row),
+            });
+        }
+    }
+
+    if !current_row.is_empty() {
+        rows.push(TableRow { cells: current_row });
     }
 
     let header = header_enabled.then(|| rows.remove(0));
@@ -694,6 +711,27 @@ fn table_has_header_option(metadata: &BlockMetadata) -> bool {
             .get("options")
             .is_some_and(|options| options.split(',').any(|option| option.trim() == "header"))
         || metadata.attributes.contains_key("header-option")
+}
+
+fn table_column_count(metadata: &BlockMetadata) -> Option<usize> {
+    let cols = metadata.attributes.get("cols")?;
+    let count = cols
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .count();
+    (count > 0).then_some(count)
+}
+
+fn infer_table_column_count(lines: &[&str], start: usize, line_count: usize) -> usize {
+    for offset in 0..line_count {
+        let line = lines.get(start + offset).copied().unwrap_or_default();
+        let cells = split_table_row_cells(line);
+        if cells.len() > 1 {
+            return cells.len();
+        }
+    }
+    1
 }
 
 fn apply_anchor_to_listing(mut listing: Listing, anchor: Option<PendingAnchor>) -> Listing {
@@ -2816,6 +2854,23 @@ mod tests {
         assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
         assert_eq!(table.header.as_ref().map(|row| row.cells[0].content.as_str()), Some("Name"));
         assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
+    }
+
+    #[test]
+    fn parses_tables_with_cells_stacked_across_lines() {
+        let document = parse_document(
+            ".Agents\n[%header,cols=\"30%,70%\"]\n|===\n|Name\n|Email\n|Peter\n|peter@example.com\n|Adam\n|adam@example.com\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
+        assert_eq!(table.header.as_ref().map(|row| row.cells[0].content.as_str()), Some("Name"));
+        assert_eq!(table.header.as_ref().map(|row| row.cells[1].content.as_str()), Some("Email"));
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells[0].content, "Peter");
         assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
     }
 

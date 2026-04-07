@@ -498,11 +498,14 @@ test("exports and renders tables", async ({ page }) => {
   const source = `= Sample Document
 
 .Agents
-[%header,cols="30%,"]
+[%header,cols="30%,70%"]
 |===
-|Name|Email
-|Peter|peter@example.com
-|Adam|adam@example.com
+|Name
+|Email
+|Peter
+|peter@example.com
+|Adam
+|adam@example.com
 |===`;
 
   const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
@@ -524,6 +527,8 @@ test("exports and renders tables", async ({ page }) => {
   const frame = page.frameLocator("#preview-frame");
   await expect(frame.locator("table.tableblock caption.title")).toHaveText("Agents");
   await expect(frame.locator("table.tableblock thead th").nth(0)).toHaveText("Name");
+  await expect(frame.locator("table.tableblock thead th").nth(1)).toHaveText("Email");
+  await expect(frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(1)).toHaveText("peter@example.com");
   await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(0)).toHaveText("Adam");
 });
 
