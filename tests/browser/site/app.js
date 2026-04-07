@@ -7,6 +7,10 @@ const asciidoctorStylesheetHref =
   "/site/vendor/asciidoctor-default.css";
 const asciidoctorStylesheetFallbackHref =
   "https://cdn.jsdelivr.net/gh/asciidoctor/asciidoctor@2.0/data/stylesheets/asciidoctor-default.css";
+const fontAwesomeStylesheetHref =
+  "/site/vendor/font-awesome.css";
+const fontAwesomeStylesheetFallbackHref =
+  "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css";
 const asciidoctorFontsHref =
   "/site/vendor/google-fonts.css";
 const asciidoctorFontsFallbackHref =
@@ -426,6 +430,7 @@ function renderPreview(document) {
     <head>
       <meta charset="utf-8" />
       ${renderHeadMetadata(document)}
+      <link rel="stylesheet" href="${fontAwesomeStylesheetHref}" onerror="this.onerror=null;this.href='${fontAwesomeStylesheetFallbackHref}'" />
       <link rel="stylesheet" href="${asciidoctorFontsHref}" onerror="this.onerror=null;this.href='${asciidoctorFontsFallbackHref}'" />
       <link rel="stylesheet" href="${asciidoctorStylesheetHref}" onerror="this.onerror=null;this.href='${asciidoctorStylesheetFallbackHref}'" />
       <style>
@@ -482,12 +487,31 @@ function renderAdmonitionLabel(variant, blockAttributes = {}, documentAttributes
 }
 
 function renderAdmonitionIcon(variant, blockAttributes = {}, documentAttributes = {}, label = variant) {
+  const fontIconClass = resolveAdmonitionFontIconClass(variant, blockAttributes, documentAttributes);
+  if (fontIconClass) {
+    return `<i class="fa ${escapeHtml(fontIconClass)}" title="${escapeHtml(label)}"></i>`;
+  }
+
   const iconTarget = resolveAdmonitionIconTarget(variant, blockAttributes, documentAttributes);
   if (!iconTarget) {
     return `<div class="title">${escapeHtml(label)}</div>`;
   }
 
   return `<img src="${escapeHtml(iconTarget)}" alt="${escapeHtml(label)}" />`;
+}
+
+function resolveAdmonitionFontIconClass(variant, blockAttributes = {}, documentAttributes = {}) {
+  const icons = getNamedAttribute(blockAttributes, documentAttributes, "icons");
+  if (icons !== "font") {
+    return undefined;
+  }
+
+  if (variant === "note") return "icon-note";
+  if (variant === "tip") return "icon-tip";
+  if (variant === "important") return "icon-important";
+  if (variant === "caution") return "icon-caution";
+  if (variant === "warning") return "icon-warning";
+  return "icon-note";
 }
 
 function resolveAdmonitionIconTarget(variant, blockAttributes = {}, documentAttributes = {}) {

@@ -206,7 +206,17 @@ fn render_admonition(
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n<table>\n<tr>\n<td class=\"icon\">\n");
-    if let Some(icon_target) = admonition_icon_target(
+    if let Some(font_icon_class) = admonition_font_icon_class(
+        &admonition.variant,
+        &admonition.attributes,
+        document_attributes,
+    ) {
+        html.push_str(&format!(
+            "<i class=\"fa {}\" title=\"{}\"></i>\n",
+            escape_html(font_icon_class),
+            escape_html(label)
+        ));
+    } else if let Some(icon_target) = admonition_icon_target(
         &admonition.variant,
         &admonition.attributes,
         document_attributes,
@@ -248,6 +258,26 @@ fn admonition_label<'a>(
         "caution" => "Caution",
         "warning" => "Warning",
         _ => variant,
+    }
+}
+
+fn admonition_font_icon_class<'a>(
+    variant: &'a str,
+    block_attributes: &'a std::collections::BTreeMap<String, String>,
+    document_attributes: &'a std::collections::BTreeMap<String, String>,
+) -> Option<&'a str> {
+    let icons = named_attribute(block_attributes, document_attributes, "icons")?;
+    if icons == "font" {
+        Some(match variant {
+            "note" => "icon-note",
+            "tip" => "icon-tip",
+            "important" => "icon-important",
+            "caution" => "icon-caution",
+            "warning" => "icon-warning",
+            _ => "icon-note",
+        })
+    } else {
+        None
     }
 }
 
@@ -1237,6 +1267,68 @@ mod tests {
 
         assert!(html.contains("<img src=\"assets/icons/tip.png\" alt=\"Tip\">"));
         assert!(!html.contains("<div class=\"title\">Tip</div>"));
+    }
+
+    #[test]
+    fn renders_font_admonition_icons_from_document_attributes() {
+        let document = Document {
+            attributes: [("icons".to_string(), "font".to_string())]
+                .into_iter()
+                .collect(),
+            title: None,
+            blocks: vec![Block::Admonition(crate::ast::AdmonitionBlock {
+                id: None,
+                reftext: None,
+                variant: crate::ast::AdmonitionVariant::Tip,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    lines: vec!["Ship it carefully.".into()],
+                    inlines: vec![Inline::Text("Ship it carefully.".into())],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata::default(),
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<i class=\"fa icon-tip\" title=\"Tip\"></i>"));
+        assert!(!html.contains("<div class=\"title\">Tip</div>"));
+        assert!(!html.contains("<img"));
+    }
+
+    #[test]
+    fn uses_caption_as_font_admonition_icon_title() {
+        let document = Document {
+            attributes: [("icons".to_string(), "font".to_string())]
+                .into_iter()
+                .collect(),
+            title: None,
+            blocks: vec![Block::Admonition(crate::ast::AdmonitionBlock {
+                id: None,
+                reftext: None,
+                variant: crate::ast::AdmonitionVariant::Tip,
+                blocks: vec![Block::Paragraph(Paragraph {
+                    lines: vec!["Ship it carefully.".into()],
+                    inlines: vec![Inline::Text("Ship it carefully.".into())],
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                metadata: BlockMetadata {
+                    attributes: [("caption".to_string(), "Custom Tip".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..Default::default()
+                },
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<i class=\"fa icon-tip\" title=\"Custom Tip\"></i>"));
+        assert!(!html.contains("<div class=\"title\">Custom Tip</div>"));
     }
 
     #[test]

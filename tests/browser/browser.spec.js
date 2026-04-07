@@ -647,6 +647,44 @@ TIP: Ship it carefully.`;
   await expect(frame.locator(".admonitionblock.tip .icon .title")).toHaveCount(0);
 });
 
+test("renders font admonition icons when icons=font", async ({ page }) => {
+  const source = `= Sample Document
+:icons: font
+
+TIP: Ship it carefully.`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.tip .icon i.fa.icon-tip")).toHaveAttribute("title", "Tip");
+  await expect(frame.locator(".admonitionblock.tip .icon img")).toHaveCount(0);
+  await expect(frame.locator(".admonitionblock.tip .icon .title")).toHaveCount(0);
+  const fontFamily = await frame
+    .locator(".admonitionblock.tip .icon i.fa.icon-tip")
+    .evaluate((element) => window.getComputedStyle(element).fontFamily);
+  expect(fontFamily.toLowerCase()).toContain("fontawesome");
+});
+
+test("uses captions for font admonition icon titles", async ({ page }) => {
+  const source = `= Sample Document
+:icons: font
+:tip-caption: Pro Tip
+
+[caption="Custom Tip"]
+TIP: Use the override closest to the block.
+
+TIP: Fall back to the document caption.`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".admonitionblock.tip .icon i.fa.icon-tip").nth(0)).toHaveAttribute("title", "Custom Tip");
+  await expect(frame.locator(".admonitionblock.tip .icon i.fa.icon-tip").nth(1)).toHaveAttribute("title", "Pro Tip");
+  await expect(frame.locator(".admonitionblock.tip .icon .title")).toHaveCount(0);
+});
+
 test("renders custom image admonition icons from block attributes", async ({ page }) => {
   const source = `= Sample Document
 :icons:
