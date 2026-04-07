@@ -140,9 +140,7 @@ fn render_table(
     if let Some(header) = &table.header {
         html.push_str("<thead>\n<tr>\n");
         for cell in &header.cells {
-            html.push_str("<th class=\"tableblock halign-left valign-top\">");
-            render_table_cell_content(html, cell, true, document_attributes);
-            html.push_str("</th>\n");
+            render_table_cell(html, cell, true, document_attributes);
         }
         html.push_str("</tr>\n</thead>\n");
     }
@@ -150,13 +148,34 @@ fn render_table(
     for row in &table.rows {
         html.push_str("<tr>\n");
         for cell in &row.cells {
-            html.push_str("<td class=\"tableblock halign-left valign-top\">");
-            render_table_cell_content(html, cell, false, document_attributes);
-            html.push_str("</td>\n");
+            render_table_cell(html, cell, false, document_attributes);
         }
         html.push_str("</tr>\n");
     }
     html.push_str("</tbody>\n</table>\n");
+}
+
+fn render_table_cell(
+    html: &mut String,
+    cell: &crate::prepare::TableCell,
+    header: bool,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
+    let tag = if header || cell.style.as_deref() == Some("header") {
+        "th"
+    } else {
+        "td"
+    };
+    html.push_str(&format!("<{tag} class=\"tableblock halign-left valign-top\""));
+    if cell.colspan > 1 {
+        html.push_str(&format!(" colspan=\"{}\"", cell.colspan));
+    }
+    if cell.rowspan > 1 {
+        html.push_str(&format!(" rowspan=\"{}\"", cell.rowspan));
+    }
+    html.push('>');
+    render_table_cell_content(html, cell, tag == "th", document_attributes);
+    html.push_str(&format!("</{tag}>\n"));
 }
 
 fn render_table_cell_content(
@@ -1261,6 +1280,18 @@ mod tests {
         assert!(html.contains("<div class=\"ulist\">"));
         assert!(html.contains("<p>fast</p>"));
         assert!(html.contains("<p>typed</p>"));
+    }
+
+    #[test]
+    fn renders_table_cell_specs_for_rowspan_and_asciidoc_style() {
+        let html = render_html(&crate::parser::parse_document(
+            "[%header,cols=\"1,2\"]\n|===\nh|Area\n|Description\n\n.2+|Shared\na|First paragraph.\n+\nSecond paragraph.\n\n|Another description\n|===",
+        ));
+
+        assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Area</th>"));
+        assert!(html.contains("<td class=\"tableblock halign-left valign-top\" rowspan=\"2\"><p class=\"tableblock\">Shared</p></td>"));
+        assert!(html.contains("<p>First paragraph.</p>"));
+        assert!(html.contains("<p>Second paragraph.</p>"));
     }
 
     #[test]

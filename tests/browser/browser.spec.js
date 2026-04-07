@@ -564,6 +564,40 @@ test("exports and renders block content inside table cells", async ({ page }) =>
   await expect(detailCellLocator.locator(".ulist li")).toHaveCount(2);
 });
 
+test("exports and renders table cell specs", async ({ page }) => {
+  const source = `= Sample Document
+
+[%header,cols="1,2"]
+|===
+h|Area
+|Description
+
+.2+|Shared
+a|First paragraph.
++
+Second paragraph.
+
+|Another description
+|===`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const table = document.blocks[0].blocks[0];
+
+  expect(table.header.cells[0].style).toBe("header");
+  expect(table.rows[0].cells[0].rowspan).toBe(2);
+  expect(table.rows[0].cells[1].style).toBe("asciidoc");
+  expect(table.rows[0].cells[1].blocks.map((block) => block.type)).toEqual(["paragraph", "paragraph"]);
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(0)).toHaveAttribute("rowspan", "2");
+  await expect(frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(1).locator(".paragraph p").nth(0)).toHaveText("First paragraph.");
+  await expect(frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(1).locator(".paragraph p").nth(1)).toHaveText("Second paragraph.");
+});
+
 test("exports and renders delimited block titles and attributes", async ({ page }) => {
   const source = `= Sample Document
 

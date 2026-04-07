@@ -301,10 +301,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
         <thead>
           <tr>
             ${(block.header.cells ?? [])
-              .map(
-                (cell) =>
-                  `<th class="tableblock halign-left valign-top">${renderTableCellContent(cell, true, documentAttributes)}</th>`
-              )
+              .map((cell) => renderTableCell(cell, true, documentAttributes))
               .join("")}
           </tr>
         </thead>
@@ -315,10 +312,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
         (row) => `
           <tr>
             ${(row.cells ?? [])
-              .map(
-                (cell) =>
-                  `<td class="tableblock halign-left valign-top">${renderTableCellContent(cell, false, documentAttributes)}</td>`
-              )
+              .map((cell) => renderTableCell(cell, false, documentAttributes))
               .join("")}
           </tr>
         `
@@ -542,6 +536,13 @@ function renderAdmonitionIcon(variant, blockAttributes = {}, documentAttributes 
   }
 
   return `<img src="${escapeHtml(iconTarget)}" alt="${escapeHtml(label)}" />`;
+}
+
+function renderTableCell(cell, header = false, documentAttributes = {}) {
+  const tag = header || cell.style === "header" ? "th" : "td";
+  const colspan = cell.colspan > 1 ? ` colspan="${escapeHtml(String(cell.colspan))}"` : "";
+  const rowspan = cell.rowspan > 1 ? ` rowspan="${escapeHtml(String(cell.rowspan))}"` : "";
+  return `<${tag} class="tableblock halign-left valign-top"${colspan}${rowspan}>${renderTableCellContent(cell, tag === "th", documentAttributes)}</${tag}>`;
 }
 
 function renderTableCellContent(cell, header = false, documentAttributes = {}) {

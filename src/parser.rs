@@ -54,6 +54,14 @@ struct BlockPrelude {
     consumed_lines: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedTableCell {
+    content: String,
+    colspan: usize,
+    rowspan: usize,
+    style: Option<String>,
+}
+
 pub fn parse_document(input: &str) -> Document {
     if input.is_empty() {
         return Document::default();
@@ -605,9 +613,9 @@ fn parse_table(
         .unwrap_or(false);
     let expected_columns =
         pending_block_prelude.and_then(|prelude| table_column_count(&prelude.metadata));
-    let mut row_groups: Vec<Vec<String>> = Vec::new();
-    let mut current_group: Vec<String> = Vec::new();
-    let mut current_cell: Option<String> = None;
+    let mut row_groups: Vec<Vec<ParsedTableCell>> = Vec::new();
+    let mut current_group: Vec<ParsedTableCell> = Vec::new();
+    let mut current_cell: Option<ParsedTableCell> = None;
     let mut consumed = 1;
     let mut closed = false;
 
@@ -635,10 +643,10 @@ fn parse_table(
                     row_groups.push(std::mem::take(&mut current_group));
                 }
             } else if let Some(cell) = &mut current_cell {
-                if !cell.is_empty() {
-                    cell.push('\n');
+                if !cell.content.is_empty() {
+                    cell.content.push('\n');
                 }
-                cell.push('\n');
+                cell.content.push('\n');
             }
             consumed += 1;
             continue;
@@ -648,7 +656,7 @@ fn parse_table(
             if let Some(cell) = current_cell.take() {
                 current_group.push(cell);
             }
-            let cells = split_table_row_cells(line);
+            let cells = parse_table_cells_from_line(line)?;
             if cells.is_empty() {
                 return None;
             }
@@ -660,10 +668,10 @@ fn parse_table(
             current_cell = Some(last);
         } else {
             let cell = current_cell.as_mut()?;
-            if !cell.is_empty() {
-                cell.push('\n');
+            if !cell.content.is_empty() {
+                cell.content.push('\n');
             }
-            cell.push_str(line);
+            cell.content.push_str(line);
         }
         consumed += 1;
     }
@@ -694,10 +702,36 @@ fn is_table_delimiter(line: &str) -> bool {
     line.starts_with("|===") && line.chars().skip(1).all(|ch| ch == '=')
 }
 
-fn split_table_row_cells(line: &str) -> Vec<String> {
+fn parse_table_cells_from_line(line: &str) -> Option<Vec<ParsedTableCell>> {
+    let trimmed = line.trim_start();
+    let (colspan, rowspan, style, rest) = parse_leading_table_cell_spec(trimmed)?;
+    let parts = split_table_row_cells_after_marker(rest);
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut cells = Vec::new();
+    let mut parts = parts.into_iter();
+    let first = parts.next()?;
+    cells.push(ParsedTableCell {
+        content: first,
+        colspan,
+        rowspan,
+        style,
+    });
+    cells.extend(parts.map(|content| ParsedTableCell {
+        content,
+        colspan: 1,
+        rowspan: 1,
+        style: None,
+    }));
+    Some(cells)
+}
+
+fn split_table_row_cells_after_marker(line: &str) -> Vec<String> {
     let mut cells = Vec::new();
     let mut current = String::new();
-    let mut chars = line.trim_start().chars().peekable();
+    let mut chars = line.chars().peekable();
 
     while let Some(ch) = chars.next() {
         if ch == '\\' && chars.peek() == Some(&'|') {
@@ -707,9 +741,7 @@ fn split_table_row_cells(line: &str) -> Vec<String> {
         }
 
         if ch == '|' {
-            if !cells.is_empty() || !current.trim().is_empty() {
-                cells.push(current.trim().to_owned());
-            }
+            cells.push(current.trim().to_owned());
             current.clear();
             continue;
         }
@@ -717,15 +749,12 @@ fn split_table_row_cells(line: &str) -> Vec<String> {
         current.push(ch);
     }
 
-    if !current.trim().is_empty() {
-        cells.push(current.trim().to_owned());
-    }
-
+    cells.push(current.trim().to_owned());
     cells
 }
 
 fn starts_table_cell_line(line: &str) -> bool {
-    line.trim_start().starts_with('|')
+    parse_leading_table_cell_spec(line.trim_start()).is_some()
 }
 
 fn next_nonempty_table_line<'a>(lines: &'a [&str], mut index: usize) -> Option<&'a str> {
@@ -735,6 +764,44 @@ fn next_nonempty_table_line<'a>(lines: &'a [&str], mut index: usize) -> Option<&
         }
         index += 1;
     }
+    None
+}
+
+fn parse_leading_table_cell_spec(line: &str) -> Option<(usize, usize, Option<String>, &str)> {
+    let pipe_index = line.find('|')?;
+    let spec = &line[..pipe_index];
+    let rest = &line[pipe_index + 1..];
+    let (colspan, rowspan, style) = parse_table_cell_spec(spec.trim())?;
+    Some((colspan, rowspan, style, rest))
+}
+
+fn parse_table_cell_spec(spec: &str) -> Option<(usize, usize, Option<String>)> {
+    if spec.is_empty() {
+        return Some((1, 1, None));
+    }
+
+    let style = match spec {
+        "a" => return Some((1, 1, Some("asciidoc".into()))),
+        "h" => return Some((1, 1, Some("header".into()))),
+        _ => None,
+    };
+
+    if let Some(rowspan) = spec.strip_prefix('.').and_then(|rest| rest.strip_suffix('+')) {
+        let rowspan = rowspan.parse().ok()?;
+        return Some((1, rowspan, style));
+    }
+
+    if let Some(span_spec) = spec.strip_suffix('+') {
+        if let Some((colspan, rowspan)) = span_spec.split_once('.') {
+            let colspan = colspan.parse().ok()?;
+            let rowspan = rowspan.parse().ok()?;
+            return Some((colspan, rowspan, style));
+        }
+
+        let colspan = span_spec.parse().ok()?;
+        return Some((colspan, 1, style));
+    }
+
     None
 }
 
@@ -748,21 +815,28 @@ fn table_has_header_option(metadata: &BlockMetadata) -> bool {
 }
 
 fn assemble_table_rows_with_known_columns(
-    row_groups: &[Vec<String>],
+    row_groups: &[Vec<ParsedTableCell>],
     column_count: usize,
 ) -> Option<Vec<TableRow>> {
     if column_count == 0 {
         return None;
     }
 
+    if row_groups.len() > 1 {
+        return assemble_explicit_table_rows_with_known_columns(row_groups, column_count);
+    }
+
     let mut rows = Vec::new();
     let mut current_row = Vec::new();
-    for content in row_groups.iter().flatten() {
-        current_row.push(build_table_cell(content));
-        if current_row.len() == column_count {
+    let mut current_width = 0;
+    for cell in row_groups.iter().flatten() {
+        current_width += cell.colspan.max(1);
+        current_row.push(build_table_cell(cell));
+        if current_width == column_count {
             rows.push(TableRow {
                 cells: std::mem::take(&mut current_row),
             });
+            current_width = 0;
         }
     }
 
@@ -773,23 +847,57 @@ fn assemble_table_rows_with_known_columns(
     Some(rows)
 }
 
-fn assemble_table_rows_without_known_columns(row_groups: &[Vec<String>]) -> Option<Vec<TableRow>> {
-    if row_groups.is_empty() {
-        return None;
+fn assemble_explicit_table_rows_with_known_columns(
+    row_groups: &[Vec<ParsedTableCell>],
+    column_count: usize,
+) -> Option<Vec<TableRow>> {
+    let mut rows = Vec::new();
+    let mut active_rowspans = vec![0usize; column_count];
+
+    for group in row_groups {
+        let mut next_rowspans = active_rowspans
+            .iter()
+            .map(|span| span.saturating_sub(1))
+            .collect::<Vec<_>>();
+        let mut col = 0usize;
+
+        for cell in group {
+            while col < column_count && active_rowspans[col] > 0 {
+                col += 1;
+            }
+            if col >= column_count {
+                return None;
+            }
+
+            let colspan = cell.colspan.max(1);
+            let rowspan = cell.rowspan.max(1);
+            if col + colspan > column_count {
+                return None;
+            }
+            if (col..col + colspan).any(|index| active_rowspans[index] > 0) {
+                return None;
+            }
+
+            if rowspan > 1 {
+                for index in col..col + colspan {
+                    next_rowspans[index] = next_rowspans[index].max(rowspan - 1);
+                }
+            }
+            col += colspan;
+        }
+
+        rows.push(TableRow {
+            cells: group.iter().map(build_table_cell).collect(),
+        });
+        active_rowspans = next_rowspans;
     }
 
-    Some(
-        row_groups
-            .iter()
-            .map(|group| TableRow {
-                cells: group.iter().map(|content| build_table_cell(content)).collect(),
-            })
-            .collect(),
-    )
+    Some(rows)
 }
 
-fn build_table_cell(content: &str) -> TableCell {
-    let lines: Vec<&str> = content.lines().collect();
+fn build_table_cell(cell: &ParsedTableCell) -> TableCell {
+    let normalized = normalize_table_cell_content(&cell.content);
+    let lines: Vec<&str> = normalized.lines().collect();
     let mut title = None;
     let blocks = if lines.is_empty() {
         Vec::new()
@@ -808,7 +916,35 @@ fn build_table_cell(content: &str) -> TableCell {
         content: blocks_plain_text(&blocks),
         inlines: paragraph_inlines,
         blocks,
+        colspan: cell.colspan.max(1),
+        rowspan: cell.rowspan.max(1),
+        style: cell.style.clone(),
     }
+}
+
+fn normalize_table_cell_content(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| if line.trim() == "+" { "" } else { line })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assemble_table_rows_without_known_columns(
+    row_groups: &[Vec<ParsedTableCell>],
+) -> Option<Vec<TableRow>> {
+    if row_groups.is_empty() {
+        return None;
+    }
+
+    Some(
+        row_groups
+            .iter()
+            .map(|group| TableRow {
+                cells: group.iter().map(build_table_cell).collect(),
+            })
+            .collect(),
+    )
 }
 
 fn blocks_plain_text(blocks: &[Block]) -> String {
@@ -3036,6 +3172,23 @@ mod tests {
             panic!("expected unordered list in table cell");
         };
         assert_eq!(list.items.len(), 2);
+    }
+
+    #[test]
+    fn parses_table_cell_specs_for_rowspan_and_asciidoc_style() {
+        let document = parse_document(
+            "[%header,cols=\"1,2\"]\n|===\nh|Area\n|Description\n\n.2+|Shared\na|First paragraph.\n+\nSecond paragraph.\n\n|Another description\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.header.as_ref().map(|row| row.cells[0].style.as_deref()), Some(Some("header")));
+        assert_eq!(table.rows[0].cells[0].rowspan, 2);
+        assert_eq!(table.rows[0].cells[0].content, "Shared");
+        assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
+        assert_eq!(table.rows[0].cells[1].blocks.len(), 2);
+        assert_eq!(table.rows[1].cells.len(), 1);
     }
 
     #[test]

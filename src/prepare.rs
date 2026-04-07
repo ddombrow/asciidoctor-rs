@@ -186,6 +186,10 @@ pub struct TableCell {
     pub content: String,
     pub inlines: Vec<PreparedInline>,
     pub blocks: Vec<PreparedBlock>,
+    pub colspan: usize,
+    pub rowspan: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -770,6 +774,9 @@ fn prepare_table_cell(cell: &AstTableCell) -> TableCell {
         content: cell.content.clone(),
         inlines: prepare_inlines(&cell.inlines),
         blocks: prepare_blocks(&cell.blocks, false, &mut Vec::new()),
+        colspan: cell.colspan,
+        rowspan: cell.rowspan,
+        style: cell.style.clone(),
     }
 }
 
@@ -2605,6 +2612,25 @@ mod tests {
             panic!("expected list block");
         };
         assert_eq!(list.items.len(), 2);
+    }
+
+    #[test]
+    fn prepares_table_cell_specs_for_rowspan_and_asciidoc_style() {
+        let document = parse_document(
+            "[%header,cols=\"1,2\"]\n|===\nh|Area\n|Description\n\n.2+|Shared\na|First paragraph.\n+\nSecond paragraph.\n\n|Another description\n|===",
+        );
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Table(table) = &preamble.blocks[0] else {
+            panic!("expected table");
+        };
+
+        assert_eq!(table.header.as_ref().and_then(|row| row.cells[0].style.as_deref()), Some("header"));
+        assert_eq!(table.rows[0].cells[0].rowspan, 2);
+        assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
+        assert_eq!(table.rows[0].cells[1].blocks.len(), 2);
     }
 
     #[test]

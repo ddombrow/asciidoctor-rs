@@ -90,6 +90,9 @@ pub struct TableCell {
     pub content: String,
     pub inlines: Vec<Inline>,
     pub blocks: Vec<Block>,
+    pub colspan: usize,
+    pub rowspan: usize,
+    pub style: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
