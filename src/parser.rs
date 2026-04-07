@@ -655,6 +655,11 @@ fn parse_table(
         if starts_table_cell_line(trimmed) {
             if let Some(cell) = current_cell.take() {
                 current_group.push(cell);
+                maybe_finish_table_row_group(
+                    &mut row_groups,
+                    &mut current_group,
+                    expected_columns,
+                );
             }
             let cells = parse_table_cells_from_line(line)?;
             if cells.is_empty() {
@@ -664,6 +669,11 @@ fn parse_table(
             let last = iter.next_back()?;
             for cell in iter {
                 current_group.push(cell);
+                maybe_finish_table_row_group(
+                    &mut row_groups,
+                    &mut current_group,
+                    expected_columns,
+                );
             }
             current_cell = Some(last);
         } else {
@@ -698,34 +708,47 @@ fn parse_table(
     ))
 }
 
+fn maybe_finish_table_row_group(
+    row_groups: &mut Vec<Vec<ParsedTableCell>>,
+    current_group: &mut Vec<ParsedTableCell>,
+    expected_columns: Option<usize>,
+) {
+    let Some(column_count) = expected_columns else {
+        return;
+    };
+    if column_count == 0 || current_group.is_empty() {
+        return;
+    }
+
+    let current_width = current_group
+        .iter()
+        .map(|cell| cell.colspan.max(1))
+        .sum::<usize>();
+    if current_width == column_count {
+        row_groups.push(std::mem::take(current_group));
+    }
+}
+
 fn is_table_delimiter(line: &str) -> bool {
     line.starts_with("|===") && line.chars().skip(1).all(|ch| ch == '=')
 }
 
 fn parse_table_cells_from_line(line: &str) -> Option<Vec<ParsedTableCell>> {
     let trimmed = line.trim_start();
-    let (colspan, rowspan, style, rest) = parse_leading_table_cell_spec(trimmed)?;
-    let parts = split_table_row_cells_after_marker(rest);
-    if parts.is_empty() {
+    let segments = split_table_row_cells_after_marker(trimmed);
+    if segments.len() < 2 {
         return None;
     }
 
-    let mut cells = Vec::new();
-    let mut parts = parts.into_iter();
-    let first = parts.next()?;
-    cells.push(ParsedTableCell {
-        content: first,
+    let (colspan, rowspan, style) = parse_table_cell_spec(segments[0].trim())?;
+    let mut cells = vec![ParsedTableCell {
+        content: segments[1].trim().to_owned(),
         colspan,
         rowspan,
         style,
-    });
-    cells.extend(parts.map(|content| ParsedTableCell {
-        content,
-        colspan: 1,
-        rowspan: 1,
-        style: None,
-    }));
-    Some(cells)
+    }];
+
+    parse_table_cells_from_segments(&segments, 2, &mut cells).then_some(cells)
 }
 
 fn split_table_row_cells_after_marker(line: &str) -> Vec<String> {
@@ -751,6 +774,46 @@ fn split_table_row_cells_after_marker(line: &str) -> Vec<String> {
 
     cells.push(current.trim().to_owned());
     cells
+}
+
+fn parse_table_cells_from_segments(
+    segments: &[String],
+    index: usize,
+    cells: &mut Vec<ParsedTableCell>,
+) -> bool {
+    if index >= segments.len() {
+        return true;
+    }
+
+    if index + 1 < segments.len() {
+        let spec = segments[index].trim();
+        if !spec.is_empty()
+            && let Some((colspan, rowspan, style)) = parse_table_cell_spec(spec)
+        {
+            cells.push(ParsedTableCell {
+                content: segments[index + 1].trim().to_owned(),
+                colspan,
+                rowspan,
+                style,
+            });
+            if parse_table_cells_from_segments(segments, index + 2, cells) {
+                return true;
+            }
+            cells.pop();
+        }
+    }
+
+    cells.push(ParsedTableCell {
+        content: segments[index].trim().to_owned(),
+        colspan: 1,
+        rowspan: 1,
+        style: None,
+    });
+    if parse_table_cells_from_segments(segments, index + 1, cells) {
+        return true;
+    }
+    cells.pop();
+    false
 }
 
 fn starts_table_cell_line(line: &str) -> bool {
@@ -935,6 +998,18 @@ fn assemble_table_rows_without_known_columns(
 ) -> Option<Vec<TableRow>> {
     if row_groups.is_empty() {
         return None;
+    }
+
+    if row_groups
+        .iter()
+        .flatten()
+        .any(|cell| cell.colspan > 1 || cell.rowspan > 1)
+    {
+        let inferred_columns = row_groups
+            .iter()
+            .map(|group| group.iter().map(|cell| cell.colspan.max(1)).sum::<usize>())
+            .max()?;
+        return assemble_explicit_table_rows_with_known_columns(row_groups, inferred_columns);
     }
 
     Some(
@@ -3185,6 +3260,63 @@ mod tests {
         assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
         assert_eq!(table.rows[0].cells[1].blocks.len(), 2);
         assert_eq!(table.rows[1].cells.len(), 1);
+    }
+
+    #[test]
+    fn parses_table_cell_specs_on_later_cells_in_same_line() {
+        let document = parse_document(
+            "[%header,cols=\"1,2\"]\n|===\n|Name|h|Email\n|API|a|First paragraph.\n+\nSecond paragraph.\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
+        assert_eq!(table.header.as_ref().map(|row| row.cells[1].style.as_deref()), Some(Some("header")));
+        assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
+        assert_eq!(table.rows[0].cells[1].blocks.len(), 2);
+    }
+
+    #[test]
+    fn parses_multiline_asciidoc_cell_after_later_cell_spec_on_new_row() {
+        let document = parse_document(
+            "[%header,cols=\"1,2\"]\n|===\nh|Area\n|Description\n\n|North|Plain cell\n|South|a|AsciiDoc cell with a list:\n\n* first\n* second\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells[0].content, "North");
+        assert_eq!(table.rows[0].cells[1].content, "Plain cell");
+        assert_eq!(table.rows[1].cells[0].content, "South");
+        assert_eq!(table.rows[1].cells[1].style.as_deref(), Some("asciidoc"));
+        assert_eq!(table.rows[1].cells[1].blocks.len(), 2);
+        let Block::Paragraph(paragraph) = &table.rows[1].cells[1].blocks[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.plain_text(), "AsciiDoc cell with a list:");
+        let Block::UnorderedList(list) = &table.rows[1].cells[1].blocks[1] else {
+            panic!("expected unordered list");
+        };
+        assert_eq!(list.items.len(), 2);
+    }
+
+    #[test]
+    fn infers_table_grid_for_spans_without_cols() {
+        let document = parse_document(
+            "|===\n|Name|Description\n\n.2+|Shared\n|First\n\n|Second\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.rows.len(), 3);
+        assert_eq!(table.rows[1].cells[0].rowspan, 2);
+        assert_eq!(table.rows[1].cells[1].content, "First");
+        assert_eq!(table.rows[2].cells.len(), 1);
+        assert_eq!(table.rows[2].cells[0].content, "Second");
     }
 
     #[test]

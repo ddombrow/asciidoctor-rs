@@ -598,6 +598,40 @@ Second paragraph.
   await expect(frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(1).locator(".paragraph p").nth(1)).toHaveText("Second paragraph.");
 });
 
+test("exports and renders multiline asciidoc cells after later-cell specs", async ({ page }) => {
+  const source = `= Sample Document
+
+[%header,cols="1,2"]
+|===
+h|Area
+|Description
+
+|North|Plain cell
+|South|a|AsciiDoc cell with a list:
+
+* first
+* second
+|===`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const table = document.blocks[0].blocks[0];
+
+  expect(table.rows).toHaveLength(2);
+  expect(table.rows[1].cells[1].style).toBe("asciidoc");
+  expect(table.rows[1].cells[1].blocks.map((block) => block.type)).toEqual(["paragraph", "unordered_list"]);
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("table.tableblock tbody tr")).toHaveCount(2);
+  await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(0)).toHaveText("South");
+  await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(1).locator(".paragraph p")).toHaveText("AsciiDoc cell with a list:");
+  await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(1).locator("ul li").nth(0)).toHaveText("first");
+  await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(1).locator("ul li").nth(1)).toHaveText("second");
+});
+
 test("exports and renders delimited block titles and attributes", async ({ page }) => {
   const source = `= Sample Document
 
