@@ -18,6 +18,7 @@ pub fn render_prepared_html(document: &DocumentBlock) -> String {
         render_block(&mut html, block, &document.attributes);
     }
     html.push_str("</div>\n");
+    render_footnotes(&mut html, &document.footnotes);
     html
 }
 
@@ -562,8 +563,31 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 html.push_str(">");
                 html.push_str("</span>");
             }
+            PreparedInline::Footnote(footnote) => {
+                let index = footnote.index.unwrap_or(0);
+                html.push_str(&format!(
+                    "<sup class=\"footnote\" id=\"_footnoteref_{index}\"><a href=\"#_footnotedef_{index}\">{index}</a></sup>"
+                ));
+            }
         }
     }
+}
+
+fn render_footnotes(html: &mut String, footnotes: &[crate::prepare::Footnote]) {
+    if footnotes.is_empty() {
+        return;
+    }
+
+    html.push_str("<div id=\"footnotes\">\n<hr>\n");
+    for footnote in footnotes {
+        let index = footnote.index.unwrap_or(0);
+        html.push_str(&format!(
+            "<div class=\"footnote\" id=\"_footnotedef_{index}\"><a href=\"#_footnoteref_{index}\">{index}</a>. "
+        ));
+        render_inlines(html, &footnote.inlines);
+        html.push_str("</div>\n");
+    }
+    html.push_str("</div>\n");
 }
 
 fn escape_html(input: &str) -> String {
@@ -586,9 +610,9 @@ fn escape_html(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::ast::{
-        Block, BlockMetadata, CompoundBlock, Document, Heading, Inline, InlineAnchor, InlineForm, InlineLink,
-        InlineSpan, InlineVariant, InlineXref, ListItem, Listing, OrderedList, Paragraph,
-        UnorderedList,
+        Block, BlockMetadata, CompoundBlock, Document, Heading, Inline, InlineAnchor,
+        InlineFootnote, InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref, ListItem,
+        Listing, OrderedList, Paragraph, UnorderedList,
     };
     use crate::prepare::prepare_document;
     use crate::render::render_html;
@@ -1606,5 +1630,32 @@ mod tests {
             "image:icon.png[Icon, 16, 16]",
         ));
         assert!(html.contains("<img src=\"icon.png\" alt=\"Icon\" width=\"16\" height=\"16\">"));
+    }
+
+    #[test]
+    fn renders_footnotes() {
+        let document = Document {
+            attributes: Default::default(),
+            title: None,
+            blocks: vec![Block::Paragraph(Paragraph {
+                lines: vec!["A notefootnote:[Read this first.] here.".into()],
+                inlines: vec![
+                    Inline::Text("A note".into()),
+                    Inline::Footnote(InlineFootnote {
+                        inlines: vec![Inline::Text("Read this first.".into())],
+                    }),
+                    Inline::Text(" here.".into()),
+                ],
+                id: None,
+                reftext: None,
+                metadata: BlockMetadata::default(),
+            })],
+        };
+
+        let html = render_html(&document);
+
+        assert!(html.contains("<sup class=\"footnote\" id=\"_footnoteref_1\"><a href=\"#_footnotedef_1\">1</a></sup>"));
+        assert!(html.contains("<div id=\"footnotes\">"));
+        assert!(html.contains("<div class=\"footnote\" id=\"_footnotedef_1\"><a href=\"#_footnoteref_1\">1</a>. Read this first.</div>"));
     }
 }

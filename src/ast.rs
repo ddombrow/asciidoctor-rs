@@ -134,6 +134,7 @@ pub enum Inline {
     Anchor(InlineAnchor),
     Passthrough(String),
     Image(InlineImage),
+    Footnote(InlineFootnote),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +184,11 @@ pub struct InlineAnchor {
     pub inlines: Vec<Inline>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineFootnote {
+    pub inlines: Vec<Inline>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InlineVariant {
     Strong,
@@ -226,6 +232,12 @@ impl Inline {
                 .join(""),
             Self::Passthrough(raw) => raw.clone(),
             Self::Image(image) => image.alt.clone(),
+            Self::Footnote(footnote) => footnote
+                .inlines
+                .iter()
+                .map(Self::plain_text)
+                .collect::<Vec<_>>()
+                .join(""),
         }
     }
 }

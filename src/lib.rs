@@ -16,7 +16,8 @@ pub mod node;
 
 pub use ast::{
     AdmonitionBlock, AdmonitionVariant, Block, Document, Heading, Inline, InlineAnchor,
-    InlineForm, InlineLink, InlineSpan, InlineVariant, InlineXref, Paragraph,
+    InlineFootnote, InlineForm, InlineImage, InlineLink, InlineSpan, InlineVariant, InlineXref,
+    Paragraph,
 };
 pub use inline::{SpannedInline, parse_inlines, parse_spanned_inlines};
 pub use parser::parse_document;
@@ -24,7 +25,8 @@ pub use prepare::{
     AdmonitionBlock as PreparedAdmonitionBlock, AnchorInline, Author, CompoundBlock, DocumentBlock,
     DocumentSection, Footnote, LinkInline, ParagraphBlock, PassthroughBlock, PassthroughInline,
     PreparedBlock, PreparedInline, Revision, SectionBlock, SpanInline, TextInline, XrefInline,
-    prepare_document, prepared_document_to_json,
+    FootnoteInline, ImageBlock, ImageInline, TableBlock, TableCell, TableRow, prepare_document,
+    prepared_document_to_json,
 };
 pub use render::{render_html, render_prepared_html};
 pub use tck::{
