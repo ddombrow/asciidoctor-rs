@@ -606,7 +606,8 @@ fn parse_table(
     let expected_columns =
         pending_block_prelude.and_then(|prelude| table_column_count(&prelude.metadata));
     let mut row_groups: Vec<Vec<String>> = Vec::new();
-    let mut pending_group: Vec<String> = Vec::new();
+    let mut current_group: Vec<String> = Vec::new();
+    let mut current_cell: Option<String> = None;
     let mut consumed = 1;
     let mut closed = false;
 
@@ -614,36 +615,57 @@ fn parse_table(
         let line = lines[index + consumed];
         let trimmed = line.trim();
         if is_table_delimiter(trimmed) {
+            if let Some(cell) = current_cell.take() {
+                current_group.push(cell);
+            }
+            if !current_group.is_empty() {
+                row_groups.push(std::mem::take(&mut current_group));
+            }
             consumed += 1;
             closed = true;
             break;
         }
         if trimmed.is_empty() {
-            if !pending_group.is_empty() {
-                row_groups.push(std::mem::take(&mut pending_group));
+            let next_nonempty = next_nonempty_table_line(lines, index + consumed + 1);
+            if next_nonempty.is_some_and(starts_table_cell_line) {
+                if let Some(cell) = current_cell.take() {
+                    current_group.push(cell);
+                }
+                if !current_group.is_empty() {
+                    row_groups.push(std::mem::take(&mut current_group));
+                }
+            } else if let Some(cell) = &mut current_cell {
+                if !cell.is_empty() {
+                    cell.push('\n');
+                }
+                cell.push('\n');
             }
             consumed += 1;
             continue;
         }
 
-        let cells = split_table_row_cells(line);
-        if cells.is_empty() {
-            return None;
-        }
-
-        if cells.len() > 1 {
-            if !pending_group.is_empty() {
-                row_groups.push(std::mem::take(&mut pending_group));
+        if starts_table_cell_line(trimmed) {
+            if let Some(cell) = current_cell.take() {
+                current_group.push(cell);
             }
-            row_groups.push(cells);
+            let cells = split_table_row_cells(line);
+            if cells.is_empty() {
+                return None;
+            }
+            let mut iter = cells.into_iter();
+            let last = iter.next_back()?;
+            for cell in iter {
+                current_group.push(cell);
+            }
+            current_cell = Some(last);
         } else {
-            pending_group.extend(cells);
+            let cell = current_cell.as_mut()?;
+            if !cell.is_empty() {
+                cell.push('\n');
+            }
+            cell.push_str(line);
         }
         consumed += 1;
-    }
-
-    if !pending_group.is_empty() {
-        row_groups.push(pending_group);
     }
 
     if !closed || consumed < 2 || row_groups.is_empty() || index + consumed > lines.len() {
@@ -675,7 +697,7 @@ fn is_table_delimiter(line: &str) -> bool {
 fn split_table_row_cells(line: &str) -> Vec<String> {
     let mut cells = Vec::new();
     let mut current = String::new();
-    let mut chars = line.chars().peekable();
+    let mut chars = line.trim_start().chars().peekable();
 
     while let Some(ch) = chars.next() {
         if ch == '\\' && chars.peek() == Some(&'|') {
@@ -702,6 +724,20 @@ fn split_table_row_cells(line: &str) -> Vec<String> {
     cells
 }
 
+fn starts_table_cell_line(line: &str) -> bool {
+    line.trim_start().starts_with('|')
+}
+
+fn next_nonempty_table_line<'a>(lines: &'a [&str], mut index: usize) -> Option<&'a str> {
+    while let Some(line) = lines.get(index) {
+        if !line.trim().is_empty() {
+            return Some(*line);
+        }
+        index += 1;
+    }
+    None
+}
+
 fn table_has_header_option(metadata: &BlockMetadata) -> bool {
     metadata.options.iter().any(|option| option == "header")
         || metadata
@@ -722,10 +758,7 @@ fn assemble_table_rows_with_known_columns(
     let mut rows = Vec::new();
     let mut current_row = Vec::new();
     for content in row_groups.iter().flatten() {
-        current_row.push(TableCell {
-            inlines: parse_inlines(content),
-            content: content.clone(),
-        });
+        current_row.push(build_table_cell(content));
         if current_row.len() == column_count {
             rows.push(TableRow {
                 cells: std::mem::take(&mut current_row),
@@ -749,16 +782,72 @@ fn assemble_table_rows_without_known_columns(row_groups: &[Vec<String>]) -> Opti
         row_groups
             .iter()
             .map(|group| TableRow {
-                cells: group
-                    .iter()
-                    .map(|content| TableCell {
-                        inlines: parse_inlines(content),
-                        content: content.clone(),
-                    })
-                    .collect(),
+                cells: group.iter().map(|content| build_table_cell(content)).collect(),
             })
             .collect(),
     )
+}
+
+fn build_table_cell(content: &str) -> TableCell {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut title = None;
+    let blocks = if lines.is_empty() {
+        Vec::new()
+    } else {
+        parse_blocks_from_lines(&lines, &mut title, false, None)
+    };
+    let paragraph_inlines = blocks
+        .first()
+        .and_then(|block| match block {
+            Block::Paragraph(paragraph) if blocks.len() == 1 => Some(paragraph.inlines.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    TableCell {
+        content: blocks_plain_text(&blocks),
+        inlines: paragraph_inlines,
+        blocks,
+    }
+}
+
+fn blocks_plain_text(blocks: &[Block]) -> String {
+    blocks
+        .iter()
+        .map(block_plain_text)
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn block_plain_text(block: &Block) -> String {
+    match block {
+        Block::Paragraph(paragraph) => paragraph.plain_text(),
+        Block::Admonition(admonition) => blocks_plain_text(&admonition.blocks),
+        Block::UnorderedList(list) => list
+            .items
+            .iter()
+            .map(|item| blocks_plain_text(&item.blocks))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Block::OrderedList(list) => list
+            .items
+            .iter()
+            .map(|item| blocks_plain_text(&item.blocks))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Block::Table(table) => table
+            .rows
+            .iter()
+            .flat_map(|row| row.cells.iter().map(|cell| cell.content.clone()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Block::Listing(listing) => listing.lines.join("\n"),
+        Block::Example(example) | Block::Sidebar(example) => blocks_plain_text(&example.blocks),
+        Block::Passthrough(content) => content.clone(),
+        Block::Image(image) => image.alt.clone(),
+        Block::Heading(heading) => heading.title.clone(),
+    }
 }
 
 fn table_column_count(metadata: &BlockMetadata) -> Option<usize> {
@@ -2926,6 +3015,27 @@ mod tests {
         assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
         assert_eq!(table.rows[1].cells[0].content, "Adam");
         assert_eq!(table.rows[1].cells[1].content, "adam@example.com");
+    }
+
+    #[test]
+    fn parses_block_content_inside_table_cells() {
+        let document = parse_document(
+            ".Services\n[%header,cols=\"1,3\"]\n|===\n|Name\n|Details\n|API\n|First paragraph.\n\n* fast\n* typed\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        let detail_cell = &table.rows[0].cells[1];
+        assert_eq!(detail_cell.blocks.len(), 2);
+        let Block::Paragraph(paragraph) = &detail_cell.blocks[0] else {
+            panic!("expected paragraph in table cell");
+        };
+        assert_eq!(paragraph.plain_text(), "First paragraph.");
+        let Block::UnorderedList(list) = &detail_cell.blocks[1] else {
+            panic!("expected unordered list in table cell");
+        };
+        assert_eq!(list.items.len(), 2);
     }
 
     #[test]

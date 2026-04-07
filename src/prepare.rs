@@ -185,6 +185,7 @@ pub struct TableRow {
 pub struct TableCell {
     pub content: String,
     pub inlines: Vec<PreparedInline>,
+    pub blocks: Vec<PreparedBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -768,6 +769,7 @@ fn prepare_table_cell(cell: &AstTableCell) -> TableCell {
     TableCell {
         content: cell.content.clone(),
         inlines: prepare_inlines(&cell.inlines),
+        blocks: prepare_blocks(&cell.blocks, false, &mut Vec::new()),
     }
 }
 
@@ -1057,7 +1059,7 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
 
 fn collect_table_row_inline_anchor_refs(row: &TableRow, refs: &mut BTreeMap<String, BlockRef>) {
     for cell in &row.cells {
-        collect_inline_anchor_refs(&cell.inlines, refs);
+        collect_block_refs_into(&cell.blocks, refs);
     }
 }
 
@@ -1113,13 +1115,49 @@ fn resolve_xrefs_in_table_row(
     block_refs: &BTreeMap<String, BlockRef>,
 ) {
     for cell in &mut row.cells {
-        resolve_xrefs_in_inlines(&mut cell.inlines, section_refs, block_refs);
-        cell.content = cell
-            .inlines
+        resolve_xrefs_in_blocks(&mut cell.blocks, section_refs, block_refs);
+        if let [PreparedBlock::Paragraph(paragraph)] = cell.blocks.as_slice() {
+            cell.inlines = paragraph.inlines.clone();
+            cell.content = paragraph.content.clone();
+        } else {
+            cell.inlines = Vec::new();
+            cell.content = prepared_blocks_plain_text(&cell.blocks);
+        }
+    }
+}
+
+fn prepared_blocks_plain_text(blocks: &[PreparedBlock]) -> String {
+    blocks
+        .iter()
+        .map(prepared_block_plain_text)
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn prepared_block_plain_text(block: &PreparedBlock) -> String {
+    match block {
+        PreparedBlock::Preamble(preamble)
+        | PreparedBlock::Example(preamble)
+        | PreparedBlock::Sidebar(preamble) => prepared_blocks_plain_text(&preamble.blocks),
+        PreparedBlock::Paragraph(paragraph) => paragraph.content.clone(),
+        PreparedBlock::Admonition(admonition) => prepared_blocks_plain_text(&admonition.blocks),
+        PreparedBlock::Section(section) => prepared_blocks_plain_text(&section.blocks),
+        PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => list
+            .items
             .iter()
-            .map(prepared_inline_plain_text)
+            .map(|item| prepared_blocks_plain_text(&item.blocks))
             .collect::<Vec<_>>()
-            .join("");
+            .join("\n"),
+        PreparedBlock::Table(table) => table
+            .rows
+            .iter()
+            .flat_map(|row| row.cells.iter().map(|cell| cell.content.clone()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        PreparedBlock::Listing(listing) => listing.content.clone(),
+        PreparedBlock::Passthrough(passthrough) => passthrough.content.clone(),
+        PreparedBlock::Image(image) => image.alt.clone(),
     }
 }
 
@@ -2542,6 +2580,31 @@ mod tests {
         assert_eq!(table.rows.len(), 2);
         assert_eq!(table.rows[1].cells[0].content, "Adam");
         assert_eq!(table.rows[1].cells[1].content, "adam@example.com");
+    }
+
+    #[test]
+    fn prepares_block_content_inside_table_cells() {
+        let document = parse_document(
+            ".Services\n[%header,cols=\"1,3\"]\n|===\n|Name\n|Details\n|API\n|First paragraph.\n\n* fast\n* typed\n|===",
+        );
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Table(table) = &preamble.blocks[0] else {
+            panic!("expected table");
+        };
+        let detail_cell = &table.rows[0].cells[1];
+
+        assert_eq!(detail_cell.blocks.len(), 2);
+        let PreparedBlock::Paragraph(paragraph) = &detail_cell.blocks[0] else {
+            panic!("expected paragraph block");
+        };
+        assert_eq!(paragraph.content, "First paragraph.");
+        let PreparedBlock::UnorderedList(list) = &detail_cell.blocks[1] else {
+            panic!("expected list block");
+        };
+        assert_eq!(list.items.len(), 2);
     }
 
     #[test]

@@ -303,7 +303,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
             ${(block.header.cells ?? [])
               .map(
                 (cell) =>
-                  `<th class="tableblock halign-left valign-top">${renderInlines(cell.inlines ?? [])}</th>`
+                  `<th class="tableblock halign-left valign-top">${renderTableCellContent(cell, true, documentAttributes)}</th>`
               )
               .join("")}
           </tr>
@@ -317,7 +317,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
             ${(row.cells ?? [])
               .map(
                 (cell) =>
-                  `<td class="tableblock halign-left valign-top"><p class="tableblock">${renderInlines(cell.inlines ?? [])}</p></td>`
+                  `<td class="tableblock halign-left valign-top">${renderTableCellContent(cell, false, documentAttributes)}</td>`
               )
               .join("")}
           </tr>
@@ -542,6 +542,19 @@ function renderAdmonitionIcon(variant, blockAttributes = {}, documentAttributes 
   }
 
   return `<img src="${escapeHtml(iconTarget)}" alt="${escapeHtml(label)}" />`;
+}
+
+function renderTableCellContent(cell, header = false, documentAttributes = {}) {
+  const blocks = cell.blocks ?? [];
+  if (blocks.length === 1 && blocks[0].type === "paragraph") {
+    const inlines = blocks[0].inlines ?? cell.inlines ?? [];
+    if (header) {
+      return renderInlines(inlines);
+    }
+    return `<p class="tableblock">${renderInlines(inlines)}</p>`;
+  }
+
+  return renderBlocks(blocks, 0, documentAttributes);
 }
 
 function resolveAdmonitionFontIconClass(variant, blockAttributes = {}, documentAttributes = {}) {

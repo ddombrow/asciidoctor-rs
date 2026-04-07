@@ -40,7 +40,7 @@ fn render_block(
         }
         PreparedBlock::UnorderedList(list) => render_unordered_list(html, list, document_attributes),
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list, document_attributes),
-        PreparedBlock::Table(table) => render_table(html, table),
+        PreparedBlock::Table(table) => render_table(html, table, document_attributes),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
         PreparedBlock::Example(example) => {
             render_compound(html, "exampleblock", example, document_attributes)
@@ -121,7 +121,11 @@ fn render_ordered_list(
     html.push_str("</ol>\n</div>\n");
 }
 
-fn render_table(html: &mut String, table: &crate::prepare::TableBlock) {
+fn render_table(
+    html: &mut String,
+    table: &crate::prepare::TableBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
     html.push_str("<table class=\"tableblock frame-all grid-all stretch\"");
     if let Some(id) = &table.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -137,7 +141,7 @@ fn render_table(html: &mut String, table: &crate::prepare::TableBlock) {
         html.push_str("<thead>\n<tr>\n");
         for cell in &header.cells {
             html.push_str("<th class=\"tableblock halign-left valign-top\">");
-            render_inlines(html, &cell.inlines);
+            render_table_cell_content(html, cell, true, document_attributes);
             html.push_str("</th>\n");
         }
         html.push_str("</tr>\n</thead>\n");
@@ -146,13 +150,39 @@ fn render_table(html: &mut String, table: &crate::prepare::TableBlock) {
     for row in &table.rows {
         html.push_str("<tr>\n");
         for cell in &row.cells {
-            html.push_str("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">");
-            render_inlines(html, &cell.inlines);
-            html.push_str("</p></td>\n");
+            html.push_str("<td class=\"tableblock halign-left valign-top\">");
+            render_table_cell_content(html, cell, false, document_attributes);
+            html.push_str("</td>\n");
         }
         html.push_str("</tr>\n");
     }
     html.push_str("</tbody>\n</table>\n");
+}
+
+fn render_table_cell_content(
+    html: &mut String,
+    cell: &crate::prepare::TableCell,
+    header: bool,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
+    if cell.blocks.len() == 1
+        && matches!(cell.blocks.first(), Some(crate::prepare::PreparedBlock::Paragraph(_)))
+    {
+        if let Some(crate::prepare::PreparedBlock::Paragraph(paragraph)) = cell.blocks.first() {
+            if header {
+                render_inlines(html, &paragraph.inlines);
+            } else {
+                html.push_str("<p class=\"tableblock\">");
+                render_inlines(html, &paragraph.inlines);
+                html.push_str("</p>");
+            }
+            return;
+        }
+    }
+
+    for block in &cell.blocks {
+        render_block(html, block, document_attributes);
+    }
 }
 
 fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
@@ -1218,6 +1248,19 @@ mod tests {
         assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Email</th>"));
         assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Adam</p></td>"));
         assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">adam@example.com</p></td>"));
+    }
+
+    #[test]
+    fn renders_block_content_inside_table_cells() {
+        let html = render_html(&crate::parser::parse_document(
+            ".Services\n[%header,cols=\"1,3\"]\n|===\n|Name\n|Details\n|API\n|First paragraph.\n\n* fast\n* typed\n|===",
+        ));
+
+        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><div class=\"paragraph\">"));
+        assert!(html.contains("<p>First paragraph.</p>"));
+        assert!(html.contains("<div class=\"ulist\">"));
+        assert!(html.contains("<p>fast</p>"));
+        assert!(html.contains("<p>typed</p>"));
     }
 
     #[test]

@@ -534,6 +534,36 @@ test("exports and renders tables", async ({ page }) => {
   await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(0)).toHaveText("Adam");
 });
 
+test("exports and renders block content inside table cells", async ({ page }) => {
+  const source = `= Sample Document
+
+.Services
+[%header,cols="1,3"]
+|===
+|Name
+|Details
+|API
+|First paragraph.
+
+* fast
+* typed
+|===`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const detailCell = document.blocks[0].blocks[0].rows[0].cells[1];
+
+  expect(detailCell.blocks.map((block) => block.type)).toEqual(["paragraph", "unordered_list"]);
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  const detailCellLocator = frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(1);
+  await expect(detailCellLocator.locator(".paragraph p").nth(0)).toHaveText("First paragraph.");
+  await expect(detailCellLocator.locator(".ulist li")).toHaveCount(2);
+});
+
 test("exports and renders delimited block titles and attributes", async ({ page }) => {
   const source = `= Sample Document
 

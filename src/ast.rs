@@ -89,6 +89,7 @@ pub struct TableRow {
 pub struct TableCell {
     pub content: String,
     pub inlines: Vec<Inline>,
+    pub blocks: Vec<Block>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
