@@ -144,18 +144,48 @@ function getAttribute(attributes, key) {
 
 function renderDocument(document) {
   const title = document.title ? `<h1>${escapeHtml(document.title)}</h1>` : "";
-  const blocks = renderBlocks(document.blocks ?? [], 0, document.attributes ?? {});
+  const attributes = document.attributes ?? {};
+  const sections = document.sections ?? [];
+  const tocPlacement = attributes.toc;
+  const autoToc = tocPlacement !== undefined && tocPlacement !== "macro"
+    ? renderToc(sections, attributes)
+    : "";
+  const blocks = renderBlocks(document.blocks ?? [], 0, attributes, sections);
   const footnotes = renderFootnotes(document.footnotes ?? []);
 
   return `
     <div id="header">
       ${title}
+      ${autoToc}
     </div>
     <div id="content">
       ${blocks}
     </div>
     ${footnotes}
   `;
+}
+
+function renderToc(sections, documentAttributes = {}) {
+  if (!sections.length) return "";
+  const title = documentAttributes.toctitle || "Table of Contents";
+  const maxLevel = parseInt(documentAttributes.toclevels ?? "2", 10);
+  return `
+    <div id="toc" class="toc">
+      <div id="toctitle">${escapeHtml(title)}</div>
+      ${renderTocSections(sections, 1, maxLevel)}
+    </div>
+  `;
+}
+
+function renderTocSections(sections, level, maxLevel) {
+  if (level > maxLevel || !sections.length) return "";
+  const items = sections.map((section) => {
+    const nested = section.sections?.length && level < maxLevel
+      ? renderTocSections(section.sections, level + 1, maxLevel)
+      : "";
+    return `<li><a href="#${escapeHtml(section.id)}">${escapeHtml(section.title)}</a>${nested ? "\n" + nested : ""}</li>`;
+  }).join("\n");
+  return `<ul class="sectlevel${level}">\n${items}\n</ul>`;
 }
 
 function renderHeadMetadata(document) {
@@ -183,16 +213,16 @@ function renderHeadMetadata(document) {
   return [...authorTags, ...revisionTags].join("\n");
 }
 
-function renderBlocks(blocks, sectionLevel = 0, documentAttributes = {}) {
-  return blocks.map((block) => renderBlock(block, sectionLevel, documentAttributes)).join("");
+function renderBlocks(blocks, sectionLevel = 0, documentAttributes = {}, sections = []) {
+  return blocks.map((block) => renderBlock(block, sectionLevel, documentAttributes, sections)).join("");
 }
 
-function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
+function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sections = []) {
   if (block.type === "preamble") {
     return `
       <div id="preamble">
         <div class="sectionbody">
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
         </div>
       </div>
     `;
@@ -223,7 +253,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
             </td>
             <td class="content">
               ${title}
-              ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
+              ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
             </td>
           </tr>
         </table>
@@ -243,7 +273,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
       <div class="${sectionClass}"${id}>
         <h${level}>${number}${escapeHtml(block.title ?? "")}</h${level}>
         <div class="sectionbody">
-          ${renderBlocks(block.blocks ?? [], block.level ?? parentSectionLevel + 1, documentAttributes)}
+          ${renderBlocks(block.blocks ?? [], block.level ?? parentSectionLevel + 1, documentAttributes, sections)}
         </div>
       </div>
     `;
@@ -256,7 +286,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
       .map(
         (item) => `
           <li>
-            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes)}
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
           </li>
         `
       )
@@ -278,7 +308,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
       .map(
         (item) => `
           <li>
-            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes)}
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
           </li>
         `
       )
@@ -301,7 +331,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
         const terms = (item.terms ?? [])
           .map((term) => `<dt class="hdlist1">${renderInlines(term.inlines ?? [])}</dt>`)
           .join("");
-        const description = item.description ? `\n<dd>\n${renderBlocks(item.description.blocks ?? [], parentSectionLevel, documentAttributes)}\n</dd>` : "";
+        const description = item.description ? `\n<dd>\n${renderBlocks(item.description.blocks ?? [], parentSectionLevel, documentAttributes, sections)}\n</dd>` : "";
         return `${terms}${description}`;
       })
       .join("");
@@ -377,7 +407,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
       <div class="exampleblock"${id}>
         ${title}
         <div class="content">
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
         </div>
       </div>
     `;
@@ -392,7 +422,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
       <div class="sidebarblock"${id}>
         <div class="content">
           ${title}
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
         </div>
       </div>
     `;
@@ -426,6 +456,10 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
         ${title}
       </div>
     `;
+  }
+
+  if (block.type === "toc") {
+    return renderToc(sections, documentAttributes);
   }
 
   return `<pre class="unknown-block">${escapeHtml(JSON.stringify(block, null, 2))}</pre>`;

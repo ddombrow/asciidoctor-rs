@@ -1,4 +1,11 @@
-use crate::prepare::{prepare_document, DocumentBlock, PreparedBlock, PreparedInline};
+use crate::prepare::{
+    prepare_document, DocumentBlock, DocumentSection, PreparedBlock, PreparedInline,
+};
+
+struct RenderContext<'a> {
+    document_attributes: &'a std::collections::BTreeMap<String, String>,
+    sections: &'a [DocumentSection],
+}
 
 pub fn render_html(document: &crate::ast::Document) -> String {
     render_prepared_html(&prepare_document(document))
@@ -6,57 +13,113 @@ pub fn render_html(document: &crate::ast::Document) -> String {
 
 pub fn render_prepared_html(document: &DocumentBlock) -> String {
     let mut html = String::new();
-    html.push_str("<div id=\"header\">\n");
+    let ctx = RenderContext {
+        document_attributes: &document.attributes,
+        sections: &document.sections,
+    };
 
+    html.push_str("<div id=\"header\">\n");
     if !document.title.is_empty() {
         html.push_str(&format!("<h1>{}</h1>\n", escape_html(&document.title)));
     }
+
+    // Auto-place TOC when toc attribute is set but not "macro"
+    let toc_placement = document.attributes.get("toc").map(String::as_str);
+    if matches!(toc_placement, Some(v) if v != "macro") {
+        render_toc(&mut html, &document.sections, ctx.document_attributes);
+    }
+
     html.push_str("</div>\n");
 
     html.push_str("<div id=\"content\">\n");
     for block in &document.blocks {
-        render_block(&mut html, block, &document.attributes);
+        render_block(&mut html, block, &ctx);
     }
     html.push_str("</div>\n");
     render_footnotes(&mut html, &document.footnotes);
     html
 }
 
+fn render_toc(
+    html: &mut String,
+    sections: &[DocumentSection],
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
+    if sections.is_empty() {
+        return;
+    }
+    let title = document_attributes
+        .get("toctitle")
+        .map(String::as_str)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("Table of Contents");
+    let max_level: u8 = document_attributes
+        .get("toclevels")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2);
+    html.push_str("<div id=\"toc\" class=\"toc\">\n");
+    html.push_str(&format!(
+        "<div id=\"toctitle\">{}</div>\n",
+        escape_html(title)
+    ));
+    render_toc_sections(html, sections, 1, max_level);
+    html.push_str("</div>\n");
+}
+
+fn render_toc_sections(
+    html: &mut String,
+    sections: &[DocumentSection],
+    level: u8,
+    max_level: u8,
+) {
+    if level > max_level || sections.is_empty() {
+        return;
+    }
+    html.push_str(&format!("<ul class=\"sectlevel{}\">\n", level));
+    for section in sections {
+        html.push_str("<li>");
+        html.push_str(&format!(
+            "<a href=\"#{}\">{}",
+            escape_html(&section.id),
+            escape_html(&section.title)
+        ));
+        html.push_str("</a>");
+        if !section.sections.is_empty() && level < max_level {
+            html.push('\n');
+            render_toc_sections(html, &section.sections, level + 1, max_level);
+        }
+        html.push_str("</li>\n");
+    }
+    html.push_str("</ul>\n");
+}
+
 fn render_block(
     html: &mut String,
     block: &PreparedBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     match block {
         PreparedBlock::Preamble(preamble) => {
             html.push_str("<div id=\"preamble\">\n<div class=\"sectionbody\">\n");
             for block in &preamble.blocks {
-                render_block(html, block, document_attributes);
+                render_block(html, block, ctx);
             }
             html.push_str("</div>\n</div>\n");
         }
         PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
-        PreparedBlock::Admonition(admonition) => {
-            render_admonition(html, admonition, document_attributes)
-        }
-        PreparedBlock::UnorderedList(list) => {
-            render_unordered_list(html, list, document_attributes)
-        }
-        PreparedBlock::OrderedList(list) => render_ordered_list(html, list, document_attributes),
-        PreparedBlock::DescriptionList(list) => {
-            render_description_list(html, list, document_attributes)
-        }
-        PreparedBlock::Table(table) => render_table(html, table, document_attributes),
+        PreparedBlock::Admonition(admonition) => render_admonition(html, admonition, ctx),
+        PreparedBlock::UnorderedList(list) => render_unordered_list(html, list, ctx),
+        PreparedBlock::OrderedList(list) => render_ordered_list(html, list, ctx),
+        PreparedBlock::DescriptionList(list) => render_description_list(html, list, ctx),
+        PreparedBlock::Table(table) => render_table(html, table, ctx),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
-        PreparedBlock::Example(example) => {
-            render_compound(html, "exampleblock", example, document_attributes)
-        }
-        PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, document_attributes),
+        PreparedBlock::Example(example) => render_compound(html, "exampleblock", example, ctx),
+        PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
         PreparedBlock::Passthrough(p) => {
             html.push_str(&p.content);
             html.push('\n');
         }
-        PreparedBlock::Image(image) => render_image_block(html, image, document_attributes),
+        PreparedBlock::Image(image) => render_image_block(html, image, ctx),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
             html.push_str(&format!(
@@ -69,12 +132,13 @@ fn render_block(
                 escape_html(&section.title)
             ));
             html.push_str("<div class=\"sectionbody\">\n");
-
             for block in &section.blocks {
-                render_block(html, block, document_attributes);
+                render_block(html, block, ctx);
             }
-
             html.push_str("</div>\n</div>\n");
+        }
+        PreparedBlock::Toc(_) => {
+            render_toc(html, ctx.sections, ctx.document_attributes);
         }
     }
 }
@@ -82,7 +146,7 @@ fn render_block(
 fn render_unordered_list(
     html: &mut String,
     list: &crate::prepare::ListBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     html.push_str("<div class=\"ulist\"");
     if let Some(id) = &list.id {
@@ -99,7 +163,7 @@ fn render_unordered_list(
     for item in &list.items {
         html.push_str("<li>\n");
         for block in &item.blocks {
-            render_block(html, block, document_attributes);
+            render_block(html, block, ctx);
         }
         html.push_str("</li>\n");
     }
@@ -109,7 +173,7 @@ fn render_unordered_list(
 fn render_ordered_list(
     html: &mut String,
     list: &crate::prepare::ListBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     html.push_str("<div class=\"olist arabic\"");
     if let Some(id) = &list.id {
@@ -126,7 +190,7 @@ fn render_ordered_list(
     for item in &list.items {
         html.push_str("<li>\n");
         for block in &item.blocks {
-            render_block(html, block, document_attributes);
+            render_block(html, block, ctx);
         }
         html.push_str("</li>\n");
     }
@@ -136,7 +200,7 @@ fn render_ordered_list(
 fn render_description_list(
     html: &mut String,
     list: &crate::prepare::DescriptionListBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     html.push_str("<div class=\"dlist\"");
     if let Some(id) = &list.id {
@@ -159,7 +223,7 @@ fn render_description_list(
         if let Some(desc) = &item.description {
             html.push_str("<dd>\n");
             for block in &desc.blocks {
-                render_block(html, block, document_attributes);
+                render_block(html, block, ctx);
             }
             html.push_str("</dd>\n");
         }
@@ -170,7 +234,7 @@ fn render_description_list(
 fn render_table(
     html: &mut String,
     table: &crate::prepare::TableBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     html.push_str("<table class=\"tableblock frame-all grid-all stretch\"");
     if let Some(id) = &table.id {
@@ -186,7 +250,7 @@ fn render_table(
     if let Some(header) = &table.header {
         html.push_str("<thead>\n<tr>\n");
         for cell in &header.cells {
-            render_table_cell(html, cell, true, document_attributes);
+            render_table_cell(html, cell, true, ctx);
         }
         html.push_str("</tr>\n</thead>\n");
     }
@@ -194,7 +258,7 @@ fn render_table(
     for row in &table.rows {
         html.push_str("<tr>\n");
         for cell in &row.cells {
-            render_table_cell(html, cell, false, document_attributes);
+            render_table_cell(html, cell, false, ctx);
         }
         html.push_str("</tr>\n");
     }
@@ -205,7 +269,7 @@ fn render_table_cell(
     html: &mut String,
     cell: &crate::prepare::TableCell,
     header: bool,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     let tag = if header || cell.style.as_deref() == Some("header") {
         "th"
@@ -222,7 +286,7 @@ fn render_table_cell(
         html.push_str(&format!(" rowspan=\"{}\"", cell.rowspan));
     }
     html.push('>');
-    render_table_cell_content(html, cell, tag == "th", document_attributes);
+    render_table_cell_content(html, cell, tag == "th", ctx);
     html.push_str(&format!("</{tag}>\n"));
 }
 
@@ -230,7 +294,7 @@ fn render_table_cell_content(
     html: &mut String,
     cell: &crate::prepare::TableCell,
     header: bool,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     if cell.blocks.len() == 1
         && matches!(
@@ -251,7 +315,7 @@ fn render_table_cell_content(
     }
 
     for block in &cell.blocks {
-        render_block(html, block, document_attributes);
+        render_block(html, block, ctx);
     }
 }
 
@@ -276,7 +340,7 @@ fn render_compound(
     html: &mut String,
     class_name: &str,
     block: &crate::prepare::CompoundBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     html.push_str(&format!("<div class=\"{class_name}\""));
     if let Some(id) = &block.id {
@@ -291,7 +355,7 @@ fn render_compound(
     }
     html.push_str("<div class=\"content\">\n");
     for child in &block.blocks {
-        render_block(html, child, document_attributes);
+        render_block(html, child, ctx);
     }
     html.push_str("</div>\n</div>\n");
 }
@@ -299,7 +363,7 @@ fn render_compound(
 fn render_sidebar(
     html: &mut String,
     block: &crate::prepare::CompoundBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     html.push_str("<div class=\"sidebarblock\"");
     if let Some(id) = &block.id {
@@ -313,7 +377,7 @@ fn render_sidebar(
         ));
     }
     for child in &block.blocks {
-        render_block(html, child, document_attributes);
+        render_block(html, child, ctx);
     }
     html.push_str("</div>\n</div>\n");
 }
@@ -338,12 +402,12 @@ fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBloc
 fn render_admonition(
     html: &mut String,
     admonition: &crate::prepare::AdmonitionBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     let label = admonition_label(
         &admonition.variant,
         &admonition.attributes,
-        document_attributes,
+        ctx.document_attributes,
     );
     html.push_str(&format!(
         "<div class=\"admonitionblock {}\"",
@@ -356,7 +420,7 @@ fn render_admonition(
     if let Some(font_icon_class) = admonition_font_icon_class(
         &admonition.variant,
         &admonition.attributes,
-        document_attributes,
+        ctx.document_attributes,
     ) {
         html.push_str(&format!(
             "<i class=\"fa {}\" title=\"{}\"></i>\n",
@@ -366,7 +430,7 @@ fn render_admonition(
     } else if let Some(icon_target) = admonition_icon_target(
         &admonition.variant,
         &admonition.attributes,
-        document_attributes,
+        ctx.document_attributes,
     ) {
         html.push_str(&format!(
             "<img src=\"{}\" alt=\"{}\">\n",
@@ -387,7 +451,7 @@ fn render_admonition(
         ));
     }
     for block in &admonition.blocks {
-        render_block(html, block, document_attributes);
+        render_block(html, block, ctx);
     }
     html.push_str("</td>\n</tr>\n</table>\n</div>\n");
 }
@@ -496,8 +560,9 @@ fn icon_name_has_extension(icon_name: &str) -> bool {
 fn render_image_block(
     html: &mut String,
     image: &crate::prepare::ImageBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
+    let document_attributes = ctx.document_attributes;
     let mut classes = vec!["imageblock".to_owned()];
     if let Some(float) = &image.float {
         classes.push(float.clone());
@@ -1756,5 +1821,48 @@ mod tests {
         ));
         assert!(html.contains("<div id=\"footnotes\">"));
         assert!(html.contains("<div class=\"footnote\" id=\"_footnotedef_1\"><a href=\"#_footnoteref_1\">1</a>. Read this first.</div>"));
+    }
+
+    #[test]
+    fn renders_toc_macro_at_placement_location() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Doc\n:toc: macro\n\ntoc::[]\n\n== Alpha\n\ntext\n\n== Beta\n\nmore",
+        ));
+        // TOC should appear in content, not the header
+        assert!(html.contains("<div id=\"toc\" class=\"toc\">"));
+        assert!(html.contains("<div id=\"toctitle\">Table of Contents</div>"));
+        assert!(html.contains("<ul class=\"sectlevel1\">"));
+        assert!(html.contains("<a href=\"#_alpha\">Alpha</a>"));
+        // Second same-level section gets -2 suffix from ID generator
+        assert!(html.contains("<a href=\"#_beta-2\">Beta</a>"));
+        // Header div should NOT contain the TOC (toc: macro means explicit placement only)
+        let content_start = html.find("<div id=\"content\">").unwrap();
+        assert!(!html[..content_start].contains("id=\"toc\""));
+    }
+
+    #[test]
+    fn renders_toc_auto_placed_in_header() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Doc\n:toc:\n\n== First\n\ntext\n\n=== Sub\n\nmore",
+        ));
+        assert!(html.contains("<div id=\"toc\" class=\"toc\">"));
+        assert!(html.contains("<a href=\"#_first\">First</a>"));
+        // Nested sectlevel2
+        assert!(html.contains("<ul class=\"sectlevel2\">"));
+        assert!(html.contains("<a href=\"#_sub\">Sub</a>"));
+        // TOC is in the header, before </div>\n<div id="content">
+        let content_start = html.find("<div id=\"content\">").unwrap();
+        assert!(html[..content_start].contains("<div id=\"toc\" class=\"toc\">"));
+    }
+
+    #[test]
+    fn renders_toc_with_custom_title_and_levels() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Doc\n:toc:\n:toctitle: Contents\n:toclevels: 1\n\n== Sec\n\n=== Nested\n\ntext",
+        ));
+        assert!(html.contains("<div id=\"toctitle\">Contents</div>"));
+        assert!(html.contains("<ul class=\"sectlevel1\">"));
+        // Level 2 should be suppressed
+        assert!(!html.contains("sectlevel2"));
     }
 }

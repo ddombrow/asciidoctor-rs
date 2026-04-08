@@ -1,0 +1,71 @@
+= Table of Contents Demo
+Jane Smith <jane@example.com>
+v1.0, 2026-04-08
+:toc: macro
+:toctitle: On This Page
+:toclevels: 3
+
+This document demonstrates TOC placement via the `toc::[]` macro.
+The TOC below is inserted here explicitly because `:toc: macro` is set.
+
+toc::[]
+
+== Introduction
+
+An introductory paragraph with *bold*, _italic_, and `monospace` text.
+
+=== Background
+
+Some background context.
+
+=== Scope
+
+What this document covers.
+
+== Core Concepts
+
+The main ideas.
+
+=== Data Model
+
+How data is structured.
+
+==== Fields
+
+Individual field descriptions.
+
+==== Relationships
+
+How entities relate to each other.
+
+=== Processing Pipeline
+
+Steps in the pipeline.
+
+== Configuration
+
+How to configure the system.
+
+=== Basic Setup
+
+Minimum required settings.
+
+[source,yaml]
+----
+host: localhost
+port: 8080
+----
+
+=== Advanced Options
+
+Optional tuning parameters.
+
+== Troubleshooting
+
+Common issues and fixes.
+
+NOTE: If all else fails, check the logs.
+
+== Conclusion
+
+Wrapping up.

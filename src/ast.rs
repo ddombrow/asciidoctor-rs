@@ -21,6 +21,7 @@ pub enum Block {
     Sidebar(CompoundBlock),
     Passthrough(String),
     Image(ImageBlock),
+    Toc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -328,6 +328,25 @@ fn parse_blocks_from_lines(
             }
         }
 
+        if current_paragraph.is_empty() && line.trim() == "toc::[]" {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
+            );
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                Block::Toc,
+                pending_anchor.take(),
+            );
+            pending_block_prelude = None;
+            index += 1;
+            continue;
+        }
+
         if current_paragraph.is_empty() {
             if let Some(image) = parse_block_image(line) {
                 flush_paragraph(
@@ -1116,6 +1135,7 @@ fn block_plain_text(block: &Block) -> String {
         Block::Passthrough(content) => content.clone(),
         Block::Image(image) => image.alt.clone(),
         Block::Heading(heading) => heading.title.clone(),
+        Block::Toc => String::new(),
         Block::DescriptionList(list) => list
             .items
             .iter()
