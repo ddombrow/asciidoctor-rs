@@ -383,6 +383,21 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     `;
   }
 
+  if (block.type === "literal") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title
+      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      : "";
+    return `
+      <div class="literalblock"${id}>
+        ${title}
+        <div class="content">
+          <pre>${escapeHtml(block.content ?? "")}</pre>
+        </div>
+      </div>
+    `;
+  }
+
   if (block.type === "listing") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title

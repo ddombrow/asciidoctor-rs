@@ -17,6 +17,7 @@ pub enum Block {
     DescriptionList(DescriptionList),
     Table(TableBlock),
     Listing(Listing),
+    Literal(Listing),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
     Quote(QuoteBlock),

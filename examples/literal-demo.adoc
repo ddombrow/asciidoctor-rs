@@ -1,0 +1,56 @@
+= Literal Blocks Demo
+
+== Delimited Form
+
+Use four dots as the delimiter.
+
+....
+This is preformatted text.
+  Indentation is preserved.
+    Even deeper indentation.
+
+Blank lines inside are kept too.
+....
+
+With a title:
+
+.Error output
+....
+error: could not compile `myproject`
+
+   --> src/main.rs:5:9
+    |
+5   |         let x = "hello"
+    |                        ^ expected `;`
+....
+
+== Styled Paragraph Form
+
+Apply `[literal]` to any paragraph.
+
+[literal]
+This paragraph is treated as literal text.
+  Spaces at the start are preserved here too.
+
+== Indented Form
+
+Any paragraph starting with a space becomes literal automatically.
+
+ $ cargo build --release
+ $ ./target/release/myapp
+
+Multiple indented lines stay together:
+
+ function greet(name) {
+   return "Hello, " + name;
+ }
+
+== Mixed with Normal Content
+
+Normal paragraph before.
+
+....
+preformatted block
+....
+
+Normal paragraph after.

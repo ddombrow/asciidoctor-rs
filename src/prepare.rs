@@ -57,6 +57,7 @@ pub enum PreparedBlock {
     DescriptionList(DescriptionListBlock),
     Table(TableBlock),
     Listing(ListingBlock),
+    Literal(ListingBlock),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
     Quote(QuoteBlock),
@@ -652,6 +653,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::Literal(literal) => {
+                let literal = PreparedBlock::Literal(prepare_listing(literal));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(literal);
+                } else {
+                    prepared.push(literal);
+                }
+                index += 1;
+            }
             Block::Example(example) => {
                 let example = PreparedBlock::Example(prepare_compound_block(example));
                 if wrap_document_preamble && !seen_section {
@@ -1066,6 +1076,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::DescriptionList(_)
             | PreparedBlock::Table(_)
             | PreparedBlock::Listing(_)
+            | PreparedBlock::Literal(_)
             | PreparedBlock::Example(_)
             | PreparedBlock::Sidebar(_)
             | PreparedBlock::Quote(_)
@@ -1165,7 +1176,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     }
                 }
             }
-            PreparedBlock::Listing(listing) => {
+            PreparedBlock::Listing(listing) | PreparedBlock::Literal(listing) => {
                 if let Some(id) = &listing.id {
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
@@ -1324,6 +1335,7 @@ fn resolve_xrefs_in_blocks(
                 }
             }
             PreparedBlock::Listing(_)
+            | PreparedBlock::Literal(_)
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
             | PreparedBlock::Toc(_) => {}
@@ -1416,6 +1428,7 @@ fn collect_footnotes_from_blocks(
                 }
             }
             PreparedBlock::Listing(_)
+            | PreparedBlock::Literal(_)
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
             | PreparedBlock::Toc(_) => {}
@@ -1560,7 +1573,7 @@ fn prepared_block_plain_text(block: &PreparedBlock) -> String {
             .flat_map(|row| row.cells.iter().map(|cell| cell.content.clone()))
             .collect::<Vec<_>>()
             .join("\n"),
-        PreparedBlock::Listing(listing) => listing.content.clone(),
+        PreparedBlock::Listing(listing) | PreparedBlock::Literal(listing) => listing.content.clone(),
         PreparedBlock::Quote(quote) => {
             if quote.content.is_empty() {
                 prepared_blocks_plain_text(&quote.blocks)

@@ -662,6 +662,7 @@ fn parse_delimited_block(
         "====" => "example",
         "****" => "sidebar",
         "____" => "quote",
+        "...." => "literal",
         _ => return None,
     };
 
@@ -725,6 +726,7 @@ fn parse_delimited_block(
             "====" => "====",
             "****" => "****",
             "____" => "____",
+            "...." => "....",
             _ => unreachable!(),
         }),
         inlines: None,
@@ -745,7 +747,7 @@ fn parse_delimited_block(
     };
 
     match name {
-        "listing" => {
+        "listing" | "literal" => {
             let content = inner_lines.join("\n");
             if !content.is_empty() {
                 let start = Position {
@@ -939,7 +941,7 @@ fn split_attribute_list(input: &str) -> Vec<String> {
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "____")
+    matches!(line.trim(), "----" | "====" | "****" | "____" | "....")
 }
 
 fn apply_attribute_list(

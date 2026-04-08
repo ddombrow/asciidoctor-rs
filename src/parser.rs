@@ -453,6 +453,9 @@ fn push_block(
         Block::Listing(listing) => {
             blocks.push(Block::Listing(apply_anchor_to_listing(listing, anchor)));
         }
+        Block::Literal(literal) => {
+            blocks.push(Block::Literal(apply_anchor_to_listing(literal, anchor)));
+        }
         Block::Table(table) => {
             blocks.push(Block::Table(apply_anchor_to_table(table, anchor)));
         }
@@ -1130,7 +1133,7 @@ fn block_plain_text(block: &Block) -> String {
             .flat_map(|row| row.cells.iter().map(|cell| cell.content.clone()))
             .collect::<Vec<_>>()
             .join("\n"),
-        Block::Listing(listing) => listing.lines.join("\n"),
+        Block::Listing(listing) | Block::Literal(listing) => listing.lines.join("\n"),
         Block::Example(example) | Block::Sidebar(example) => blocks_plain_text(&example.blocks),
         Block::Quote(quote) => {
             if let Some(content) = &quote.content {
@@ -1223,6 +1226,7 @@ fn parse_delimited_block(
         "****" => "sidebar",
         "++++" => "passthrough",
         "____" => "quote",
+        "...." => "literal",
         _ => return None,
     };
 
@@ -1256,6 +1260,11 @@ fn parse_delimited_block(
     let block = match block_kind {
         "passthrough" => Block::Passthrough(inner_lines.join("\n")),
         "listing" => Block::Listing(Listing {
+            lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+            reftext: None,
+            metadata: prelude.metadata,
+        }),
+        "literal" => Block::Literal(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
             reftext: None,
             metadata: prelude.metadata,
@@ -1377,11 +1386,14 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____")
+    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____" | "....")
 }
 
 fn parse_block_title(line: &str) -> Option<String> {
     if parse_list_marker(line).is_some() {
+        return None;
+    }
+    if is_delimited_block_delimiter(line) {
         return None;
     }
     let title = line.strip_prefix('.')?.trim_end();
@@ -1961,6 +1973,26 @@ fn make_block_from_paragraph(
                 metadata: BlockMetadata::default(),
             })],
             id: metadata.id.clone(),
+            reftext,
+            metadata,
+        });
+    }
+
+    if metadata.style.as_deref() == Some("literal") {
+        if metadata.id.is_none() {
+            metadata.id = id;
+        }
+        return Block::Literal(Listing {
+            lines,
+            reftext,
+            metadata,
+        });
+    }
+
+    // Indented paragraph (leading space/tab) → literal block
+    if lines.first().is_some_and(|l| l.starts_with(' ') || l.starts_with('\t')) {
+        return Block::Literal(Listing {
+            lines,
             reftext,
             metadata,
         });
@@ -4005,5 +4037,36 @@ mod tests {
         assert_eq!(quote.attribution.as_deref(), Some("Carl Sandburg"));
         assert_eq!(quote.citetitle.as_deref(), Some("Fog"));
         assert_eq!(quote.content.as_deref(), Some("The fog comes\non little cat feet."));
+    }
+
+    #[test]
+    fn parses_delimited_literal_block() {
+        let document = parse_document("....\n  indented preformatted text\n....");
+
+        let [Block::Literal(literal)] = document.blocks.as_slice() else {
+            panic!("expected literal block");
+        };
+        assert_eq!(literal.lines, vec!["  indented preformatted text"]);
+    }
+
+    #[test]
+    fn parses_literal_styled_paragraph() {
+        let document = parse_document("[literal]\nThis becomes preformatted.");
+
+        let [Block::Literal(literal)] = document.blocks.as_slice() else {
+            panic!("expected literal block");
+        };
+        assert_eq!(literal.lines, vec!["This becomes preformatted."]);
+        assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
+    }
+
+    #[test]
+    fn parses_indented_paragraph_as_literal() {
+        let document = parse_document(" indented line one\n indented line two");
+
+        let [Block::Literal(literal)] = document.blocks.as_slice() else {
+            panic!("expected literal block");
+        };
+        assert_eq!(literal.lines, vec![" indented line one", " indented line two"]);
     }
 }

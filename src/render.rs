@@ -113,6 +113,7 @@ fn render_block(
         PreparedBlock::DescriptionList(list) => render_description_list(html, list, ctx),
         PreparedBlock::Table(table) => render_table(html, table, ctx),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
+        PreparedBlock::Literal(literal) => render_literal(html, literal),
         PreparedBlock::Example(example) => render_compound(html, "exampleblock", example, ctx),
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
         PreparedBlock::Quote(quote) => render_quote(html, quote, ctx),
@@ -334,6 +335,23 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
     }
     html.push_str("<div class=\"content\">\n<pre>");
     html.push_str(&escape_html(&listing.content));
+    html.push_str("</pre>\n</div>\n</div>\n");
+}
+
+fn render_literal(html: &mut String, literal: &crate::prepare::ListingBlock) {
+    html.push_str("<div class=\"literalblock\"");
+    if let Some(id) = &literal.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n");
+    if let Some(title) = &literal.title {
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
+    }
+    html.push_str("<div class=\"content\">\n<pre>");
+    html.push_str(&escape_html(&literal.content));
     html.push_str("</pre>\n</div>\n</div>\n");
 }
 
@@ -1907,6 +1925,29 @@ mod tests {
         assert!(html.contains("<ul class=\"sectlevel1\">"));
         // Level 2 should be suppressed
         assert!(!html.contains("sectlevel2"));
+    }
+
+    #[test]
+    fn renders_delimited_literal_block() {
+        let html = render_html(&crate::parser::parse_document(
+            "....\n  preformatted text\n  with indent\n....",
+        ));
+        assert!(html.contains("<div class=\"literalblock\""));
+        assert!(html.contains("<pre>  preformatted text\n  with indent</pre>"));
+    }
+
+    #[test]
+    fn renders_literal_styled_paragraph() {
+        let html = render_html(&crate::parser::parse_document("[literal]\npreformatted."));
+        assert!(html.contains("<div class=\"literalblock\""));
+        assert!(html.contains("<pre>preformatted.</pre>"));
+    }
+
+    #[test]
+    fn renders_indented_paragraph_as_literal() {
+        let html = render_html(&crate::parser::parse_document(" indented text"));
+        assert!(html.contains("<div class=\"literalblock\""));
+        assert!(html.contains("<pre> indented text</pre>"));
     }
 
     #[test]
