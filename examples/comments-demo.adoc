@@ -1,0 +1,67 @@
+= Comments Demo
+
+// This is a line comment — it should not appear in the output.
+
+== Line Comments
+
+This paragraph is visible.
+
+// This whole line is a comment and must be invisible.
+
+This paragraph is also visible.
+
+// Multiple consecutive line comments
+// are all stripped.
+
+Back to content.
+
+== Block Comments
+
+////
+Everything inside a block comment is invisible.
+Even multiple paragraphs.
+
+    indented code
+    more code
+
+And more text.
+////
+
+Content after a block comment is visible.
+
+////
+Another block comment right before a heading.
+////
+
+=== Section After a Block Comment
+
+This section and its content are visible.
+
+== Comments Do Not Strip Content Inside Verbatim Blocks
+
+The following listing block contains `//` lines that are *code*, not comments,
+and must be preserved exactly as written:
+
+----
+// This is a Ruby comment inside a listing — keep it!
+def greet(name)
+  puts "Hello, #{name}"
+end
+----
+
+And a literal block:
+
+....
+// Not a comment — this is literal preformatted text.
+  indented content
+....
+
+== Interleaved Comments and Content
+
+First paragraph.
+
+// comment between paragraphs
+
+Second paragraph — should immediately follow the first with no gap from the comment.
+
+// comment at end of section

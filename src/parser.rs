@@ -189,6 +189,24 @@ fn parse_blocks_from_lines(
     while index < lines.len() {
         let line = lines[index];
 
+        // Block comment delimiter (////): consume everything until the closing ////
+        if line.trim() == "////" {
+            index += 1;
+            while index < lines.len() && lines[index].trim() != "////" {
+                index += 1;
+            }
+            if index < lines.len() {
+                index += 1; // consume the closing ////
+            }
+            continue;
+        }
+
+        // Line comment (// ...): skip the line without affecting paragraph state
+        if is_comment_line(line) {
+            index += 1;
+            continue;
+        }
+
         if let Some(anchor) = parse_block_anchor(line) {
             flush_paragraph(
                 &mut blocks,
@@ -1430,7 +1448,7 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____" | "...." | "--")
+    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____" | "...." | "--" | "////")
 }
 
 fn parse_block_title(line: &str) -> Option<String> {

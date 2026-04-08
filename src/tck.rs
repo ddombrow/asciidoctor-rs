@@ -402,6 +402,24 @@ fn parse_blocks(
         let absolute_index = line_offset + index - 1;
         let line = lines[index];
 
+        // Block comment delimiter (////): consume everything until the closing ////
+        if line.trim() == "////" {
+            index += 1;
+            while index < lines.len() && lines[index].trim() != "////" {
+                index += 1;
+            }
+            if index < lines.len() {
+                index += 1; // consume the closing ////
+            }
+            continue;
+        }
+
+        // Line comment (// ...): skip the line without affecting paragraph state
+        if is_comment_line(line) {
+            index += 1;
+            continue;
+        }
+
         if let Some(anchor) = parse_block_anchor(line) {
             flush_paragraph(
                 &mut blocks,
@@ -943,7 +961,7 @@ fn split_attribute_list(input: &str) -> Vec<String> {
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "____" | "...." | "--")
+    matches!(line.trim(), "----" | "====" | "****" | "____" | "...." | "--" | "////")
 }
 
 fn apply_attribute_list(
@@ -2137,6 +2155,52 @@ mod tests {
         );
         assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
         assert_eq!(document.blocks.len(), 1);
+    }
+
+    #[test]
+    fn strips_line_comments_in_body() {
+        // "= Title" becomes the document header; body blocks are at document.blocks directly
+        let document = parse_tck_document("= Title\n\n// invisible comment\n\nVisible paragraph.");
+
+        // Should have exactly one body block (the paragraph), not two
+        assert_eq!(document.blocks.len(), 1);
+        assert_eq!(document.blocks[0].name, "paragraph");
+    }
+
+    #[test]
+    fn strips_block_comments_in_body() {
+        let document = parse_tck_document(
+            "= Title\n\nBefore.\n\n////\nThis is invisible.\nSo is this.\n////\n\nAfter.",
+        );
+
+        // Should have exactly two body paragraphs: "Before." and "After."
+        assert_eq!(document.blocks.len(), 2);
+        assert_eq!(document.blocks[0].name, "paragraph");
+        assert_eq!(document.blocks[1].name, "paragraph");
+    }
+
+    #[test]
+    fn preserves_comments_inside_listing_block() {
+        let document =
+            parse_tck_document("= Title\n\n----\n// keep this line\ncode here\n----");
+
+        // One body block: the listing
+        assert_eq!(document.blocks.len(), 1);
+        assert_eq!(document.blocks[0].name, "listing");
+        // The // line must be preserved as content inside the listing
+        let inline_value = document.blocks[0]
+            .inlines
+            .as_ref()
+            .and_then(|i| i.first())
+            .map(|i| match i {
+                AsgInline::Text(t) => t.value.as_str(),
+                _ => "",
+            })
+            .unwrap_or("");
+        assert!(
+            inline_value.contains("// keep this line"),
+            "listing content should preserve // lines, got: {inline_value:?}"
+        );
     }
 
     #[test]
