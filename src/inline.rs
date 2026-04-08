@@ -161,8 +161,15 @@ fn parse_span(chars: &[char], start: usize, base: usize) -> Option<(SpannedInlin
         '*' => InlineVariant::Strong,
         '_' => InlineVariant::Emphasis,
         '`' => InlineVariant::Monospace,
+        '~' => InlineVariant::Subscript,
+        '^' => InlineVariant::Superscript,
         _ => return None,
     };
+
+    // Subscript and superscript are constrained-only (no ~~ or ^^ unconstrained form)
+    if matches!(variant, InlineVariant::Subscript | InlineVariant::Superscript) {
+        return parse_constrained_span(chars, start, base, marker, variant);
+    }
 
     if chars.get(start + 1) == Some(&marker) {
         parse_unconstrained_span(chars, start, base, marker, variant)
@@ -873,8 +880,12 @@ fn parse_constrained_span(
     marker: char,
     variant: InlineVariant,
 ) -> Option<(SpannedInline, usize)> {
+    // Subscript (~) and superscript (^) are designed to sit adjacent to alphanumeric
+    // characters (e.g. H~2~O, E=mc^2^), so the word-boundary constraints do not apply.
+    let adjacent_ok = matches!(variant, InlineVariant::Subscript | InlineVariant::Superscript);
+
     let opener = *chars.get(start + 1)?;
-    if (start > 0 && chars[start - 1].is_alphanumeric())
+    if (!adjacent_ok && start > 0 && chars[start - 1].is_alphanumeric())
         || opener.is_whitespace()
         || opener == marker
     {
@@ -890,7 +901,7 @@ fn parse_constrained_span(
                 || inner.first()?.is_whitespace()
                 || inner.last()?.is_whitespace()
                 || inner.last() == Some(&marker)
-                || next.is_some_and(|ch| ch.is_alphanumeric())
+                || (!adjacent_ok && next.is_some_and(|ch| ch.is_alphanumeric()))
             {
                 end += 1;
                 continue;

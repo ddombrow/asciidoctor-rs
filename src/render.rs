@@ -743,6 +743,8 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                     "strong" => "strong",
                     "emphasis" => "em",
                     "monospace" => "code",
+                    "subscript" => "sub",
+                    "superscript" => "sup",
                     _ => "span",
                 };
                 html.push_str(&format!("<{tag}>"));

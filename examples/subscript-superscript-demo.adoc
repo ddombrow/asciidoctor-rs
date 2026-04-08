@@ -1,0 +1,44 @@
+= Subscript and Superscript Demo
+
+== Chemistry
+
+Water is H~2~O.
+
+Carbon dioxide is CO~2~.
+
+Sulfate is SO~4~^2-^.
+
+The formula for methane is CH~4~.
+
+== Mathematics
+
+Einstein's famous equation: E=mc^2^
+
+The general term of a geometric sequence: a~n~ = a~1~ · r^n-1^
+
+Pythagorean theorem: a^2^ + b^2^ = c^2^
+
+== Footnote References
+
+This claim requires a citation.^1^
+
+Another statement that needs support.^2^
+
+^1^ First reference source. +
+^2^ Second reference source.
+
+== Mixed Inline Formatting
+
+Subscript inside *bold*: *H~2~O is essential*.
+
+Superscript inside `monospace`: `E=mc^2^`
+
+_Italic_ with superscript: _x^2^_ and _y^3^_
+
+== Unicode and Special Characters
+
+Angstrom: 1 Å = 10^-10^ m
+
+Degrees Celsius: 100°C = 373.15 K (water boils at standard pressure^[citation needed]^)
+
+pH scale: neutral water has pH~neutral~ = 7

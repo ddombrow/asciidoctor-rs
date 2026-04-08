@@ -1777,6 +1777,8 @@ fn inline_variant_name(variant: InlineVariant) -> &'static str {
         InlineVariant::Strong => "strong",
         InlineVariant::Emphasis => "emphasis",
         InlineVariant::Monospace => "monospace",
+        InlineVariant::Subscript => "subscript",
+        InlineVariant::Superscript => "superscript",
     }
 }
 

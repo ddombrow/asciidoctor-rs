@@ -231,6 +231,8 @@ pub enum InlineVariant {
     Strong,
     Emphasis,
     Monospace,
+    Subscript,   // ~text~
+    Superscript, // ^text^
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

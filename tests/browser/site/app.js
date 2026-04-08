@@ -534,7 +534,11 @@ function renderInlines(inlines) {
               ? "em"
               : inline.variant === "monospace"
                 ? "code"
-              : "span";
+                : inline.variant === "subscript"
+                  ? "sub"
+                  : inline.variant === "superscript"
+                    ? "sup"
+                    : "span";
         return `<${tag}>${renderInlines(inline.inlines ?? [])}</${tag}>`;
       }
 

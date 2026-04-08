@@ -1849,6 +1849,8 @@ fn map_inline(
                     InlineVariant::Strong => "strong",
                     InlineVariant::Emphasis => "emphasis",
                     InlineVariant::Monospace => "monospace",
+                    InlineVariant::Subscript => "subscript",
+                    InlineVariant::Superscript => "superscript",
                 },
                 form: match span.form {
                     InlineForm::Constrained => "constrained",
