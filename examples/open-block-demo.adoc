@@ -1,0 +1,98 @@
+= Open Block Demo
+
+== Bare Open Block
+
+A bare open block groups content without adding any visual styling.
+
+--
+This paragraph is inside an open block.
+
+So is this one.
+
+And this listing block:
+
+----
+puts "hello from inside an open block"
+----
+--
+
+Back to normal content.
+
+== Styled Open Blocks
+
+=== As a Sidebar
+
+[sidebar]
+--
+== Did You Know?
+
+An open block with `[sidebar]` behaves exactly like `+****+`.
+
+This is useful when you need multiple blocks inside a sidebar,
+which is its most common use case.
+--
+
+=== As an Admonition
+
+[WARNING]
+--
+This warning has multiple paragraphs.
+
+Do not attempt this at home.
+
+Also avoid:
+
+* open flames
+* running with scissors
+* deploying on Fridays
+--
+
+[TIP]
+--
+Tips can contain code too:
+
+----
+cargo test --release
+----
+--
+
+=== As a Quote
+
+[quote, Donald Knuth, The Art of Computer Programming]
+--
+Premature optimization is the root of all evil.
+
+The real problem is that programmers have spent far too much time
+worrying about efficiency in the wrong places and at the wrong times.
+--
+
+== List Continuation
+
+The main practical use of open blocks is attaching multiple blocks to a list item.
+
+. Clone the repository:
++
+--
+----
+git clone https://github.com/example/myproject
+cd myproject
+----
+
+NOTE: Use SSH if you have two-factor auth enabled.
+--
+
+. Build the project:
++
+--
+----
+cargo build --release
+----
+
+The binary will be at `target/release/myproject`.
+--
+
+. Run the tests:
++
+----
+cargo test
+----

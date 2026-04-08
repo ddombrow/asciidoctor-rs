@@ -469,6 +469,19 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     `;
   }
 
+  if (block.type === "open") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    return `
+      <div class="openblock"${id}>
+        ${title}
+        <div class="content">
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+        </div>
+      </div>
+    `;
+  }
+
   if (block.type === "passthrough") {
     return block.content ?? "";
   }

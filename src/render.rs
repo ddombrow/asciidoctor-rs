@@ -116,6 +116,7 @@ fn render_block(
         PreparedBlock::Literal(literal) => render_literal(html, literal),
         PreparedBlock::Example(example) => render_compound(html, "exampleblock", example, ctx),
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
+        PreparedBlock::Open(open) => render_open(html, open, ctx),
         PreparedBlock::Quote(quote) => render_quote(html, quote, ctx),
         PreparedBlock::Passthrough(p) => {
             html.push_str(&p.content);
@@ -395,6 +396,29 @@ fn render_sidebar(
             escape_html(title)
         ));
     }
+    for child in &block.blocks {
+        render_block(html, child, ctx);
+    }
+    html.push_str("</div>\n</div>\n");
+}
+
+fn render_open(
+    html: &mut String,
+    block: &crate::prepare::CompoundBlock,
+    ctx: &RenderContext<'_>,
+) {
+    html.push_str("<div class=\"openblock\"");
+    if let Some(id) = &block.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n");
+    if let Some(title) = &block.title {
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
+    }
+    html.push_str("<div class=\"content\">\n");
     for child in &block.blocks {
         render_block(html, child, ctx);
     }
@@ -1925,6 +1949,26 @@ mod tests {
         assert!(html.contains("<ul class=\"sectlevel1\">"));
         // Level 2 should be suppressed
         assert!(!html.contains("sectlevel2"));
+    }
+
+    #[test]
+    fn renders_open_block() {
+        let html = render_html(&crate::parser::parse_document(
+            "--\nFirst paragraph.\n\nSecond paragraph.\n--",
+        ));
+        assert!(html.contains("<div class=\"openblock\""));
+        assert!(html.contains("<div class=\"content\">"));
+        assert!(html.contains("First paragraph."));
+        assert!(html.contains("Second paragraph."));
+    }
+
+    #[test]
+    fn renders_styled_open_block_as_sidebar() {
+        let html = render_html(&crate::parser::parse_document(
+            "[sidebar]\n--\nSidebar content.\n--",
+        ));
+        assert!(html.contains("<div class=\"sidebarblock\""));
+        assert!(!html.contains("openblock"));
     }
 
     #[test]

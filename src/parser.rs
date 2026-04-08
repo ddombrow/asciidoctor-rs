@@ -469,6 +469,9 @@ fn push_block(
                 sidebar, anchor,
             )));
         }
+        Block::Open(open) => {
+            blocks.push(Block::Open(apply_anchor_to_compound_block(open, anchor)));
+        }
         other => blocks.push(other),
     }
 }
@@ -1134,7 +1137,7 @@ fn block_plain_text(block: &Block) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         Block::Listing(listing) | Block::Literal(listing) => listing.lines.join("\n"),
-        Block::Example(example) | Block::Sidebar(example) => blocks_plain_text(&example.blocks),
+        Block::Example(example) | Block::Sidebar(example) | Block::Open(example) => blocks_plain_text(&example.blocks),
         Block::Quote(quote) => {
             if let Some(content) = &quote.content {
                 content.clone()
@@ -1227,6 +1230,7 @@ fn parse_delimited_block(
         "++++" => "passthrough",
         "____" => "quote",
         "...." => "literal",
+        "--" => "open",
         _ => return None,
     };
 
@@ -1312,6 +1316,46 @@ fn parse_delimited_block(
                 })
             }
         }
+        "open" => {
+            // Styled open block: redirect to the appropriate block type.
+            let style = prelude.metadata.style.as_deref().unwrap_or("");
+            if let Some(variant) = admonition_variant_from_style(style) {
+                let mut nested_title = None;
+                Block::Admonition(AdmonitionBlock {
+                    variant,
+                    blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                    id: prelude.metadata.id.clone(),
+                    reftext: None,
+                    metadata: prelude.metadata,
+                })
+            } else {
+                let mut nested_title = None;
+                let blocks = parse_blocks_from_lines(inner_lines, &mut nested_title, false, None);
+                match style {
+                    "sidebar" => Block::Sidebar(CompoundBlock { blocks, reftext: None, metadata: prelude.metadata }),
+                    "example" => Block::Example(CompoundBlock { blocks, reftext: None, metadata: prelude.metadata }),
+                    "quote" => Block::Quote(QuoteBlock {
+                        blocks,
+                        content: None,
+                        attribution: prelude.metadata.attributes.get("$2").cloned(),
+                        citetitle: prelude.metadata.attributes.get("$3").cloned(),
+                        is_verse: false,
+                        reftext: None,
+                        metadata: prelude.metadata,
+                    }),
+                    "verse" => Block::Quote(QuoteBlock {
+                        blocks: vec![],
+                        content: Some(inner_lines.join("\n")),
+                        attribution: prelude.metadata.attributes.get("$2").cloned(),
+                        citetitle: prelude.metadata.attributes.get("$3").cloned(),
+                        is_verse: true,
+                        reftext: None,
+                        metadata: prelude.metadata,
+                    }),
+                    _ => Block::Open(CompoundBlock { blocks, reftext: None, metadata: prelude.metadata }),
+                }
+            }
+        }
         _ => return None,
     };
 
@@ -1386,7 +1430,7 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____" | "....")
+    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____" | "...." | "--")
 }
 
 fn parse_block_title(line: &str) -> Option<String> {
@@ -4068,5 +4112,35 @@ mod tests {
             panic!("expected literal block");
         };
         assert_eq!(literal.lines, vec![" indented line one", " indented line two"]);
+    }
+
+    #[test]
+    fn parses_bare_open_block() {
+        let document = parse_document("--\nparagraph one\n\nparagraph two\n--");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.blocks.len(), 2);
+    }
+
+    #[test]
+    fn parses_styled_open_block_as_sidebar() {
+        let document = parse_document("[sidebar]\n--\ninside\n--");
+
+        let [Block::Sidebar(_)] = document.blocks.as_slice() else {
+            panic!("expected sidebar");
+        };
+    }
+
+    #[test]
+    fn parses_styled_open_block_as_admonition() {
+        let document = parse_document("[NOTE]\n--\nRemember this.\n--");
+
+        let [Block::Admonition(admonition)] = document.blocks.as_slice() else {
+            panic!("expected admonition");
+        };
+        assert_eq!(admonition.variant, AdmonitionVariant::Note);
+        assert_eq!(admonition.blocks.len(), 1);
     }
 }

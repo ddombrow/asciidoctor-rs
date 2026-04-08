@@ -663,6 +663,7 @@ fn parse_delimited_block(
         "****" => "sidebar",
         "____" => "quote",
         "...." => "literal",
+        "--" => "open",
         _ => return None,
     };
 
@@ -727,6 +728,7 @@ fn parse_delimited_block(
             "****" => "****",
             "____" => "____",
             "...." => "....",
+            "--" => "--",
             _ => unreachable!(),
         }),
         inlines: None,
@@ -766,7 +768,7 @@ fn parse_delimited_block(
                 })]);
             }
         }
-        "example" | "sidebar" => {
+        "example" | "sidebar" | "open" => {
             let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
             block.blocks = Some(children);
         }
@@ -941,7 +943,7 @@ fn split_attribute_list(input: &str) -> Vec<String> {
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "____" | "....")
+    matches!(line.trim(), "----" | "====" | "****" | "____" | "...." | "--")
 }
 
 fn apply_attribute_list(

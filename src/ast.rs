@@ -20,6 +20,7 @@ pub enum Block {
     Literal(Listing),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
+    Open(CompoundBlock),
     Quote(QuoteBlock),
     Passthrough(String),
     Image(ImageBlock),

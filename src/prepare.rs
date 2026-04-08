@@ -60,6 +60,7 @@ pub enum PreparedBlock {
     Literal(ListingBlock),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
+    Open(CompoundBlock),
     Quote(QuoteBlock),
     Passthrough(PassthroughBlock),
     Image(ImageBlock),
@@ -680,6 +681,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::Open(open) => {
+                let open = PreparedBlock::Open(prepare_compound_block(open));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(open);
+                } else {
+                    prepared.push(open);
+                }
+                index += 1;
+            }
             Block::Quote(quote) => {
                 let quote = PreparedBlock::Quote(prepare_quote_block(quote));
                 if wrap_document_preamble && !seen_section {
@@ -1079,6 +1089,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::Literal(_)
             | PreparedBlock::Example(_)
             | PreparedBlock::Sidebar(_)
+            | PreparedBlock::Open(_)
             | PreparedBlock::Quote(_)
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
@@ -1200,7 +1211,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     collect_table_row_inline_anchor_refs(row, refs);
                 }
             }
-            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
+            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) | PreparedBlock::Open(example) => {
                 if let Some(id) = &example.id {
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
@@ -1339,7 +1350,7 @@ fn resolve_xrefs_in_blocks(
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
             | PreparedBlock::Toc(_) => {}
-            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
+            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) | PreparedBlock::Open(example) => {
                 resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
             }
             PreparedBlock::Quote(quote) => {
@@ -1432,7 +1443,7 @@ fn collect_footnotes_from_blocks(
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
             | PreparedBlock::Toc(_) => {}
-            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
+            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) | PreparedBlock::Open(example) => {
                 collect_footnotes_from_blocks(&mut example.blocks, footnotes, next_index)
             }
             PreparedBlock::Quote(quote) => {
@@ -1544,7 +1555,8 @@ fn prepared_block_plain_text(block: &PreparedBlock) -> String {
     match block {
         PreparedBlock::Preamble(preamble)
         | PreparedBlock::Example(preamble)
-        | PreparedBlock::Sidebar(preamble) => prepared_blocks_plain_text(&preamble.blocks),
+        | PreparedBlock::Sidebar(preamble)
+        | PreparedBlock::Open(preamble) => prepared_blocks_plain_text(&preamble.blocks),
         PreparedBlock::Paragraph(paragraph) => paragraph.content.clone(),
         PreparedBlock::Admonition(admonition) => prepared_blocks_plain_text(&admonition.blocks),
         PreparedBlock::Section(section) => prepared_blocks_plain_text(&section.blocks),
