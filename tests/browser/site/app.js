@@ -293,6 +293,28 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}) {
     `;
   }
 
+  if (block.type === "description_list") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const items = (block.items ?? [])
+      .map((item) => {
+        const terms = (item.terms ?? [])
+          .map((term) => `<dt class="hdlist1">${renderInlines(term.inlines ?? [])}</dt>`)
+          .join("");
+        const description = item.description ? `\n<dd>\n${renderBlocks(item.description.blocks ?? [], parentSectionLevel, documentAttributes)}\n</dd>` : "";
+        return `${terms}${description}`;
+      })
+      .join("");
+    return `
+      <div class="dlist"${id}>
+        ${title}
+        <dl>
+          ${items}
+        </dl>
+      </div>
+    `;
+  }
+
   if (block.type === "table") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title

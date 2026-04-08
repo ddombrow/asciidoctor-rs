@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{
-    AdmonitionBlock as AstAdmonitionBlock, Block, CompoundBlock as AstCompoundBlock, Document,
-    ImageBlock as AstImageBlock, Inline, InlineForm, InlineVariant, Listing as AstListing,
-    OrderedList, Paragraph, TableBlock as AstTableBlock, TableCell as AstTableCell,
-    TableRow as AstTableRow, UnorderedList,
+    AdmonitionBlock as AstAdmonitionBlock, Block, CompoundBlock as AstCompoundBlock,
+    DescriptionList as AstDescriptionList, Document, ImageBlock as AstImageBlock, Inline,
+    InlineForm, InlineVariant, Listing as AstListing, OrderedList, Paragraph,
+    TableBlock as AstTableBlock, TableCell as AstTableCell, TableRow as AstTableRow, UnorderedList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +53,7 @@ pub enum PreparedBlock {
     Section(SectionBlock),
     UnorderedList(ListBlock),
     OrderedList(ListBlock),
+    DescriptionList(DescriptionListBlock),
     Table(TableBlock),
     Listing(ListingBlock),
     Example(CompoundBlock),
@@ -130,6 +131,41 @@ pub struct ListBlock {
 #[serde(rename_all = "camelCase")]
 pub struct ListItemBlock {
     pub blocks: Vec<PreparedBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescriptionListBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
+    pub items: Vec<DescriptionListItemBlock>,
+    pub attributes: BTreeMap<String, String>,
+    pub content_model: Option<ContentModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub level: u8,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescriptionListItemBlock {
+    pub terms: Vec<DescriptionListTermBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<ListItemBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescriptionListTermBlock {
+    pub text: String,
+    pub inlines: Vec<PreparedInline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,10 +478,7 @@ fn prepare_authors(document: &Document) -> Vec<Author> {
         return Vec::new();
     }
 
-    vec![Author {
-        name,
-        email,
-    }]
+    vec![Author { name, email }]
 }
 
 fn collect_indexed_authors(attributes: &BTreeMap<String, String>) -> Vec<Author> {
@@ -559,6 +592,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::DescriptionList(list) => {
+                let list = PreparedBlock::DescriptionList(prepare_description_list(list));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(list);
+                } else {
+                    prepared.push(list);
+                }
+                index += 1;
+            }
             Block::Table(table) => {
                 let table = PreparedBlock::Table(prepare_table(table));
                 if wrap_document_preamble && !seen_section {
@@ -596,8 +638,9 @@ fn prepare_blocks(
                 index += 1;
             }
             Block::Passthrough(content) => {
-                let passthrough =
-                    PreparedBlock::Passthrough(PassthroughBlock { content: content.clone() });
+                let passthrough = PreparedBlock::Passthrough(PassthroughBlock {
+                    content: content.clone(),
+                });
                 if wrap_document_preamble && !seen_section {
                     preamble_blocks.push(passthrough);
                 } else {
@@ -746,6 +789,37 @@ fn prepare_ordered_list(list: &OrderedList) -> ListBlock {
     }
 }
 
+fn prepare_description_list(list: &AstDescriptionList) -> DescriptionListBlock {
+    DescriptionListBlock {
+        items: list
+            .items
+            .iter()
+            .map(|item| DescriptionListItemBlock {
+                terms: item
+                    .terms
+                    .iter()
+                    .map(|term| DescriptionListTermBlock {
+                        text: term.text.clone(),
+                        inlines: prepare_inlines(&term.inlines),
+                    })
+                    .collect(),
+                description: item.description.as_ref().map(|desc| ListItemBlock {
+                    blocks: prepare_blocks(&desc.blocks, false, &mut Vec::new()),
+                }),
+            })
+            .collect(),
+        attributes: list.metadata.attributes.clone(),
+        content_model: Some(ContentModel::Compound),
+        level: 0,
+        name: "dlist".into(),
+        id: list.metadata.id.clone(),
+        reftext: list.reftext.clone(),
+        style: list.metadata.style.clone(),
+        role: list.metadata.role.clone(),
+        title: list.metadata.title.clone(),
+    }
+}
+
 fn prepare_listing(listing: &AstListing) -> ListingBlock {
     ListingBlock {
         id: listing.metadata.id.clone(),
@@ -837,9 +911,9 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
                 reftext: anchor.reftext.clone(),
                 inlines: prepare_inlines(&anchor.inlines),
             }),
-            Inline::Passthrough(raw) => PreparedInline::Passthrough(PassthroughInline {
-                value: raw.clone(),
-            }),
+            Inline::Passthrough(raw) => {
+                PreparedInline::Passthrough(PassthroughInline { value: raw.clone() })
+            }
             Inline::Image(image) => PreparedInline::Image(ImageInline {
                 target: image.target.clone(),
                 alt: image.alt.clone(),
@@ -915,6 +989,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::Admonition(_)
             | PreparedBlock::UnorderedList(_)
             | PreparedBlock::OrderedList(_)
+            | PreparedBlock::DescriptionList(_)
             | PreparedBlock::Table(_)
             | PreparedBlock::Listing(_)
             | PreparedBlock::Example(_)
@@ -977,7 +1052,10 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
                             id: id.clone(),
-                            title: admonition.reftext.clone().or_else(|| admonition.title.clone()),
+                            title: admonition
+                                .reftext
+                                .clone()
+                                .or_else(|| admonition.title.clone()),
                         });
                 }
                 collect_block_refs_into(&admonition.blocks, refs);
@@ -992,6 +1070,23 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                 }
                 for item in &list.items {
                     collect_block_refs_into(&item.blocks, refs);
+                }
+            }
+            PreparedBlock::DescriptionList(list) => {
+                if let Some(id) = &list.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: list.reftext.clone().or_else(|| list.title.clone()),
+                        });
+                }
+                for item in &list.items {
+                    for term in &item.terms {
+                        collect_inline_anchor_refs(&term.inlines, refs);
+                    }
+                    if let Some(desc) = &item.description {
+                        collect_block_refs_into(&desc.blocks, refs);
+                    }
                 }
             }
             PreparedBlock::Listing(listing) => {
@@ -1076,8 +1171,11 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
             PreparedInline::Span(span) => collect_inline_anchor_refs(&span.inlines, refs),
             PreparedInline::Link(link) => collect_inline_anchor_refs(&link.inlines, refs),
             PreparedInline::Xref(xref) => collect_inline_anchor_refs(&xref.inlines, refs),
-            PreparedInline::Footnote(footnote) => collect_inline_anchor_refs(&footnote.inlines, refs),
-            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {}
+            PreparedInline::Footnote(footnote) => {
+                collect_inline_anchor_refs(&footnote.inlines, refs)
+            }
+            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {
+            }
         }
     }
 }
@@ -1115,6 +1213,22 @@ fn resolve_xrefs_in_blocks(
                     resolve_xrefs_in_blocks(&mut item.blocks, section_refs, block_refs);
                 }
             }
+            PreparedBlock::DescriptionList(list) => {
+                for item in &mut list.items {
+                    for term in &mut item.terms {
+                        resolve_xrefs_in_inlines(&mut term.inlines, section_refs, block_refs);
+                        term.text = term
+                            .inlines
+                            .iter()
+                            .map(prepared_inline_plain_text)
+                            .collect::<Vec<_>>()
+                            .join("");
+                    }
+                    if let Some(desc) = &mut item.description {
+                        resolve_xrefs_in_blocks(&mut desc.blocks, section_refs, block_refs);
+                    }
+                }
+            }
             PreparedBlock::Table(table) => {
                 if let Some(header) = &mut table.header {
                     resolve_xrefs_in_table_row(header, section_refs, block_refs);
@@ -1123,7 +1237,8 @@ fn resolve_xrefs_in_blocks(
                     resolve_xrefs_in_table_row(row, section_refs, block_refs);
                 }
             }
-            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) | PreparedBlock::Image(_) => {}
+            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) | PreparedBlock::Image(_) => {
+            }
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
             }
@@ -1185,6 +1300,22 @@ fn collect_footnotes_from_blocks(
                     collect_footnotes_from_blocks(&mut item.blocks, footnotes, next_index);
                 }
             }
+            PreparedBlock::DescriptionList(list) => {
+                for item in &mut list.items {
+                    for term in &mut item.terms {
+                        collect_footnotes_from_inlines(&mut term.inlines, footnotes, next_index);
+                        term.text = term
+                            .inlines
+                            .iter()
+                            .map(prepared_inline_plain_text)
+                            .collect::<Vec<_>>()
+                            .join("");
+                    }
+                    if let Some(desc) = &mut item.description {
+                        collect_footnotes_from_blocks(&mut desc.blocks, footnotes, next_index);
+                    }
+                }
+            }
             PreparedBlock::Table(table) => {
                 if let Some(header) = &mut table.header {
                     collect_footnotes_from_table_row(header, footnotes, next_index);
@@ -1193,7 +1324,8 @@ fn collect_footnotes_from_blocks(
                     collect_footnotes_from_table_row(row, footnotes, next_index);
                 }
             }
-            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) | PreparedBlock::Image(_) => {}
+            PreparedBlock::Listing(_) | PreparedBlock::Passthrough(_) | PreparedBlock::Image(_) => {
+            }
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 collect_footnotes_from_blocks(&mut example.blocks, footnotes, next_index)
             }
@@ -1211,7 +1343,8 @@ fn collect_footnotes_from_inlines(
 ) {
     for inline in inlines {
         match inline {
-            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {}
+            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {
+            }
             PreparedInline::Span(span) => {
                 collect_footnotes_from_inlines(&mut span.inlines, footnotes, next_index)
             }
@@ -1312,6 +1445,19 @@ fn prepared_block_plain_text(block: &PreparedBlock) -> String {
             .map(|item| prepared_blocks_plain_text(&item.blocks))
             .collect::<Vec<_>>()
             .join("\n"),
+        PreparedBlock::DescriptionList(list) => list
+            .items
+            .iter()
+            .flat_map(|item| {
+                item.terms.iter().map(|term| term.text.clone()).chain(
+                    item.description
+                        .as_ref()
+                        .map(|desc| prepared_blocks_plain_text(&desc.blocks))
+                        .into_iter(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         PreparedBlock::Table(table) => table
             .rows
             .iter()
@@ -1331,7 +1477,10 @@ fn resolve_xrefs_in_inlines(
 ) {
     for inline in inlines {
         match inline {
-            PreparedInline::Text(_) | PreparedInline::Link(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {}
+            PreparedInline::Text(_)
+            | PreparedInline::Link(_)
+            | PreparedInline::Passthrough(_)
+            | PreparedInline::Image(_) => {}
             PreparedInline::Anchor(anchor) => {
                 resolve_xrefs_in_inlines(&mut anchor.inlines, section_refs, block_refs)
             }
@@ -1446,7 +1595,11 @@ fn slugify(title: &str) -> String {
         slug.pop();
     }
 
-    if slug == "_" { "_section".into() } else { slug }
+    if slug == "_" {
+        "_section".into()
+    } else {
+        slug
+    }
 }
 
 fn xref_href(target: &str) -> String {
@@ -1514,8 +1667,8 @@ mod tests {
     };
     use crate::parser::parse_document;
     use crate::prepare::{
-        ContentModel, PreparedBlock, PreparedInline, TextInline, prepare_document,
-        prepared_document_to_json,
+        prepare_document, prepared_document_to_json, ContentModel, PreparedBlock, PreparedInline,
+        TextInline,
     };
 
     #[test]
@@ -1527,51 +1680,51 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Preamble paragraph.".into())],
                     lines: vec!["Preamble paragraph.".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section A".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Section body.".into())],
                     lines: vec!["Section body.".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 2,
                     title: "Section A Child".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Nested body.".into())],
                     lines: vec!["Nested body.".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section B".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -1621,14 +1774,16 @@ mod tests {
     #[test]
     fn carries_document_attributes_into_prepared_output() {
         let document = Document {
-            attributes: [("toc".to_owned(), "left".to_owned())].into_iter().collect(),
+            attributes: [("toc".to_owned(), "left".to_owned())]
+                .into_iter()
+                .collect(),
             title: Some(Heading {
                 level: 0,
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1651,8 +1806,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1682,8 +1837,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1757,9 +1912,8 @@ mod tests {
 
     #[test]
     fn carries_explicit_authors_attribute_into_prepared_authors() {
-        let document = parse_document(
-            "= Document Title\n:authors: Doc Writer; Other Author\n\ncontent",
-        );
+        let document =
+            parse_document("= Document Title\n:authors: Doc Writer; Other Author\n\ncontent");
 
         let prepared = prepare_document(&document);
 
@@ -1777,11 +1931,17 @@ mod tests {
             ]
         );
         assert_eq!(
-            prepared.attributes.get("authorinitials").map(String::as_str),
+            prepared
+                .attributes
+                .get("authorinitials")
+                .map(String::as_str),
             Some("DW")
         );
         assert_eq!(
-            prepared.attributes.get("authorinitials_2").map(String::as_str),
+            prepared
+                .attributes
+                .get("authorinitials_2")
+                .map(String::as_str),
             Some("OA")
         );
     }
@@ -1797,8 +1957,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1827,8 +1987,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1857,8 +2017,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1881,8 +2041,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1908,8 +2068,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1935,8 +2095,8 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: Vec::new(),
         };
 
@@ -1991,8 +2151,8 @@ mod tests {
                 lines: vec!["first line".into(), "second line".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2019,15 +2179,15 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("hello".into())],
                 lines: vec!["hello".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2058,8 +2218,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2091,8 +2251,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2129,8 +2289,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2158,8 +2318,8 @@ mod tests {
                 title: "Sample Document".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     lines: vec!["See <<First Section>>.".into()],
@@ -2175,15 +2335,15 @@ mod tests {
                     ],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -2227,15 +2387,15 @@ mod tests {
                     ],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
                     id: Some("install".into()),
                     reftext: Some("Installation".into()),
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -2288,8 +2448,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2336,8 +2496,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2378,8 +2538,8 @@ mod tests {
                 title: "My Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![],
         };
 
@@ -2414,23 +2574,23 @@ mod tests {
                 title: "Doc".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Section body.".into())],
                     lines: vec!["Section body.".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -2452,30 +2612,30 @@ mod tests {
                 title: "Doc".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("First preamble paragraph.".into())],
                     lines: vec!["First preamble paragraph.".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("Second preamble paragraph.".into())],
                     lines: vec!["Second preamble paragraph.".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section One".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -2507,12 +2667,12 @@ mod tests {
                         lines: vec!["first item".into()],
                         id: None,
                         reftext: None,
-                        metadata: BlockMetadata::default()
+                        metadata: BlockMetadata::default(),
                     })],
                 }],
                 reftext: None,
-                metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let prepared = prepare_document(&document);
@@ -2648,7 +2808,7 @@ mod tests {
                         lines: vec!["inside sidebar".into()],
                         id: None,
                         reftext: None,
-                        metadata: BlockMetadata::default()
+                        metadata: BlockMetadata::default(),
                     })],
                     reftext: None,
                     metadata: Default::default(),
@@ -2659,7 +2819,7 @@ mod tests {
                         lines: vec!["inside example".into()],
                         id: None,
                         reftext: None,
-                        metadata: BlockMetadata::default()
+                        metadata: BlockMetadata::default(),
                     })],
                     reftext: None,
                     metadata: Default::default(),
@@ -2704,7 +2864,10 @@ mod tests {
         assert_eq!(table.title.as_deref(), Some("Agents"));
         assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
         assert_eq!(
-            table.header.as_ref().map(|row| row.cells[0].content.as_str()),
+            table
+                .header
+                .as_ref()
+                .map(|row| row.cells[0].content.as_str()),
             Some("Name")
         );
         assert_eq!(table.rows.len(), 2);
@@ -2787,7 +2950,13 @@ mod tests {
             panic!("expected table");
         };
 
-        assert_eq!(table.header.as_ref().and_then(|row| row.cells[0].style.as_deref()), Some("header"));
+        assert_eq!(
+            table
+                .header
+                .as_ref()
+                .and_then(|row| row.cells[0].style.as_deref()),
+            Some("header")
+        );
         assert_eq!(table.rows[0].cells[0].rowspan, 2);
         assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
         assert_eq!(table.rows[0].cells[1].blocks.len(), 2);
@@ -2806,8 +2975,14 @@ mod tests {
 
         assert_eq!(listing.title.as_deref(), Some("Exhibit A"));
         assert_eq!(listing.style.as_deref(), Some("source"));
-        assert_eq!(listing.attributes.get("language").map(String::as_str), Some("rust"));
-        assert_eq!(listing.attributes.get("title").map(String::as_str), Some("Exhibit A"));
+        assert_eq!(
+            listing.attributes.get("language").map(String::as_str),
+            Some("rust")
+        );
+        assert_eq!(
+            listing.attributes.get("title").map(String::as_str),
+            Some("Exhibit A")
+        );
     }
 
     #[test]
@@ -2919,7 +3094,10 @@ mod tests {
 
         assert_eq!(prepared.footnotes.len(), 1);
         assert_eq!(prepared.footnotes[0].index, Some(1));
-        assert_eq!(prepared.footnotes[0].text.as_deref(), Some("Read this first."));
+        assert_eq!(
+            prepared.footnotes[0].text.as_deref(),
+            Some("Read this first.")
+        );
 
         let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
             panic!("expected preamble");

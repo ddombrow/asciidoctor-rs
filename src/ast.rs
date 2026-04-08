@@ -14,6 +14,7 @@ pub enum Block {
     Admonition(AdmonitionBlock),
     UnorderedList(UnorderedList),
     OrderedList(OrderedList),
+    DescriptionList(DescriptionList),
     Table(TableBlock),
     Listing(Listing),
     Example(CompoundBlock),
@@ -118,6 +119,25 @@ pub struct OrderedList {
     pub items: Vec<ListItem>,
     pub reftext: Option<String>,
     pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescriptionList {
+    pub items: Vec<DescriptionListItem>,
+    pub reftext: Option<String>,
+    pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescriptionListItem {
+    pub terms: Vec<DescriptionListTerm>,
+    pub description: Option<ListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescriptionListTerm {
+    pub text: String,
+    pub inlines: Vec<Inline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

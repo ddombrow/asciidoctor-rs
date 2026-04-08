@@ -1,4 +1,4 @@
-use crate::prepare::{DocumentBlock, PreparedBlock, PreparedInline, prepare_document};
+use crate::prepare::{prepare_document, DocumentBlock, PreparedBlock, PreparedInline};
 
 pub fn render_html(document: &crate::ast::Document) -> String {
     render_prepared_html(&prepare_document(document))
@@ -39,8 +39,13 @@ fn render_block(
         PreparedBlock::Admonition(admonition) => {
             render_admonition(html, admonition, document_attributes)
         }
-        PreparedBlock::UnorderedList(list) => render_unordered_list(html, list, document_attributes),
+        PreparedBlock::UnorderedList(list) => {
+            render_unordered_list(html, list, document_attributes)
+        }
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list, document_attributes),
+        PreparedBlock::DescriptionList(list) => {
+            render_description_list(html, list, document_attributes)
+        }
         PreparedBlock::Table(table) => render_table(html, table, document_attributes),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
         PreparedBlock::Example(example) => {
@@ -85,7 +90,10 @@ fn render_unordered_list(
     }
     html.push_str(">\n");
     if let Some(title) = &list.title {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
     }
     html.push_str("<ul>\n");
     for item in &list.items {
@@ -109,7 +117,10 @@ fn render_ordered_list(
     }
     html.push_str(">\n");
     if let Some(title) = &list.title {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
     }
     html.push_str("<ol class=\"arabic\">\n");
     for item in &list.items {
@@ -120,6 +131,40 @@ fn render_ordered_list(
         html.push_str("</li>\n");
     }
     html.push_str("</ol>\n</div>\n");
+}
+
+fn render_description_list(
+    html: &mut String,
+    list: &crate::prepare::DescriptionListBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
+    html.push_str("<div class=\"dlist\"");
+    if let Some(id) = &list.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n");
+    if let Some(title) = &list.title {
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
+    }
+    html.push_str("<dl>\n");
+    for item in &list.items {
+        for term in &item.terms {
+            html.push_str("<dt class=\"hdlist1\">");
+            render_inlines(html, &term.inlines);
+            html.push_str("</dt>\n");
+        }
+        if let Some(desc) = &item.description {
+            html.push_str("<dd>\n");
+            for block in &desc.blocks {
+                render_block(html, block, document_attributes);
+            }
+            html.push_str("</dd>\n");
+        }
+    }
+    html.push_str("</dl>\n</div>\n");
 }
 
 fn render_table(
@@ -167,7 +212,9 @@ fn render_table_cell(
     } else {
         "td"
     };
-    html.push_str(&format!("<{tag} class=\"tableblock halign-left valign-top\""));
+    html.push_str(&format!(
+        "<{tag} class=\"tableblock halign-left valign-top\""
+    ));
     if cell.colspan > 1 {
         html.push_str(&format!(" colspan=\"{}\"", cell.colspan));
     }
@@ -186,7 +233,10 @@ fn render_table_cell_content(
     document_attributes: &std::collections::BTreeMap<String, String>,
 ) {
     if cell.blocks.len() == 1
-        && matches!(cell.blocks.first(), Some(crate::prepare::PreparedBlock::Paragraph(_)))
+        && matches!(
+            cell.blocks.first(),
+            Some(crate::prepare::PreparedBlock::Paragraph(_))
+        )
     {
         if let Some(crate::prepare::PreparedBlock::Paragraph(paragraph)) = cell.blocks.first() {
             if header {
@@ -212,7 +262,10 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
     }
     html.push_str(">\n");
     if let Some(title) = &listing.title {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
     }
     html.push_str("<div class=\"content\">\n<pre>");
     html.push_str(&escape_html(&listing.content));
@@ -231,7 +284,10 @@ fn render_compound(
     }
     html.push_str(">\n");
     if let Some(title) = &block.title {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
     }
     html.push_str("<div class=\"content\">\n");
     for child in &block.blocks {
@@ -251,7 +307,10 @@ fn render_sidebar(
     }
     html.push_str(">\n<div class=\"content\">\n");
     if let Some(title) = &block.title {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
     }
     for child in &block.blocks {
         render_block(html, child, document_attributes);
@@ -266,7 +325,10 @@ fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBloc
     }
     html.push_str(">\n");
     if let Some(title) = &paragraph.title {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
     }
     html.push_str("<p>");
     render_inlines(html, &paragraph.inlines);
@@ -312,11 +374,17 @@ fn render_admonition(
             escape_html(label)
         ));
     } else {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(label)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(label)
+        ));
     }
     html.push_str("</td>\n<td class=\"content\">\n");
     if let Some(title) = &admonition.title {
-        html.push_str(&format!("<div class=\"title\">{}</div>\n", escape_html(title)));
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
     }
     for block in &admonition.blocks {
         render_block(html, block, document_attributes);
@@ -329,11 +397,17 @@ fn admonition_label<'a>(
     block_attributes: &'a std::collections::BTreeMap<String, String>,
     document_attributes: &'a std::collections::BTreeMap<String, String>,
 ) -> &'a str {
-    if let Some(caption) = block_attributes.get("caption").filter(|caption| !caption.is_empty()) {
+    if let Some(caption) = block_attributes
+        .get("caption")
+        .filter(|caption| !caption.is_empty())
+    {
         return caption;
     }
     let key = format!("{variant}-caption");
-    if let Some(caption) = document_attributes.get(&key).filter(|caption| !caption.is_empty()) {
+    if let Some(caption) = document_attributes
+        .get(&key)
+        .filter(|caption| !caption.is_empty())
+    {
         return caption;
     }
     match variant {
@@ -499,7 +573,10 @@ fn resolve_image_src(
         return target.to_owned();
     }
 
-    if let Some(imagesdir) = document_attributes.get("imagesdir").filter(|d| !d.is_empty()) {
+    if let Some(imagesdir) = document_attributes
+        .get("imagesdir")
+        .filter(|d| !d.is_empty())
+    {
         let dir = imagesdir.trim_end_matches('/');
         format!("{}/{}", dir, target)
     } else {
@@ -626,23 +703,23 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section One".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("first line\nsecond line".into())],
                     lines: vec!["first line".into(), "second line".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -677,15 +754,15 @@ mod tests {
                 title: "Fish & Chips".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: vec![Inline::Text("<tag> \"quoted\" and 'apostrophe'".into())],
                 lines: vec!["<tag> \"quoted\" and 'apostrophe'".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -703,23 +780,23 @@ mod tests {
                 title: "Doc".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section A".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 2,
                     title: "Section B".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -755,8 +832,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -782,8 +859,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -800,8 +877,8 @@ mod tests {
                 inlines: vec![Inline::Text("*not strong* and _not emphasis_".into())],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -834,8 +911,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -859,8 +936,8 @@ mod tests {
                 })],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -887,8 +964,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -904,8 +981,8 @@ mod tests {
                 title: "Sample Document".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     lines: vec!["See <<First Section>>.".into()],
@@ -921,15 +998,15 @@ mod tests {
                     ],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "First Section".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -947,8 +1024,8 @@ mod tests {
                 inlines: vec![Inline::Text("Hello".into())],
                 id: Some("intro".into()),
                 reftext: Some("Introduction".into()),
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -972,8 +1049,8 @@ mod tests {
                 ],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -994,8 +1071,8 @@ mod tests {
                 })],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -1012,8 +1089,8 @@ mod tests {
                 inlines: vec![Inline::Text("hello".into())],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -1031,23 +1108,23 @@ mod tests {
                 title: "My Doc".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default()
-        }),
+                metadata: BlockMetadata::default(),
+            }),
             blocks: vec![
                 Block::Paragraph(Paragraph {
                     lines: vec!["Intro paragraph.".into()],
                     inlines: vec![Inline::Text("Intro paragraph.".into())],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
                 Block::Heading(Heading {
                     level: 1,
                     title: "Section One".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default()
-            }),
+                    metadata: BlockMetadata::default(),
+                }),
             ],
         };
 
@@ -1075,7 +1152,7 @@ mod tests {
                             inlines: vec![Inline::Text("first item".into())],
                             id: None,
                             reftext: None,
-                            metadata: BlockMetadata::default()
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                     ListItem {
@@ -1084,13 +1161,13 @@ mod tests {
                             inlines: vec![Inline::Text("second item".into())],
                             id: None,
                             reftext: None,
-                            metadata: BlockMetadata::default()
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -1099,6 +1176,21 @@ mod tests {
         assert!(html.contains("<li>"));
         assert!(html.contains("<p>first item</p>"));
         assert!(html.contains("<p>second item</p>"));
+    }
+
+    #[test]
+    fn renders_description_lists() {
+        let html = render_html(&crate::parser::parse_document(
+            "Term:: Definition\nSecond::\nThird::\nMore definition",
+        ));
+        println!("HTML: {}", html);
+
+        assert!(html.contains("<div class=\"dlist\">"));
+        assert!(html.contains("<dt class=\"hdlist1\">Term</dt>"));
+        assert!(html.contains("<p>Definition</p>"));
+        assert!(html.contains("<dt class=\"hdlist1\">Second</dt>"));
+        assert!(html.contains("<dt class=\"hdlist1\">Third</dt>"));
+        assert!(html.contains("<p>More definition</p>"));
     }
 
     #[test]
@@ -1113,12 +1205,12 @@ mod tests {
                         inlines: vec![Inline::Text("first item".into())],
                         id: None,
                         reftext: None,
-                        metadata: BlockMetadata::default()
+                        metadata: BlockMetadata::default(),
                     })],
                 }],
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -1142,7 +1234,7 @@ mod tests {
                                 inlines: vec![Inline::Text("first item".into())],
                                 id: None,
                                 reftext: None,
-                                metadata: BlockMetadata::default()
+                                metadata: BlockMetadata::default(),
                             }),
                             Block::UnorderedList(UnorderedList {
                                 items: vec![ListItem {
@@ -1151,18 +1243,18 @@ mod tests {
                                         inlines: vec![Inline::Text("nested item".into())],
                                         id: None,
                                         reftext: None,
-                                        metadata: BlockMetadata::default()
+                                        metadata: BlockMetadata::default(),
                                     })],
                                 }],
                                 reftext: None,
-                                metadata: BlockMetadata::default()
+                                metadata: BlockMetadata::default(),
                             }),
                             Block::Paragraph(Paragraph {
                                 lines: vec!["continued paragraph".into()],
                                 inlines: vec![Inline::Text("continued paragraph".into())],
                                 id: None,
                                 reftext: None,
-                                metadata: BlockMetadata::default()
+                                metadata: BlockMetadata::default(),
                             }),
                         ],
                     },
@@ -1172,13 +1264,13 @@ mod tests {
                             inlines: vec![Inline::Text("second item".into())],
                             id: None,
                             reftext: None,
-                            metadata: BlockMetadata::default()
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
                 reftext: None,
-            metadata: BlockMetadata::default()
-        })],
+                metadata: BlockMetadata::default(),
+            })],
         };
 
         let html = render_html(&document);
@@ -1207,8 +1299,8 @@ mod tests {
                         inlines: vec![Inline::Text("inside sidebar".into())],
                         id: None,
                         reftext: None,
-                    metadata: BlockMetadata::default()
-                })],
+                        metadata: BlockMetadata::default(),
+                    })],
                     reftext: None,
                     metadata: BlockMetadata::default(),
                 }),
@@ -1218,8 +1310,8 @@ mod tests {
                         inlines: vec![Inline::Text("inside example".into())],
                         id: None,
                         reftext: None,
-                    metadata: BlockMetadata::default()
-                })],
+                        metadata: BlockMetadata::default(),
+                    })],
                     reftext: None,
                     metadata: BlockMetadata::default(),
                 }),
@@ -1289,7 +1381,9 @@ mod tests {
 
         assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Name</th>"));
         assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Email</th>"));
-        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Adam</p></td>"));
+        assert!(html.contains(
+            "<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Adam</p></td>"
+        ));
         assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">adam@example.com</p></td>"));
     }
 
@@ -1299,7 +1393,8 @@ mod tests {
             ".Services\n[%header,cols=\"1,3\"]\n|===\n|Name\n|Details\n|API\n|First paragraph.\n\n* fast\n* typed\n|===",
         ));
 
-        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><div class=\"paragraph\">"));
+        assert!(html
+            .contains("<td class=\"tableblock halign-left valign-top\"><div class=\"paragraph\">"));
         assert!(html.contains("<p>First paragraph.</p>"));
         assert!(html.contains("<div class=\"ulist\">"));
         assert!(html.contains("<p>fast</p>"));
@@ -1570,8 +1665,9 @@ mod tests {
 
     #[test]
     fn renders_block_image_with_dimensions() {
-        let html =
-            render_html(&crate::parser::parse_document("image::tiger.png[Tiger, 200, 300]"));
+        let html = render_html(&crate::parser::parse_document(
+            "image::tiger.png[Tiger, 200, 300]",
+        ));
         assert!(html.contains("<img src=\"tiger.png\" alt=\"Tiger\" width=\"200\" height=\"300\">"));
     }
 
@@ -1611,8 +1707,9 @@ mod tests {
 
     #[test]
     fn renders_block_image_with_auto_generated_alt() {
-        let html =
-            render_html(&crate::parser::parse_document("image::lions-and-tigers.png[]"));
+        let html = render_html(&crate::parser::parse_document(
+            "image::lions-and-tigers.png[]",
+        ));
         assert!(html.contains("alt=\"lions and tigers\""));
     }
 
@@ -1654,7 +1751,9 @@ mod tests {
 
         let html = render_html(&document);
 
-        assert!(html.contains("<sup class=\"footnote\" id=\"_footnoteref_1\"><a href=\"#_footnotedef_1\">1</a></sup>"));
+        assert!(html.contains(
+            "<sup class=\"footnote\" id=\"_footnoteref_1\"><a href=\"#_footnotedef_1\">1</a></sup>"
+        ));
         assert!(html.contains("<div id=\"footnotes\">"));
         assert!(html.contains("<div class=\"footnote\" id=\"_footnotedef_1\"><a href=\"#_footnoteref_1\">1</a>. Read this first.</div>"));
     }

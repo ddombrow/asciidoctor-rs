@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Document, Heading,
-    ImageBlock, ListItem, Listing, OrderedList, Paragraph, TableBlock, TableCell, TableRow,
-    UnorderedList,
+    AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock,
+    Document, Heading, ImageBlock, ListItem, Listing,
+    OrderedList, Paragraph, TableBlock, TableCell, TableRow, UnorderedList,
 };
 use crate::inline::parse_inlines;
 
@@ -66,7 +66,7 @@ pub fn parse_document(input: &str) -> Document {
     if input.is_empty() {
         return Document::default();
     }
-    
+
     let lines: Vec<&str> = input.lines().collect();
     let (mut title, mut attributes, index) = parse_document_header(&lines);
     let blocks = parse_blocks_from_lines(&lines[index..], &mut title, true, Some(&mut attributes));
@@ -98,15 +98,17 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
     if title.is_some() {
         index = skip_header_comments(lines, index);
 
-        if let Some(author_line) =
-            lines.get(index).and_then(|line| parse_implicit_author_line(lines, index, line))
+        if let Some(author_line) = lines
+            .get(index)
+            .and_then(|line| parse_implicit_author_line(lines, index, line))
         {
             insert_author_attributes(&mut attributes, &author_line.authors);
             index += 1;
             index = skip_header_comments(lines, index);
 
-            if let Some(revision_line) =
-                lines.get(index).and_then(|line| parse_implicit_revision_line(line))
+            if let Some(revision_line) = lines
+                .get(index)
+                .and_then(|line| parse_implicit_revision_line(line))
             {
                 attributes.insert("revnumber".to_owned(), revision_line.number);
                 if let Some(date) = revision_line.date {
@@ -146,9 +148,17 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
     }
 
     if saw_explicit_authors {
-        normalize_explicit_author_attributes(&mut attributes, "authors", saw_explicit_authorinitials);
+        normalize_explicit_author_attributes(
+            &mut attributes,
+            "authors",
+            saw_explicit_authorinitials,
+        );
     } else if saw_explicit_author {
-        normalize_explicit_author_attributes(&mut attributes, "author", saw_explicit_authorinitials);
+        normalize_explicit_author_attributes(
+            &mut attributes,
+            "author",
+            saw_explicit_authorinitials,
+        );
     }
 
     (title, attributes, index)
@@ -199,7 +209,9 @@ fn parse_blocks_from_lines(
             }
         }
 
-        if let Some((block, consumed_lines)) = parse_delimited_block(lines, index, pending_block_prelude.as_ref()) {
+        if let Some((block, consumed_lines)) =
+            parse_delimited_block(lines, index, pending_block_prelude.as_ref())
+        {
             flush_paragraph(
                 &mut blocks,
                 &mut current_paragraph,
@@ -260,6 +272,8 @@ fn parse_blocks_from_lines(
             continue;
         }
 
+        if let Some((list, consumed_lines)) = parse_description_list(lines, index) { flush_paragraph( &mut blocks, &mut current_paragraph, &mut current_paragraph_anchor, &mut current_paragraph_prelude, ); push_block( &mut blocks, title, allow_document_title, Block::DescriptionList(apply_prelude_to_description_list( list, pending_block_prelude.take(), )), pending_anchor.take(), ); index += consumed_lines; continue; }
+
         if let Some((list, consumed_lines)) = parse_ordered_list(lines, index) {
             flush_paragraph(
                 &mut blocks,
@@ -301,7 +315,10 @@ fn parse_blocks_from_lines(
             continue;
         }
 
-        if current_paragraph.is_empty() && pending_block_prelude.is_none() && pending_anchor.is_none() {
+        if current_paragraph.is_empty()
+            && pending_block_prelude.is_none()
+            && pending_anchor.is_none()
+        {
             if let Some((name, value)) = parse_attribute_entry(line) {
                 if let Some(attributes) = document_attributes.as_deref_mut() {
                     attributes.insert(name, value);
@@ -395,13 +412,24 @@ fn push_block(
             }
         }
         Block::Admonition(admonition) => {
-            blocks.push(Block::Admonition(apply_anchor_to_admonition(admonition, anchor)));
+            blocks.push(Block::Admonition(apply_anchor_to_admonition(
+                admonition, anchor,
+            )));
         }
         Block::UnorderedList(list) => {
-            blocks.push(Block::UnorderedList(apply_anchor_to_unordered_list(list, anchor)));
+            blocks.push(Block::UnorderedList(apply_anchor_to_unordered_list(
+                list, anchor,
+            )));
+        }
+        Block::DescriptionList(list) => {
+            blocks.push(Block::DescriptionList(apply_anchor_to_description_list(
+                list, anchor,
+            )));
         }
         Block::OrderedList(list) => {
-            blocks.push(Block::OrderedList(apply_anchor_to_ordered_list(list, anchor)));
+            blocks.push(Block::OrderedList(apply_anchor_to_ordered_list(
+                list, anchor,
+            )));
         }
         Block::Listing(listing) => {
             blocks.push(Block::Listing(apply_anchor_to_listing(listing, anchor)));
@@ -410,10 +438,14 @@ fn push_block(
             blocks.push(Block::Table(apply_anchor_to_table(table, anchor)));
         }
         Block::Example(example) => {
-            blocks.push(Block::Example(apply_anchor_to_compound_block(example, anchor)));
+            blocks.push(Block::Example(apply_anchor_to_compound_block(
+                example, anchor,
+            )));
         }
         Block::Sidebar(sidebar) => {
-            blocks.push(Block::Sidebar(apply_anchor_to_compound_block(sidebar, anchor)));
+            blocks.push(Block::Sidebar(apply_anchor_to_compound_block(
+                sidebar, anchor,
+            )));
         }
         other => blocks.push(other),
     }
@@ -482,6 +514,29 @@ fn apply_anchor_to_ordered_list(
     list
 }
 
+fn apply_prelude_to_description_list(
+    mut list: crate::ast::DescriptionList,
+    prelude: Option<BlockPrelude>,
+) -> crate::ast::DescriptionList {
+    if let Some(prelude) = prelude {
+        list.metadata = prelude.metadata;
+    }
+    list
+}
+
+fn apply_anchor_to_description_list(
+    mut list: crate::ast::DescriptionList,
+    anchor: Option<PendingAnchor>,
+) -> crate::ast::DescriptionList {
+    if let Some(anchor) = anchor
+        && list.metadata.id.is_none()
+    {
+        list.metadata.id = Some(anchor.id);
+        list.reftext = anchor.reftext;
+    }
+    list
+}
+
 fn apply_anchor_to_table(mut table: TableBlock, anchor: Option<PendingAnchor>) -> TableBlock {
     if let Some(anchor) = anchor
         && table.metadata.id.is_none()
@@ -541,7 +596,12 @@ fn parse_block_image(line: &str) -> Option<ImageBlock> {
 fn parse_image_attributes(
     attr_text: &str,
     target: &str,
-) -> (String, Option<String>, Option<String>, BTreeMap<String, String>) {
+) -> (
+    String,
+    Option<String>,
+    Option<String>,
+    BTreeMap<String, String>,
+) {
     let mut named_attrs = BTreeMap::new();
     let mut positional = Vec::new();
 
@@ -594,7 +654,10 @@ fn split_image_attrs(text: &str) -> Vec<String> {
 fn auto_generate_alt(target: &str) -> String {
     let filename = target.rsplit('/').next().unwrap_or(target);
     let filename = filename.rsplit('\\').next().unwrap_or(filename);
-    let stem = filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename);
+    let stem = filename
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(filename);
     stem.replace('-', " ").replace('_', " ")
 }
 
@@ -655,11 +718,7 @@ fn parse_table(
         if starts_table_cell_line(trimmed) {
             if let Some(cell) = current_cell.take() {
                 current_group.push(cell);
-                maybe_finish_table_row_group(
-                    &mut row_groups,
-                    &mut current_group,
-                    expected_columns,
-                );
+                maybe_finish_table_row_group(&mut row_groups, &mut current_group, expected_columns);
             }
             let cells = parse_table_cells_from_line(line)?;
             if cells.is_empty() {
@@ -669,11 +728,7 @@ fn parse_table(
             let last = iter.next_back()?;
             for cell in iter {
                 current_group.push(cell);
-                maybe_finish_table_row_group(
-                    &mut row_groups,
-                    &mut current_group,
-                    expected_columns,
-                );
+                maybe_finish_table_row_group(&mut row_groups, &mut current_group, expected_columns);
             }
             current_cell = Some(last);
         } else {
@@ -849,7 +904,10 @@ fn parse_table_cell_spec(spec: &str) -> Option<(usize, usize, Option<String>)> {
         _ => None,
     };
 
-    if let Some(rowspan) = spec.strip_prefix('.').and_then(|rest| rest.strip_suffix('+')) {
+    if let Some(rowspan) = spec
+        .strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix('+'))
+    {
         let rowspan = rowspan.parse().ok()?;
         return Some((1, rowspan, style));
     }
@@ -1058,6 +1116,22 @@ fn block_plain_text(block: &Block) -> String {
         Block::Passthrough(content) => content.clone(),
         Block::Image(image) => image.alt.clone(),
         Block::Heading(heading) => heading.title.clone(),
+        Block::DescriptionList(list) => list
+            .items
+            .iter()
+            .map(|item| {
+                let mut text = String::new();
+                for term in &item.terms {
+                    text.push_str(&term.text);
+                    text.push('\n');
+                }
+                if let Some(desc) = &item.description {
+                    text.push_str(&blocks_plain_text(&desc.blocks));
+                }
+                text
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
     }
 }
 
@@ -1232,7 +1306,10 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
         }
     }
 
-    if let Some(attr_line) = lines.get(cursor).and_then(|line| parse_attribute_list_line(line)) {
+    if let Some(attr_line) = lines
+        .get(cursor)
+        .and_then(|line| parse_attribute_list_line(line))
+    {
         let next = cursor + 1;
         if lines.get(next).is_some_and(|line| !line.trim().is_empty()) {
             apply_attribute_list_to_metadata(&mut prelude.metadata, &attr_line);
@@ -1306,10 +1383,7 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
                     .map(str::to_owned)
                     .collect();
             } else if name == "role" {
-                metadata.roles = value
-                    .split_whitespace()
-                    .map(str::to_owned)
-                    .collect();
+                metadata.roles = value.split_whitespace().map(str::to_owned).collect();
                 if !metadata.roles.is_empty() {
                     metadata.role = Some(metadata.roles.join(" "));
                 }
@@ -1320,7 +1394,9 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
         if let Some(id) = entry.strip_prefix('#') {
             if !id.is_empty() {
                 metadata.id = Some(id.to_owned());
-                metadata.attributes.insert(format!("${slot}"), entry.clone());
+                metadata
+                    .attributes
+                    .insert(format!("${slot}"), entry.clone());
                 metadata.attributes.insert("id".into(), id.to_owned());
             }
             continue;
@@ -1334,7 +1410,9 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             if !roles.is_empty() {
-                metadata.attributes.insert(format!("${slot}"), entry.clone());
+                metadata
+                    .attributes
+                    .insert(format!("${slot}"), entry.clone());
                 metadata.roles.extend(roles);
                 let mut deduped_roles = Vec::new();
                 for role in std::mem::take(&mut metadata.roles) {
@@ -1359,7 +1437,9 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             if !options.is_empty() {
-                metadata.attributes.insert(format!("${slot}"), entry.clone());
+                metadata
+                    .attributes
+                    .insert(format!("${slot}"), entry.clone());
                 for option in options {
                     if !metadata.options.contains(&option) {
                         metadata.options.push(option.clone());
@@ -1373,7 +1453,9 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
             continue;
         }
 
-        metadata.attributes.insert(format!("${slot}"), entry.clone());
+        metadata
+            .attributes
+            .insert(format!("${slot}"), entry.clone());
         if metadata.style.is_none() {
             metadata.style = Some(entry.clone());
             metadata
@@ -1383,9 +1465,7 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
         } else if metadata.style.as_deref() == Some("source")
             && !metadata.attributes.contains_key("language")
         {
-            metadata
-                .attributes
-                .insert("language".into(), entry.clone());
+            metadata.attributes.insert("language".into(), entry.clone());
         }
     }
 }
@@ -1410,6 +1490,98 @@ fn unquote_attribute_value(value: &str) -> String {
         }
     }
     value.to_owned()
+}
+
+fn parse_description_list(
+    lines: &[&str],
+    mut index: usize,
+) -> Option<(crate::ast::DescriptionList, usize)> {
+    let mut items = Vec::new();
+    let start_index = index;
+
+    while index < lines.len() {
+        let line = lines[index];
+        if line.trim().is_empty() {
+            break;
+        }
+
+        let mut terms = Vec::new();
+        let mut current_desc = String::new();
+        let mut term_consumed = 0;
+
+        while index + term_consumed < lines.len() {
+            let t_line = lines[index + term_consumed];
+            if t_line.trim().is_empty() {
+                break;
+            }
+            if let Some(pos) = t_line.find("::") {
+                let remainder = t_line[pos + 2..].trim();
+                let is_valid_marker = t_line[pos + 2..].starts_with(' ') || t_line[pos + 2..].starts_with('\t') || t_line[pos + 2..].is_empty();
+                
+                if is_valid_marker {
+                    let term_text = t_line[..pos].trim().to_string();
+                    terms.push(crate::ast::DescriptionListTerm { 
+                        text: term_text.clone(),
+                        inlines: crate::inline::parse_inlines(&term_text)
+                    });
+                    
+                    if !remainder.is_empty() {
+                        current_desc.push_str(remainder);
+                        term_consumed += 1;
+                        break;
+                    }
+                    term_consumed += 1;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        if terms.is_empty() {
+            break;
+        }
+        index += term_consumed;
+
+        while index < lines.len() && !lines[index].trim().is_empty() && !lines[index].contains("::") {
+            if !current_desc.is_empty() {
+                current_desc.push('\n');
+            }
+            current_desc.push_str(lines[index].trim());
+            index += 1;
+        }
+
+        let description = if current_desc.is_empty() {
+            None
+        } else {
+            Some(crate::ast::ListItem {
+                blocks: vec![crate::ast::Block::Paragraph(crate::ast::Paragraph {
+                    lines: current_desc.lines().map(|s| s.to_string()).collect(),
+                    inlines: crate::inline::parse_inlines(&current_desc),
+                    id: None,
+                    reftext: None,
+                    metadata: crate::ast::BlockMetadata::default(),
+                })],
+            })
+        };
+
+        items.push(crate::ast::DescriptionListItem {
+            terms,
+            description,
+        });
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some((
+            crate::ast::DescriptionList {
+                items,
+                reftext: None,
+                metadata: crate::ast::BlockMetadata::default(),
+            },
+            index - start_index,
+        ))
+    }
 }
 
 fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
@@ -1438,7 +1610,12 @@ fn parse_ordered_list(lines: &[&str], index: usize) -> Option<(OrderedList, usiz
     })
 }
 
-fn parse_list(lines: &[&str], index: usize, kind: ListKind, level: usize) -> Option<(Vec<ListItem>, usize)> {
+fn parse_list(
+    lines: &[&str],
+    index: usize,
+    kind: ListKind,
+    level: usize,
+) -> Option<(Vec<ListItem>, usize)> {
     let marker = parse_list_marker(*lines.get(index)?)?;
     if marker.kind != kind || marker.level != level {
         return None;
@@ -1553,10 +1730,15 @@ fn parse_list_item_continuation_block(
     }
 
     let continuation_prelude = try_parse_block_prelude(lines, start);
-    let continuation_start = start + continuation_prelude.as_ref().map_or(0, |prelude| prelude.consumed_lines);
+    let continuation_start = start
+        + continuation_prelude
+            .as_ref()
+            .map_or(0, |prelude| prelude.consumed_lines);
 
     if let Some(prelude) = continuation_prelude.as_ref() {
-        if let Some((block, consumed)) = parse_delimited_block(lines, continuation_start, Some(prelude)) {
+        if let Some((block, consumed)) =
+            parse_delimited_block(lines, continuation_start, Some(prelude))
+        {
             return Some((block, blank_lines + prelude.consumed_lines + consumed));
         }
     } else if let Some((block, consumed)) = parse_delimited_block(lines, start, None) {
@@ -1564,7 +1746,10 @@ fn parse_list_item_continuation_block(
     }
 
     let mut paragraph_lines = Vec::new();
-    let mut consumed = blank_lines + continuation_prelude.as_ref().map_or(0, |prelude| prelude.consumed_lines);
+    let mut consumed = blank_lines
+        + continuation_prelude
+            .as_ref()
+            .map_or(0, |prelude| prelude.consumed_lines);
     let mut cursor = continuation_start;
 
     while let Some(line) = lines.get(cursor) {
@@ -1598,7 +1783,12 @@ fn parse_list_item_continuation_block(
     }
 }
 
-fn parse_list_block(lines: &[&str], index: usize, kind: ListKind, level: usize) -> Option<(Block, usize)> {
+fn parse_list_block(
+    lines: &[&str],
+    index: usize,
+    kind: ListKind,
+    level: usize,
+) -> Option<(Block, usize)> {
     let (items, consumed) = parse_list(lines, index, kind, level)?;
     let block = match kind {
         ListKind::Unordered => Block::UnorderedList(UnorderedList {
@@ -1666,7 +1856,10 @@ fn parse_list_content(remainder: &str) -> Option<&str> {
 }
 
 fn count_blank_lines(lines: &[&str]) -> usize {
-    lines.iter().take_while(|line| line.trim().is_empty()).count()
+    lines
+        .iter()
+        .take_while(|line| line.trim().is_empty())
+        .count()
 }
 
 fn make_paragraph_like_block(lines: Vec<String>) -> Block {
@@ -1768,9 +1961,7 @@ fn flush_paragraph(
     let lines = std::mem::take(current_paragraph);
     let anchor = current_paragraph_anchor.take();
     let prelude = current_paragraph_prelude.take();
-    let metadata = prelude
-        .map(|prelude| prelude.metadata)
-        .unwrap_or_default();
+    let metadata = prelude.map(|prelude| prelude.metadata).unwrap_or_default();
     let id = anchor
         .as_ref()
         .map(|anchor| anchor.id.clone())
@@ -1784,7 +1975,6 @@ fn flush_paragraph(
 }
 
 fn parse_heading(lines: &[&str], index: usize) -> Option<(Heading, usize)> {
-
     parse_atx_heading(lines[index])
         .map(|heading| (heading, 1))
         .or_else(|| parse_setext_heading(lines, index))
@@ -1864,7 +2054,10 @@ fn parse_attribute_entry(line: &str) -> Option<(String, String)> {
         return None;
     }
 
-    Some((name.to_owned(), stripped[separator + 1..].trim_start().to_owned()))
+    Some((
+        name.to_owned(),
+        stripped[separator + 1..].trim_start().to_owned(),
+    ))
 }
 
 fn parse_implicit_author_line(
@@ -1913,10 +2106,7 @@ fn parse_implicit_author_entry(entry: &str) -> Option<ImplicitAuthor> {
     build_author(trimmed, None)
 }
 
-fn insert_author_attributes(
-    attributes: &mut BTreeMap<String, String>,
-    authors: &[ImplicitAuthor],
-) {
+fn insert_author_attributes(attributes: &mut BTreeMap<String, String>, authors: &[ImplicitAuthor]) {
     if authors.is_empty() {
         return;
     }
@@ -1994,8 +2184,9 @@ fn normalize_explicit_author_attributes(
     source_key: &str,
     preserve_primary_initials: bool,
 ) {
-    let explicit_primary_initials =
-        preserve_primary_initials.then(|| attributes.get("authorinitials").cloned()).flatten();
+    let explicit_primary_initials = preserve_primary_initials
+        .then(|| attributes.get("authorinitials").cloned())
+        .flatten();
     let source_value = attributes.get(source_key).cloned().unwrap_or_default();
     let mut authors = if source_key == "authors" {
         source_value
@@ -2079,11 +2270,15 @@ fn build_author(name: &str, email: Option<String>) -> Option<ImplicitAuthor> {
     } else {
         None
     };
-    let authorinitials = [Some(firstname.as_str()), middlename.as_deref(), lastname.as_deref()]
-        .into_iter()
-        .flatten()
-        .filter_map(|part| part.chars().next())
-        .collect::<String>();
+    let authorinitials = [
+        Some(firstname.as_str()),
+        middlename.as_deref(),
+        lastname.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|part| part.chars().next())
+    .collect::<String>();
     let display_name = match (&middlename, &lastname) {
         (Some(middlename), Some(lastname)) => format!("{firstname} {middlename} {lastname}"),
         (None, Some(lastname)) => format!("{firstname} {lastname}"),
@@ -2267,14 +2462,14 @@ mod tests {
                     lines: vec!["first line".into(), "second line".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default(),
+                    metadata: BlockMetadata::default(),
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("third line".into())],
                     lines: vec!["third line".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default(),
+                    metadata: BlockMetadata::default(),
                 }),
             ]
         );
@@ -2292,7 +2487,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -2303,14 +2498,14 @@ mod tests {
                     title: "Section One".into(),
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default(),
+                    metadata: BlockMetadata::default(),
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("content".into())],
                     lines: vec!["content".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default(),
+                    metadata: BlockMetadata::default(),
                 }),
             ]
         );
@@ -2327,7 +2522,7 @@ mod tests {
                 title: "Section One".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2343,7 +2538,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -2353,7 +2548,7 @@ mod tests {
                 title: "Section A".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2370,7 +2565,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -2389,7 +2584,7 @@ mod tests {
                 lines: vec!["content".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2427,8 +2622,9 @@ mod tests {
 
     #[test]
     fn preserves_explicit_authorinitials_for_single_author_attribute() {
-        let document =
-            parse_document("= Document Title\n:authorinitials: DOC\n:author: Doc Writer\n\ncontent");
+        let document = parse_document(
+            "= Document Title\n:authorinitials: DOC\n:author: Doc Writer\n\ncontent",
+        );
 
         assert_eq!(
             document.attributes,
@@ -2475,8 +2671,7 @@ mod tests {
 
     #[test]
     fn parses_middle_name_parts_for_author_attribute() {
-        let document =
-            parse_document("= Document Title\n:author: Doc Middle Writer\n\ncontent");
+        let document = parse_document("= Document Title\n:author: Doc Middle Writer\n\ncontent");
 
         assert_eq!(
             document.attributes,
@@ -2533,7 +2728,8 @@ mod tests {
 
     #[test]
     fn parses_implicit_author_email_line_in_document_header() {
-        let document = parse_document("= Document Title\nStuart Rackham <founder@asciidoc.org>\n\ncontent");
+        let document =
+            parse_document("= Document Title\nStuart Rackham <founder@asciidoc.org>\n\ncontent");
 
         assert_eq!(
             document.attributes,
@@ -2578,8 +2774,7 @@ mod tests {
 
     #[test]
     fn parses_implicit_revision_line_without_date() {
-        let document =
-            parse_document("= Document Title\nAuthor Name\nv1.0.0,:remark\n\ncontent");
+        let document = parse_document("= Document Title\nAuthor Name\nv1.0.0,:remark\n\ncontent");
 
         assert_eq!(
             document.attributes,
@@ -2631,14 +2826,14 @@ mod tests {
                     lines: vec!["v1.0.0".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default(),
+                    metadata: BlockMetadata::default(),
                 }),
                 Block::Paragraph(Paragraph {
                     inlines: vec![Inline::Text("content".into())],
                     lines: vec!["content".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default(),
+                    metadata: BlockMetadata::default(),
                 }),
             ]
         );
@@ -2703,7 +2898,8 @@ mod tests {
 
     #[test]
     fn ignores_leading_header_comments_before_document_title() {
-        let document = parse_document("// comment one\n// comment two\n= Document Title\n\ncontent");
+        let document =
+            parse_document("// comment one\n// comment two\n= Document Title\n\ncontent");
 
         assert_eq!(
             document.title,
@@ -2712,7 +2908,7 @@ mod tests {
                 title: "Document Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -2722,7 +2918,7 @@ mod tests {
                 lines: vec!["content".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2734,7 +2930,9 @@ mod tests {
 
         assert_eq!(
             document.attributes,
-            [("toc".to_owned(), "left".to_owned())].into_iter().collect()
+            [("toc".to_owned(), "left".to_owned())]
+                .into_iter()
+                .collect()
         );
         assert_eq!(
             document.blocks,
@@ -2743,7 +2941,7 @@ mod tests {
                 lines: vec!["content".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2761,7 +2959,7 @@ mod tests {
                 lines: vec!["body".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2772,7 +2970,9 @@ mod tests {
 
         assert_eq!(
             document.attributes,
-            [("toc".to_owned(), "left".to_owned())].into_iter().collect()
+            [("toc".to_owned(), "left".to_owned())]
+                .into_iter()
+                .collect()
         );
         assert_eq!(
             document.blocks,
@@ -2781,7 +2981,7 @@ mod tests {
                 lines: vec!["intro text".into(), ":ignored: value".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2848,7 +3048,7 @@ mod tests {
                 lines: vec!["=#= My Title".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -2898,8 +3098,8 @@ mod tests {
                 title: "First Section".into(),
                 id: Some("install".into()),
                 reftext: Some("Installation".into()),
-            metadata: BlockMetadata::default()
-        })]
+                metadata: BlockMetadata::default()
+            })]
         );
     }
 
@@ -2914,8 +3114,8 @@ mod tests {
                 lines: vec!["Hello".into()],
                 id: Some("intro".into()),
                 reftext: Some("Introduction".into()),
-            metadata: BlockMetadata::default()
-        })]
+                metadata: BlockMetadata::default()
+            })]
         );
     }
 
@@ -2933,7 +3133,7 @@ mod tests {
                             lines: vec!["first item".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                     ListItem {
@@ -2942,7 +3142,7 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
@@ -2966,7 +3166,7 @@ mod tests {
                             lines: vec!["first item".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                     ListItem {
@@ -2975,7 +3175,7 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
@@ -2996,7 +3196,7 @@ mod tests {
                 title: "My Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -3006,7 +3206,7 @@ mod tests {
                 lines: vec!["A paragraph.".into()],
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -3022,7 +3222,7 @@ mod tests {
                 title: "First Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })
         );
         assert_eq!(
@@ -3032,7 +3232,7 @@ mod tests {
                 title: "Second Title".into(),
                 id: None,
                 reftext: None,
-            metadata: BlockMetadata::default(),
+                metadata: BlockMetadata::default(),
             })]
         );
     }
@@ -3051,7 +3251,7 @@ mod tests {
                             lines: vec!["first item".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                     ListItem {
@@ -3060,7 +3260,7 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
@@ -3085,7 +3285,7 @@ mod tests {
                                 lines: vec!["parent".into()],
                                 id: None,
                                 reftext: None,
-                            metadata: BlockMetadata::default(),
+                                metadata: BlockMetadata::default(),
                             }),
                             Block::UnorderedList(UnorderedList {
                                 items: vec![ListItem {
@@ -3094,7 +3294,7 @@ mod tests {
                                         lines: vec!["child".into()],
                                         id: None,
                                         reftext: None,
-                                    metadata: BlockMetadata::default(),
+                                        metadata: BlockMetadata::default(),
                                     })],
                                 }],
                                 reftext: None,
@@ -3108,7 +3308,7 @@ mod tests {
                             lines: vec!["sibling".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
@@ -3133,14 +3333,14 @@ mod tests {
                                 lines: vec!["first item".into()],
                                 id: None,
                                 reftext: None,
-                            metadata: BlockMetadata::default(),
+                                metadata: BlockMetadata::default(),
                             }),
                             Block::Paragraph(Paragraph {
                                 inlines: vec![Inline::Text("continued paragraph".into())],
                                 lines: vec!["continued paragraph".into()],
                                 id: None,
                                 reftext: None,
-                            metadata: BlockMetadata::default(),
+                                metadata: BlockMetadata::default(),
                             }),
                         ],
                     },
@@ -3150,7 +3350,7 @@ mod tests {
                             lines: vec!["second item".into()],
                             id: None,
                             reftext: None,
-                        metadata: BlockMetadata::default(),
+                            metadata: BlockMetadata::default(),
                         })],
                     },
                 ],
@@ -3185,7 +3385,13 @@ mod tests {
         assert_eq!(table.metadata.title.as_deref(), Some("Agents"));
         assert_eq!(table.metadata.options, vec!["header"]);
         assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
-        assert_eq!(table.header.as_ref().map(|row| row.cells[0].content.as_str()), Some("Name"));
+        assert_eq!(
+            table
+                .header
+                .as_ref()
+                .map(|row| row.cells[0].content.as_str()),
+            Some("Name")
+        );
         assert_eq!(table.rows.len(), 2);
         assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
     }
@@ -3200,8 +3406,20 @@ mod tests {
             panic!("expected table");
         };
         assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
-        assert_eq!(table.header.as_ref().map(|row| row.cells[0].content.as_str()), Some("Name"));
-        assert_eq!(table.header.as_ref().map(|row| row.cells[1].content.as_str()), Some("Email"));
+        assert_eq!(
+            table
+                .header
+                .as_ref()
+                .map(|row| row.cells[0].content.as_str()),
+            Some("Name")
+        );
+        assert_eq!(
+            table
+                .header
+                .as_ref()
+                .map(|row| row.cells[1].content.as_str()),
+            Some("Email")
+        );
         assert_eq!(table.rows.len(), 2);
         assert_eq!(table.rows[0].cells[0].content, "Peter");
         assert_eq!(table.rows[0].cells[1].content, "peter@example.com");
@@ -3254,7 +3472,13 @@ mod tests {
         let [Block::Table(table)] = document.blocks.as_slice() else {
             panic!("expected table");
         };
-        assert_eq!(table.header.as_ref().map(|row| row.cells[0].style.as_deref()), Some(Some("header")));
+        assert_eq!(
+            table
+                .header
+                .as_ref()
+                .map(|row| row.cells[0].style.as_deref()),
+            Some(Some("header"))
+        );
         assert_eq!(table.rows[0].cells[0].rowspan, 2);
         assert_eq!(table.rows[0].cells[0].content, "Shared");
         assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
@@ -3272,7 +3496,13 @@ mod tests {
             panic!("expected table");
         };
         assert_eq!(table.header.as_ref().map(|row| row.cells.len()), Some(2));
-        assert_eq!(table.header.as_ref().map(|row| row.cells[1].style.as_deref()), Some(Some("header")));
+        assert_eq!(
+            table
+                .header
+                .as_ref()
+                .map(|row| row.cells[1].style.as_deref()),
+            Some(Some("header"))
+        );
         assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
         assert_eq!(table.rows[0].cells[1].blocks.len(), 2);
     }
@@ -3305,9 +3535,8 @@ mod tests {
 
     #[test]
     fn infers_table_grid_for_spans_without_cols() {
-        let document = parse_document(
-            "|===\n|Name|Description\n\n.2+|Shared\n|First\n\n|Second\n|===",
-        );
+        let document =
+            parse_document("|===\n|Name|Description\n\n.2+|Shared\n|First\n\n|Second\n|===");
 
         let [Block::Table(table)] = document.blocks.as_slice() else {
             panic!("expected table");
@@ -3321,7 +3550,9 @@ mod tests {
 
     #[test]
     fn applies_anchor_to_tables() {
-        let document = parse_document("[[deploy-table,Deployment Table]]\n|===\n|Name|Email\n|Peter|peter@example.com\n|===");
+        let document = parse_document(
+            "[[deploy-table,Deployment Table]]\n|===\n|Name|Email\n|Peter|peter@example.com\n|===",
+        );
 
         let [Block::Table(table)] = document.blocks.as_slice() else {
             panic!("expected table");
@@ -3356,7 +3587,7 @@ mod tests {
                                 lines: vec!["one".into()],
                                 id: None,
                                 reftext: None,
-                            metadata: BlockMetadata::default(),
+                                metadata: BlockMetadata::default(),
                             })],
                         },
                         ListItem {
@@ -3365,7 +3596,7 @@ mod tests {
                                 lines: vec!["two".into()],
                                 id: None,
                                 reftext: None,
-                            metadata: BlockMetadata::default(),
+                                metadata: BlockMetadata::default(),
                             })],
                         },
                     ],
@@ -3401,7 +3632,7 @@ mod tests {
                     lines: vec!["A paragraph.".into()],
                     id: None,
                     reftext: None,
-                metadata: BlockMetadata::default(),
+                    metadata: BlockMetadata::default(),
                 })],
                 reftext: None,
                 metadata: BlockMetadata::default(),
@@ -3429,9 +3660,22 @@ mod tests {
         };
         assert_eq!(listing.metadata.title.as_deref(), Some("Exhibit A"));
         assert_eq!(listing.metadata.style.as_deref(), Some("source"));
-        assert_eq!(listing.metadata.attributes.get("$1").map(String::as_str), Some("source"));
-        assert_eq!(listing.metadata.attributes.get("$2").map(String::as_str), Some("rust"));
-        assert_eq!(listing.metadata.attributes.get("language").map(String::as_str), Some("rust"));
+        assert_eq!(
+            listing.metadata.attributes.get("$1").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            listing.metadata.attributes.get("$2").map(String::as_str),
+            Some("rust")
+        );
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
+            Some("rust")
+        );
     }
 
     #[test]
@@ -3441,9 +3685,16 @@ mod tests {
         let [Block::Sidebar(sidebar)] = document.blocks.as_slice() else {
             panic!("expected sidebar");
         };
-        assert_eq!(sidebar.metadata.attributes.get("foo").map(String::as_str), Some("bar"));
         assert_eq!(
-            sidebar.metadata.attributes.get("open-option").map(String::as_str),
+            sidebar.metadata.attributes.get("foo").map(String::as_str),
+            Some("bar")
+        );
+        assert_eq!(
+            sidebar
+                .metadata
+                .attributes
+                .get("open-option")
+                .map(String::as_str),
             Some("")
         );
         assert_eq!(sidebar.metadata.role.as_deref(), Some("callout"));
@@ -3574,7 +3825,8 @@ mod tests {
 
     #[test]
     fn applies_anchor_to_styled_delimited_admonitions() {
-        let document = parse_document("[[ship-tip,Shipping Tip]]\n[TIP]\n====\nShip it carefully.\n====");
+        let document =
+            parse_document("[[ship-tip,Shipping Tip]]\n[TIP]\n====\nShip it carefully.\n====");
 
         let [Block::Admonition(admonition)] = document.blocks.as_slice() else {
             panic!("expected admonition");
