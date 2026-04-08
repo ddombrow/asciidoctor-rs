@@ -6,7 +6,8 @@ use crate::ast::{
     AdmonitionBlock as AstAdmonitionBlock, Block, CompoundBlock as AstCompoundBlock,
     DescriptionList as AstDescriptionList, Document, ImageBlock as AstImageBlock, Inline,
     InlineForm, InlineVariant, Listing as AstListing, OrderedList, Paragraph,
-    TableBlock as AstTableBlock, TableCell as AstTableCell, TableRow as AstTableRow, UnorderedList,
+    QuoteBlock as AstQuoteBlock, TableBlock as AstTableBlock, TableCell as AstTableCell,
+    TableRow as AstTableRow, UnorderedList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +59,7 @@ pub enum PreparedBlock {
     Listing(ListingBlock),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
+    Quote(QuoteBlock),
     Passthrough(PassthroughBlock),
     Image(ImageBlock),
     Toc(TocBlock),
@@ -399,6 +401,33 @@ pub struct CompoundBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct QuoteBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
+    pub blocks: Vec<PreparedBlock>,
+    pub content: String,
+    pub attributes: BTreeMap<String, String>,
+    pub content_model: Option<ContentModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub level: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citetitle: Option<String>,
+    pub is_verse: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Footnote {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -638,6 +667,15 @@ fn prepare_blocks(
                     preamble_blocks.push(sidebar);
                 } else {
                     prepared.push(sidebar);
+                }
+                index += 1;
+            }
+            Block::Quote(quote) => {
+                let quote = PreparedBlock::Quote(prepare_quote_block(quote));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(quote);
+                } else {
+                    prepared.push(quote);
                 }
                 index += 1;
             }
@@ -895,6 +933,29 @@ fn prepare_compound_block(block: &AstCompoundBlock) -> CompoundBlock {
     }
 }
 
+fn prepare_quote_block(block: &AstQuoteBlock) -> QuoteBlock {
+    QuoteBlock {
+        id: block.metadata.id.clone(),
+        reftext: block.reftext.clone(),
+        blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
+        content: block.content.clone().unwrap_or_default(),
+        attributes: block.metadata.attributes.clone(),
+        content_model: if block.is_verse {
+            Some(ContentModel::Simple)
+        } else {
+            Some(ContentModel::Compound)
+        },
+        line_number: None,
+        style: block.metadata.style.clone(),
+        role: block.metadata.role.clone(),
+        level: 0,
+        title: block.metadata.title.clone(),
+        attribution: block.attribution.clone(),
+        citetitle: block.citetitle.clone(),
+        is_verse: block.is_verse,
+    }
+}
+
 fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
     inlines
         .iter()
@@ -1007,6 +1068,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::Listing(_)
             | PreparedBlock::Example(_)
             | PreparedBlock::Sidebar(_)
+            | PreparedBlock::Quote(_)
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
             | PreparedBlock::Toc(_) => None,
@@ -1137,6 +1199,16 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                 }
                 collect_block_refs_into(&example.blocks, refs);
             }
+            PreparedBlock::Quote(quote) => {
+                if let Some(id) = &quote.id {
+                    refs.entry(normalize_section_ref_key(id))
+                        .or_insert(BlockRef {
+                            id: id.clone(),
+                            title: quote.reftext.clone().or_else(|| quote.title.clone()),
+                        });
+                }
+                collect_block_refs_into(&quote.blocks, refs);
+            }
             PreparedBlock::Section(section) => {
                 refs.entry(normalize_section_ref_key(&section.id))
                     .or_insert(BlockRef {
@@ -1258,6 +1330,9 @@ fn resolve_xrefs_in_blocks(
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
             }
+            PreparedBlock::Quote(quote) => {
+                resolve_xrefs_in_blocks(&mut quote.blocks, section_refs, block_refs)
+            }
             PreparedBlock::Section(section) => {
                 resolve_xrefs_in_blocks(&mut section.blocks, section_refs, block_refs)
             }
@@ -1346,6 +1421,9 @@ fn collect_footnotes_from_blocks(
             | PreparedBlock::Toc(_) => {}
             PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) => {
                 collect_footnotes_from_blocks(&mut example.blocks, footnotes, next_index)
+            }
+            PreparedBlock::Quote(quote) => {
+                collect_footnotes_from_blocks(&mut quote.blocks, footnotes, next_index)
             }
             PreparedBlock::Section(section) => {
                 collect_footnotes_from_blocks(&mut section.blocks, footnotes, next_index)
@@ -1483,6 +1561,13 @@ fn prepared_block_plain_text(block: &PreparedBlock) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         PreparedBlock::Listing(listing) => listing.content.clone(),
+        PreparedBlock::Quote(quote) => {
+            if quote.content.is_empty() {
+                prepared_blocks_plain_text(&quote.blocks)
+            } else {
+                quote.content.clone()
+            }
+        }
         PreparedBlock::Passthrough(passthrough) => passthrough.content.clone(),
         PreparedBlock::Image(image) => image.alt.clone(),
         PreparedBlock::Toc(_) => String::new(),

@@ -115,6 +115,7 @@ fn render_block(
         PreparedBlock::Listing(listing) => render_listing(html, listing),
         PreparedBlock::Example(example) => render_compound(html, "exampleblock", example, ctx),
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
+        PreparedBlock::Quote(quote) => render_quote(html, quote, ctx),
         PreparedBlock::Passthrough(p) => {
             html.push_str(&p.content);
             html.push('\n');
@@ -380,6 +381,48 @@ fn render_sidebar(
         render_block(html, child, ctx);
     }
     html.push_str("</div>\n</div>\n");
+}
+
+fn render_quote(
+    html: &mut String,
+    block: &crate::prepare::QuoteBlock,
+    ctx: &RenderContext<'_>,
+) {
+    let div_class = if block.is_verse { "verseblock" } else { "quoteblock" };
+    html.push_str(&format!("<div class=\"{div_class}\""));
+    if let Some(id) = &block.id {
+        html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    html.push_str(">\n");
+    if let Some(title) = &block.title {
+        html.push_str(&format!(
+            "<div class=\"title\">{}</div>\n",
+            escape_html(title)
+        ));
+    }
+    if block.is_verse {
+        html.push_str("<pre class=\"content\">");
+        html.push_str(&escape_html(&block.content));
+        html.push_str("</pre>\n");
+    } else {
+        html.push_str("<blockquote>\n");
+        for child in &block.blocks {
+            render_block(html, child, ctx);
+        }
+        html.push_str("</blockquote>\n");
+    }
+    if block.attribution.is_some() || block.citetitle.is_some() {
+        html.push_str("<div class=\"attribution\">\n");
+        html.push_str("&#8212; ");
+        if let Some(attribution) = &block.attribution {
+            html.push_str(&escape_html(attribution));
+        }
+        if let Some(citetitle) = &block.citetitle {
+            html.push_str(&format!("<br>\n<cite>{}</cite>\n", escape_html(citetitle)));
+        }
+        html.push_str("</div>\n");
+    }
+    html.push_str("</div>\n");
 }
 
 fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBlock) {
@@ -1864,5 +1907,43 @@ mod tests {
         assert!(html.contains("<ul class=\"sectlevel1\">"));
         // Level 2 should be suppressed
         assert!(!html.contains("sectlevel2"));
+    }
+
+    #[test]
+    fn renders_quote_block() {
+        let html = render_html(&crate::parser::parse_document(
+            "[quote, Abraham Lincoln, Gettysburg Address]\n____\nFour score.\n____",
+        ));
+        assert!(html.contains("<div class=\"quoteblock\""));
+        assert!(html.contains("<blockquote>"));
+        assert!(html.contains("Four score."));
+        assert!(html.contains("</blockquote>"));
+        assert!(html.contains("<div class=\"attribution\">"));
+        assert!(html.contains("Abraham Lincoln"));
+        assert!(html.contains("<cite>Gettysburg Address</cite>"));
+    }
+
+    #[test]
+    fn renders_quote_block_without_attribution() {
+        let html = render_html(&crate::parser::parse_document(
+            "____\nSome quoted text.\n____",
+        ));
+        assert!(html.contains("<div class=\"quoteblock\""));
+        assert!(html.contains("<blockquote>"));
+        assert!(html.contains("Some quoted text."));
+        assert!(!html.contains("<div class=\"attribution\">"));
+    }
+
+    #[test]
+    fn renders_verse_block() {
+        let html = render_html(&crate::parser::parse_document(
+            "[verse, Carl Sandburg, Fog]\n____\nThe fog comes\non little cat feet.\n____",
+        ));
+        assert!(html.contains("<div class=\"verseblock\""));
+        assert!(html.contains("<pre class=\"content\">"));
+        assert!(html.contains("The fog comes\non little cat feet."));
+        assert!(html.contains("<div class=\"attribution\">"));
+        assert!(html.contains("Carl Sandburg"));
+        assert!(html.contains("<cite>Fog</cite>"));
     }
 }

@@ -19,6 +19,7 @@ pub enum Block {
     Listing(Listing),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
+    Quote(QuoteBlock),
     Passthrough(String),
     Image(ImageBlock),
     Toc,
@@ -70,6 +71,19 @@ pub struct Listing {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompoundBlock {
     pub blocks: Vec<Block>,
+    pub reftext: Option<String>,
+    pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteBlock {
+    /// Child blocks (quote style); empty for verse style.
+    pub blocks: Vec<Block>,
+    /// Raw content lines joined with newlines (verse style only).
+    pub content: Option<String>,
+    pub attribution: Option<String>,
+    pub citetitle: Option<String>,
+    pub is_verse: bool,
     pub reftext: Option<String>,
     pub metadata: BlockMetadata,
 }

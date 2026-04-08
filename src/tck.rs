@@ -661,6 +661,7 @@ fn parse_delimited_block(
         "----" => "listing",
         "====" => "example",
         "****" => "sidebar",
+        "____" => "quote",
         _ => return None,
     };
 
@@ -723,6 +724,7 @@ fn parse_delimited_block(
             "----" => "----",
             "====" => "====",
             "****" => "****",
+            "____" => "____",
             _ => unreachable!(),
         }),
         inlines: None,
@@ -765,6 +767,36 @@ fn parse_delimited_block(
         "example" | "sidebar" => {
             let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
             block.blocks = Some(children);
+        }
+        "quote" => {
+            let is_verse = block
+                .metadata
+                .as_ref()
+                .and_then(|m| m.attributes.get("style"))
+                .is_some_and(|s| s.eq_ignore_ascii_case("verse"));
+            if is_verse {
+                block.name = "verse";
+                let content = inner_lines.join("\n");
+                if !content.is_empty() {
+                    let start = Position {
+                        line: start_line + 1,
+                        col: 1,
+                    };
+                    let end = Position {
+                        line: end_line - 1,
+                        col: inner_lines.last().map(|line| line.len()).unwrap_or(1),
+                    };
+                    block.inlines = Some(vec![AsgInline::Text(InlineText {
+                        name: "text",
+                        node_type: "string",
+                        value: content,
+                        location: [start, end],
+                    })]);
+                }
+            } else {
+                let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
+                block.blocks = Some(children);
+            }
         }
         _ => {}
     }
@@ -907,7 +939,7 @@ fn split_attribute_list(input: &str) -> Vec<String> {
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****")
+    matches!(line.trim(), "----" | "====" | "****" | "____")
 }
 
 fn apply_attribute_list(
@@ -2453,5 +2485,34 @@ mod tests {
         let sidebar = document.blocks.get(1).expect("sidebar block");
         assert_eq!(sidebar.name, "sidebar");
         assert_eq!(sidebar.id.as_deref(), Some("aside"));
+    }
+
+    #[test]
+    fn renders_tck_quote_block() {
+        let document = parse_tck_document("[quote, Abraham Lincoln]\n____\nFour score.\n____");
+        let block = document.blocks.first().expect("quote block");
+
+        assert_eq!(block.name, "quote");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("____"));
+        assert!(block.blocks.is_some());
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(metadata.attributes.get("$2").map(String::as_str), Some("Abraham Lincoln"));
+    }
+
+    #[test]
+    fn renders_tck_verse_block() {
+        let document = parse_tck_document("[verse, Carl Sandburg, Fog]\n____\nThe fog comes\non little cat feet.\n____");
+        let block = document.blocks.first().expect("verse block");
+
+        assert_eq!(block.name, "verse");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("____"));
+        assert!(block.inlines.is_some());
+        let inlines = block.inlines.as_ref().unwrap();
+        let AsgInline::Text(text) = inlines.first().expect("text inline") else {
+            panic!("expected text inline");
+        };
+        assert_eq!(text.value, "The fog comes\non little cat feet.");
     }
 }

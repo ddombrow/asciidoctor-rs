@@ -1,0 +1,66 @@
+= Quote & Verse Blocks
+:toc:
+
+== Quote Blocks
+
+A quote block wraps content in a `blockquote` and optionally attributes it to an author and source.
+
+=== Simple Quote
+
+____
+The only way to do great work is to love what you do.
+____
+
+=== Attributed Quote
+
+[quote, Abraham Lincoln, Gettysburg Address]
+____
+Four score and seven years ago our fathers brought forth on this continent,
+a new nation, conceived in Liberty, and dedicated to the proposition
+that all men are created equal.
+____
+
+=== Quote with Nested Content
+
+[quote, Donald Knuth, The Art of Computer Programming]
+____
+Premature optimization is the root of all evil.
+
+The real problem is that programmers have spent far too much time worrying
+about efficiency in the wrong places and at the wrong times.
+____
+
+== Verse Blocks
+
+A verse block preserves line breaks, making it suitable for poetry and song lyrics.
+
+=== Poetry
+
+[verse, Carl Sandburg, Fog]
+____
+The fog comes
+on little cat feet.
+
+It sits looking
+over harbor and city
+on silent haunches
+and then moves on.
+____
+
+=== Song Lyrics
+
+[verse, William Blake, The Tyger]
+____
+Tyger Tyger, burning bright,
+In the forests of the night;
+What immortal hand or eye,
+Could frame thy fearful symmetry?
+____
+
+=== Verse without Attribution
+
+[verse]
+____
+To be, or not to be,
+that is the question.
+____

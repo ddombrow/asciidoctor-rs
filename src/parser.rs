@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::ast::{
     AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock,
     Document, Heading, ImageBlock, ListItem, Listing,
-    OrderedList, Paragraph, TableBlock, TableCell, TableRow, UnorderedList,
+    OrderedList, Paragraph, QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
 };
 use crate::inline::parse_inlines;
 
@@ -1132,6 +1132,13 @@ fn block_plain_text(block: &Block) -> String {
             .join("\n"),
         Block::Listing(listing) => listing.lines.join("\n"),
         Block::Example(example) | Block::Sidebar(example) => blocks_plain_text(&example.blocks),
+        Block::Quote(quote) => {
+            if let Some(content) = &quote.content {
+                content.clone()
+            } else {
+                blocks_plain_text(&quote.blocks)
+            }
+        }
         Block::Passthrough(content) => content.clone(),
         Block::Image(image) => image.alt.clone(),
         Block::Heading(heading) => heading.title.clone(),
@@ -1215,6 +1222,7 @@ fn parse_delimited_block(
         "====" => "example",
         "****" => "sidebar",
         "++++" => "passthrough",
+        "____" => "quote",
         _ => return None,
     };
 
@@ -1267,6 +1275,33 @@ fn parse_delimited_block(
                 reftext: None,
                 metadata: prelude.metadata,
             })
+        }
+        "quote" => {
+            let is_verse = prelude.metadata.style.as_deref() == Some("verse");
+            let attribution = prelude.metadata.attributes.get("$2").cloned();
+            let citetitle = prelude.metadata.attributes.get("$3").cloned();
+            if is_verse {
+                Block::Quote(QuoteBlock {
+                    blocks: vec![],
+                    content: Some(inner_lines.join("\n")),
+                    attribution,
+                    citetitle,
+                    is_verse: true,
+                    reftext: None,
+                    metadata: prelude.metadata,
+                })
+            } else {
+                let mut nested_title = None;
+                Block::Quote(QuoteBlock {
+                    blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                    content: None,
+                    attribution,
+                    citetitle,
+                    is_verse: false,
+                    reftext: None,
+                    metadata: prelude.metadata,
+                })
+            }
         }
         _ => return None,
     };
@@ -1342,7 +1377,7 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "++++")
+    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____")
 }
 
 fn parse_block_title(line: &str) -> Option<String> {
@@ -3931,5 +3966,44 @@ mod tests {
             "assets/mupdate-update-flow/initial-inventory.png"
         );
         assert_eq!(image.alt, "initial inventory");
+    }
+
+    #[test]
+    fn parses_quote_block() {
+        let document = parse_document("[quote, Abraham Lincoln, Gettysburg Address]\n____\nFour score.\n____");
+
+        let [Block::Quote(quote)] = document.blocks.as_slice() else {
+            panic!("expected quote block");
+        };
+        assert!(!quote.is_verse);
+        assert_eq!(quote.attribution.as_deref(), Some("Abraham Lincoln"));
+        assert_eq!(quote.citetitle.as_deref(), Some("Gettysburg Address"));
+        assert_eq!(quote.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_quote_block_without_attribution() {
+        let document = parse_document("____\nSome quoted text.\n____");
+
+        let [Block::Quote(quote)] = document.blocks.as_slice() else {
+            panic!("expected quote block");
+        };
+        assert!(!quote.is_verse);
+        assert!(quote.attribution.is_none());
+        assert!(quote.citetitle.is_none());
+        assert_eq!(quote.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_verse_block() {
+        let document = parse_document("[verse, Carl Sandburg, Fog]\n____\nThe fog comes\non little cat feet.\n____");
+
+        let [Block::Quote(quote)] = document.blocks.as_slice() else {
+            panic!("expected verse block");
+        };
+        assert!(quote.is_verse);
+        assert_eq!(quote.attribution.as_deref(), Some("Carl Sandburg"));
+        assert_eq!(quote.citetitle.as_deref(), Some("Fog"));
+        assert_eq!(quote.content.as_deref(), Some("The fog comes\non little cat feet."));
     }
 }

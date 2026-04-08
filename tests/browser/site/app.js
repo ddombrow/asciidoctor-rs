@@ -428,6 +428,32 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     `;
   }
 
+  if (block.type === "quote") {
+    const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const attribution = block.attribution || block.citetitle
+      ? `<div class="attribution">\n&#8212; ${escapeHtml(block.attribution ?? "")}${block.citetitle ? `<br>\n<cite>${escapeHtml(block.citetitle)}</cite>` : ""}\n</div>`
+      : "";
+    if (block.isVerse) {
+      return `
+        <div class="verseblock"${id}>
+          ${title}
+          <pre class="content">${escapeHtml(block.content ?? "")}</pre>
+          ${attribution}
+        </div>
+      `;
+    }
+    return `
+      <div class="quoteblock"${id}>
+        ${title}
+        <blockquote>
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+        </blockquote>
+        ${attribution}
+      </div>
+    `;
+  }
+
   if (block.type === "passthrough") {
     return block.content ?? "";
   }
