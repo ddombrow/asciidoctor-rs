@@ -39,24 +39,27 @@ cpSync(resolve(root, "examples", "sample.adoc"), resolve(siteDir, "sample.adoc")
 function buildRustWasm() {
   const buildArgs = ["--target", "wasm32-unknown-unknown", "--features", "wasm"];
   const offlineOnly = process.env.ASCIIDOCTOR_RS_WASM_BUILD_OFFLINE === "1";
-  const offlineResult = run("cargo", ["build", "--offline", ...buildArgs]);
+  const offlineResult = run("cargo", ["build", "--offline", ...buildArgs], true);
 
   if (offlineResult.status === 0) {
+    if (offlineResult.stdout) process.stdout.write(offlineResult.stdout);
+    if (offlineResult.stderr) process.stderr.write(offlineResult.stderr);
     return;
   }
 
   if (offlineOnly || !isMissingOfflineDependency(offlineResult.stderr)) {
+    if (offlineResult.stdout) process.stdout.write(offlineResult.stdout);
+    if (offlineResult.stderr) process.stderr.write(offlineResult.stderr);
     throw new Error("Rust WASM build failed");
   }
 
-  console.warn("Offline Cargo build is missing cached crates. Retrying with network access...");
   const onlineResult = run("cargo", ["build", ...buildArgs]);
   if (onlineResult.status !== 0) {
     throw new Error("Rust WASM build failed");
   }
 }
 
-function run(command, args) {
+function run(command, args, captureOnly = false) {
   const resolvedCommand =
     process.platform === "win32" && command === "cargo" ? "cargo.exe" : command;
   const result = spawnSync(resolvedCommand, args, {
@@ -64,12 +67,13 @@ function run(command, args) {
     encoding: "utf8"
   });
 
-  if (result.stdout) {
-    process.stdout.write(result.stdout);
-  }
-
-  if (result.stderr) {
-    process.stderr.write(result.stderr);
+  if (!captureOnly) {
+    if (result.stdout) {
+      process.stdout.write(result.stdout);
+    }
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+    }
   }
 
   return result;
