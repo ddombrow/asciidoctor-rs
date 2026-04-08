@@ -627,7 +627,7 @@ h|Area
   const frame = page.frameLocator("#preview-frame");
   await expect(frame.locator("table.tableblock tbody tr")).toHaveCount(2);
   await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(0)).toHaveText("South");
-  await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(1).locator(".paragraph p")).toHaveText("AsciiDoc cell with a list:");
+  await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(1).locator(".paragraph p").nth(0)).toHaveText("AsciiDoc cell with a list:");
   await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(1).locator("ul li").nth(0)).toHaveText("first");
   await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(1).locator("ul li").nth(1)).toHaveText("second");
 });
