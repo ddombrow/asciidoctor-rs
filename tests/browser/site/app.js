@@ -403,14 +403,35 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     const title = block.title
       ? `<div class="title">${escapeHtml(block.title)}</div>`
       : "";
+    const calloutMap = Object.fromEntries(
+      (block.calloutLines ?? []).map(([i, n]) => [i, n])
+    );
+    const lines = (block.content ?? "").split("\n");
+    const renderedContent = lines
+      .map((line, i) =>
+        calloutMap[i] !== undefined
+          ? `${escapeHtml(line)}<i class="conum" data-value="${calloutMap[i]}"></i><b>${calloutMap[i]}</b>`
+          : escapeHtml(line)
+      )
+      .join("\n");
     return `
       <div class="listingblock"${id}>
         ${title}
         <div class="content">
-          <pre>${escapeHtml(block.content ?? "")}</pre>
+          <pre>${renderedContent}</pre>
         </div>
       </div>
     `;
+  }
+
+  if (block.type === "callout_list") {
+    const rows = (block.items ?? [])
+      .map(item => {
+        const n = item.number;
+        return `<tr>\n<td><i class="conum" data-value="${n}"></i><b>${n}</b></td>\n<td>${renderInlines(item.inlines ?? [])}</td>\n</tr>`;
+      })
+      .join("\n");
+    return `<div class="colist arabic">\n<table>\n<tbody>\n${rows}\n</tbody>\n</table>\n</div>`;
   }
 
   if (block.type === "example") {

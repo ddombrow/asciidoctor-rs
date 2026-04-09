@@ -114,6 +114,7 @@ fn render_block(
         PreparedBlock::Table(table) => render_table(html, table, ctx),
         PreparedBlock::Listing(listing) => render_listing(html, listing),
         PreparedBlock::Literal(literal) => render_literal(html, literal),
+        PreparedBlock::CalloutList(colist) => render_callout_list(html, colist),
         PreparedBlock::Example(example) => render_compound(html, "exampleblock", example, ctx),
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
         PreparedBlock::Open(open) => render_open(html, open, ctx),
@@ -335,8 +336,40 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
         ));
     }
     html.push_str("<div class=\"content\">\n<pre>");
-    html.push_str(&escape_html(&listing.content));
+    if listing.callout_lines.is_empty() {
+        html.push_str(&escape_html(&listing.content));
+    } else {
+        let conum_map: std::collections::HashMap<usize, u32> =
+            listing.callout_lines.iter().copied().collect();
+        let rendered = listing
+            .content
+            .split('\n')
+            .enumerate()
+            .map(|(i, line)| {
+                let escaped = escape_html(line);
+                match conum_map.get(&i) {
+                    Some(n) => format!("{escaped}<i class=\"conum\" data-value=\"{n}\"></i><b>{n}</b>"),
+                    None => escaped,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        html.push_str(&rendered);
+    }
     html.push_str("</pre>\n</div>\n</div>\n");
+}
+
+fn render_callout_list(html: &mut String, colist: &crate::prepare::CalloutListBlock) {
+    html.push_str("<div class=\"colist arabic\">\n<table>\n<tbody>\n");
+    for item in &colist.items {
+        let n = item.number;
+        html.push_str(&format!(
+            "<tr>\n<td><i class=\"conum\" data-value=\"{n}\"></i><b>{n}</b></td>\n<td>"
+        ));
+        render_inlines(html, &item.inlines);
+        html.push_str("</td>\n</tr>\n");
+    }
+    html.push_str("</tbody>\n</table>\n</div>\n");
 }
 
 fn render_literal(html: &mut String, literal: &crate::prepare::ListingBlock) {
@@ -1463,6 +1496,7 @@ mod tests {
             blocks: vec![
                 Block::Listing(Listing {
                     lines: vec!["puts 'hello'".into()],
+                    callouts: vec![],
                     reftext: None,
                     metadata: BlockMetadata::default(),
                 }),
@@ -1508,6 +1542,7 @@ mod tests {
             title: None,
             blocks: vec![Block::Listing(Listing {
                 lines: vec!["puts 'hello'".into()],
+                callouts: vec![],
                 reftext: None,
                 metadata: BlockMetadata {
                     title: Some("Exhibit A".into()),

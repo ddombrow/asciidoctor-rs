@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock,
-    Document, Heading, ImageBlock, ListItem, Listing,
+    AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CalloutItem, CalloutList,
+    CompoundBlock, Document, Heading, ImageBlock, ListItem, Listing,
     OrderedList, Paragraph, QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
 };
 use crate::inline::parse_inlines;
@@ -309,6 +309,25 @@ fn parse_blocks_from_lines(
                 )),
                 pending_anchor.take(),
             );
+            index += consumed_lines;
+            continue;
+        }
+
+        if let Some((colist, consumed_lines)) = parse_callout_list(lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
+            );
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                colist,
+                pending_anchor.take(),
+            );
+            pending_block_prelude = None;
             index += consumed_lines;
             continue;
         }
@@ -1167,6 +1186,7 @@ fn block_plain_text(block: &Block) -> String {
         Block::Image(image) => image.alt.clone(),
         Block::Heading(heading) => heading.title.clone(),
         Block::Toc => String::new(),
+        Block::CalloutList(_) => String::new(),
         Block::DescriptionList(list) => list
             .items
             .iter()
@@ -1281,13 +1301,21 @@ fn parse_delimited_block(
 
     let block = match block_kind {
         "passthrough" => Block::Passthrough(inner_lines.join("\n")),
-        "listing" => Block::Listing(Listing {
-            lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
-            reftext: None,
-            metadata: prelude.metadata,
-        }),
+        "listing" => {
+            let mut lines = Vec::new();
+            let mut callouts = Vec::new();
+            for (idx, &line) in inner_lines.iter().enumerate() {
+                let (content, marker) = strip_callout_marker(line);
+                if let Some(n) = marker {
+                    callouts.push((idx, n));
+                }
+                lines.push(content);
+            }
+            Block::Listing(Listing { lines, callouts, reftext: None, metadata: prelude.metadata })
+        }
         "literal" => Block::Literal(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+            callouts: vec![],
             reftext: None,
             metadata: prelude.metadata,
         }),
@@ -1445,6 +1473,56 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
 
     prelude.consumed_lines = cursor - index;
     (prelude.consumed_lines > 0).then_some(prelude)
+}
+
+fn strip_callout_marker(line: &str) -> (String, Option<u32>) {
+    let trimmed = line.trim_end();
+    if let Some(rest) = trimmed.strip_suffix('>') {
+        if let Some(start) = rest.rfind('<') {
+            let num_str = &rest[start + 1..];
+            if let Ok(n) = num_str.parse::<u32>() {
+                let content = rest[..start].trim_end().to_owned();
+                return (content, Some(n));
+            }
+        }
+    }
+    (line.to_owned(), None)
+}
+
+fn parse_callout_list(lines: &[&str], index: usize) -> Option<(Block, usize)> {
+    // A callout list is one or more consecutive lines matching `<N> description`
+    let mut items = Vec::new();
+    let mut i = index;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix('<') {
+            if let Some(gt) = rest.find('>') {
+                let num_str = &rest[..gt];
+                if let Ok(n) = num_str.parse::<u32>() {
+                    let content = rest[gt + 1..].trim();
+                    items.push(CalloutItem {
+                        number: n,
+                        inlines: parse_inlines(content),
+                    });
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    if items.is_empty() {
+        return None;
+    }
+    let consumed = i - index;
+    Some((
+        Block::CalloutList(CalloutList {
+            items,
+            metadata: BlockMetadata::default(),
+        }),
+        consumed,
+    ))
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
@@ -2046,6 +2124,7 @@ fn make_block_from_paragraph(
         }
         return Block::Literal(Listing {
             lines,
+            callouts: vec![],
             reftext,
             metadata,
         });
@@ -2055,6 +2134,7 @@ fn make_block_from_paragraph(
     if lines.first().is_some_and(|l| l.starts_with(' ') || l.starts_with('\t')) {
         return Block::Literal(Listing {
             lines,
+            callouts: vec![],
             reftext,
             metadata,
         });
@@ -3517,6 +3597,7 @@ mod tests {
             document.blocks,
             vec![Block::Listing(Listing {
                 lines: vec!["def main".into(), "  puts 'hello'".into(), "end".into()],
+                callouts: vec![],
                 reftext: None,
                 metadata: BlockMetadata::default(),
             })]

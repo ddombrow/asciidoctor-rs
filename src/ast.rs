@@ -18,6 +18,7 @@ pub enum Block {
     Table(TableBlock),
     Listing(Listing),
     Literal(Listing),
+    CalloutList(CalloutList),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
     Open(CompoundBlock),
@@ -65,9 +66,22 @@ pub struct AdmonitionBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
-    pub lines: Vec<String>,
+    pub lines: Vec<String>,          // content with <N> callout markers already stripped
+    pub callouts: Vec<(usize, u32)>, // (0-based line index, callout number)
     pub reftext: Option<String>,
     pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalloutList {
+    pub items: Vec<CalloutItem>,
+    pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalloutItem {
+    pub number: u32,
+    pub inlines: Vec<Inline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

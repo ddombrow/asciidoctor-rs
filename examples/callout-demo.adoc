@@ -1,0 +1,67 @@
+= Callout Lists Demo
+
+== Basic Callouts
+
+----
+require 'sinatra' # <1>
+
+get '/hi' do # <2>
+  "Hello World!" # <3>
+end
+----
+<1> Import the Sinatra library.
+<2> Define the route handler for GET /hi.
+<3> Return a plain-text response.
+
+== Multiple Callout Pairs
+
+Two separate listing blocks each with their own callout list:
+
+----
+def greet(name) # <1>
+  puts "Hello, #{name}!" # <2>
+end
+----
+<1> Define a method that takes a name parameter.
+<2> Print the greeting to standard output.
+
+----
+greet("World") # <1>
+greet("AsciiDoc") # <2>
+----
+<1> Call greet with the string "World".
+<2> Call greet again with a different argument.
+
+== Callouts with Shell Commands
+
+[source,bash]
+----
+$ git clone https://github.com/example/repo.git # <1>
+$ cd repo # <2>
+$ make install # <3>
+----
+<1> Clone the repository from GitHub.
+<2> Change into the cloned directory.
+<3> Build and install the project.
+
+== Numbered Out of Order
+
+Callout numbers don't need to be sequential — they just need to match:
+
+----
+alpha = 1 # <1>
+beta = 2  # <3>
+gamma = 3 # <2>
+----
+<1> First variable.
+<2> Third variable, but referenced as callout two.
+<3> Second variable, but referenced as callout three.
+
+== Callouts with Inline Formatting in Descriptions
+
+----
+import os # <1>
+import sys # <2>
+----
+<1> The *os* module provides operating system interfaces.
+<2> The `sys` module gives access to interpreter variables.

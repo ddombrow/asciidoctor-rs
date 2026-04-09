@@ -58,6 +58,7 @@ pub enum PreparedBlock {
     Table(TableBlock),
     Listing(ListingBlock),
     Literal(ListingBlock),
+    CalloutList(CalloutListBlock),
     Example(CompoundBlock),
     Sidebar(CompoundBlock),
     Open(CompoundBlock),
@@ -192,6 +193,22 @@ pub struct ListingBlock {
     pub level: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// (0-based line index, callout number) — empty when block has no callouts
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub callout_lines: Vec<(usize, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalloutListBlock {
+    pub items: Vec<CalloutItemBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalloutItemBlock {
+    pub number: u32,
+    pub inlines: Vec<PreparedInline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -676,6 +693,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
+            Block::CalloutList(colist) => {
+                let colist = PreparedBlock::CalloutList(prepare_callout_list(colist));
+                if wrap_document_preamble && !seen_section {
+                    preamble_blocks.push(colist);
+                } else {
+                    prepared.push(colist);
+                }
+                index += 1;
+            }
             Block::Example(example) => {
                 let example = PreparedBlock::Example(prepare_compound_block(example));
                 if wrap_document_preamble && !seen_section {
@@ -916,6 +942,16 @@ fn prepare_listing(listing: &AstListing) -> ListingBlock {
         role: listing.metadata.role.clone(),
         level: 0,
         title: listing.metadata.title.clone(),
+        callout_lines: listing.callouts.clone(),
+    }
+}
+
+fn prepare_callout_list(colist: &crate::ast::CalloutList) -> CalloutListBlock {
+    CalloutListBlock {
+        items: colist.items.iter().map(|item| CalloutItemBlock {
+            number: item.number,
+            inlines: prepare_inlines(&item.inlines),
+        }).collect(),
     }
 }
 
@@ -1106,6 +1142,7 @@ fn collect_sections(blocks: &[PreparedBlock]) -> Vec<DocumentSection> {
             | PreparedBlock::Table(_)
             | PreparedBlock::Listing(_)
             | PreparedBlock::Literal(_)
+            | PreparedBlock::CalloutList(_)
             | PreparedBlock::Example(_)
             | PreparedBlock::Sidebar(_)
             | PreparedBlock::Open(_)
@@ -1261,7 +1298,7 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     });
                 collect_block_refs_into(&section.blocks, refs);
             }
-            PreparedBlock::Passthrough(_) | PreparedBlock::Toc(_) => {}
+            PreparedBlock::Passthrough(_) | PreparedBlock::Toc(_) | PreparedBlock::CalloutList(_) => {}
             PreparedBlock::Image(image) => {
                 if let Some(id) = &image.id {
                     refs.entry(normalize_section_ref_key(id))
@@ -1378,6 +1415,7 @@ fn resolve_xrefs_in_blocks(
             PreparedBlock::Section(section) => {
                 resolve_xrefs_in_blocks(&mut section.blocks, section_refs, block_refs)
             }
+            PreparedBlock::CalloutList(_) => {}
         }
     }
 }
@@ -1471,6 +1509,7 @@ fn collect_footnotes_from_blocks(
             PreparedBlock::Section(section) => {
                 collect_footnotes_from_blocks(&mut section.blocks, footnotes, next_index)
             }
+            PreparedBlock::CalloutList(_) => {}
         }
     }
 }
@@ -1614,7 +1653,7 @@ fn prepared_block_plain_text(block: &PreparedBlock) -> String {
         }
         PreparedBlock::Passthrough(passthrough) => passthrough.content.clone(),
         PreparedBlock::Image(image) => image.alt.clone(),
-        PreparedBlock::Toc(_) => String::new(),
+        PreparedBlock::Toc(_) | PreparedBlock::CalloutList(_) => String::new(),
     }
 }
 
@@ -2951,6 +2990,7 @@ mod tests {
             blocks: vec![
                 Block::Listing(Listing {
                     lines: vec!["puts 'hello'".into()],
+                    callouts: vec![],
                     reftext: None,
                     metadata: Default::default(),
                 }),

@@ -616,6 +616,26 @@ fn parse_blocks(
             continue;
         }
 
+        // Callout list items (<N> description) — skip them in TCK output
+        {
+            let trimmed = line.trim_start();
+            let is_callout = trimmed.starts_with('<')
+                && trimmed.find('>').is_some_and(|i| {
+                    trimmed[1..i].chars().all(|c| c.is_ascii_digit()) && i > 1
+                });
+            if is_callout {
+                flush_paragraph(
+                    &mut blocks,
+                    &mut paragraph_start,
+                    &mut paragraph_lines,
+                    line_offset,
+                    &mut last_end,
+                );
+                index += 1;
+                continue;
+            }
+        }
+
         if line.trim().is_empty() {
             flush_paragraph(
                 &mut blocks,
