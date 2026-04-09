@@ -567,6 +567,15 @@ function renderInlines(inlines) {
         return `<span class="image"><img src="${escapeHtml(inline.target ?? "")}" alt="${escapeHtml(inline.alt ?? "")}"${widthAttr}${heightAttr}></span>`;
       }
 
+      if (inline.type === "icon") {
+        const name = escapeHtml(inline.name ?? "");
+        let classes = `fa fa-${name}`;
+        if (inline.size) classes += ` fa-${escapeHtml(inline.size)}`;
+        if (inline.role) classes += ` ${escapeHtml(inline.role)}`;
+        const titleAttr = inline.title ? ` title="${escapeHtml(inline.title)}"` : "";
+        return `<span class="icon"><i class="${classes}"${titleAttr}></i></span>`;
+      }
+
       if (inline.type === "footnote") {
         const index = inline.index ?? 0;
         return `<sup class="footnote" id="_footnoteref_${index}"><a href="#_footnotedef_${index}">${index}</a></sup>`;

@@ -1995,6 +1995,15 @@ fn map_inline(
                 offset_to_end_position(end, line_starts, base_line, base_col),
             ],
         }),
+        Inline::Icon(icon) => AsgInline::Text(InlineText {
+            name: "text",
+            node_type: "string",
+            value: icon.name.clone(),
+            location: [
+                offset_to_position(start, line_starts, base_line, base_col),
+                offset_to_end_position(end, line_starts, base_line, base_col),
+            ],
+        }),
         Inline::Footnote(footnote) => AsgInline::Span(InlineSpanNode {
             name: "footnote",
             node_type: "inline",

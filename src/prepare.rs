@@ -243,6 +243,7 @@ pub enum PreparedInline {
     Anchor(AnchorInline),
     Passthrough(PassthroughInline),
     Image(ImageInline),
+    Icon(IconInline),
     Footnote(FootnoteInline),
 }
 
@@ -336,6 +337,18 @@ pub struct ImageInline {
     pub width: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IconInline {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1014,6 +1027,12 @@ fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
                 width: image.width.clone(),
                 height: image.height.clone(),
             }),
+            Inline::Icon(icon) => PreparedInline::Icon(IconInline {
+                name: icon.name.clone(),
+                size: icon.size.clone(),
+                title: icon.title.clone(),
+                role: icon.role.clone(),
+            }),
             Inline::Footnote(footnote) => PreparedInline::Footnote(FootnoteInline {
                 index: None,
                 inlines: prepare_inlines(&footnote.inlines),
@@ -1282,7 +1301,7 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
             PreparedInline::Footnote(footnote) => {
                 collect_inline_anchor_refs(&footnote.inlines, refs)
             }
-            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {
+            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) | PreparedInline::Icon(_) => {
             }
         }
     }
@@ -1463,7 +1482,7 @@ fn collect_footnotes_from_inlines(
 ) {
     for inline in inlines {
         match inline {
-            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) => {
+            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) | PreparedInline::Icon(_) => {
             }
             PreparedInline::Span(span) => {
                 collect_footnotes_from_inlines(&mut span.inlines, footnotes, next_index)
@@ -1609,7 +1628,8 @@ fn resolve_xrefs_in_inlines(
             PreparedInline::Text(_)
             | PreparedInline::Link(_)
             | PreparedInline::Passthrough(_)
-            | PreparedInline::Image(_) => {}
+            | PreparedInline::Image(_)
+            | PreparedInline::Icon(_) => {}
             PreparedInline::Anchor(anchor) => {
                 resolve_xrefs_in_inlines(&mut anchor.inlines, section_refs, block_refs)
             }
@@ -1768,6 +1788,7 @@ fn prepared_inline_plain_text(inline: &PreparedInline) -> String {
             .join(""),
         PreparedInline::Passthrough(p) => p.value.clone(),
         PreparedInline::Image(image) => image.alt.clone(),
+        PreparedInline::Icon(icon) => icon.name.clone(),
         PreparedInline::Footnote(footnote) => format!("[{}]", footnote.index.unwrap_or(0)),
     }
 }

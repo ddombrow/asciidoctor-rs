@@ -776,6 +776,27 @@ fn render_inlines(html: &mut String, inlines: &[PreparedInline]) {
                 render_inlines(html, &anchor.inlines);
             }
             PreparedInline::Passthrough(p) => html.push_str(&p.value),
+            PreparedInline::Icon(icon) => {
+                let mut classes = format!("fa fa-{}", escape_html(&icon.name));
+                // Append Font Awesome size modifier if provided
+                if let Some(size) = &icon.size {
+                    classes.push(' ');
+                    classes.push_str(&format!("fa-{}", escape_html(size)));
+                }
+                // Append role as additional CSS classes
+                if let Some(role) = &icon.role {
+                    classes.push(' ');
+                    classes.push_str(&escape_html(role));
+                }
+                let title_attr = icon
+                    .title
+                    .as_deref()
+                    .map(|t| format!(" title=\"{}\"", escape_html(t)))
+                    .unwrap_or_default();
+                html.push_str("<span class=\"icon\">");
+                html.push_str(&format!("<i class=\"{classes}\"{title_attr}></i>"));
+                html.push_str("</span>");
+            }
             PreparedInline::Image(image) => {
                 html.push_str("<span class=\"image\">");
                 html.push_str(&format!(

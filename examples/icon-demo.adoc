@@ -1,0 +1,70 @@
+= Inline Icon Macro Demo
+:icons: font
+
+== Basic Icons
+
+Click the icon:save[] button to save your work.
+
+Press icon:home[] to return to the home screen.
+
+Use icon:search[] to find content.
+
+== Icons with Size
+
+Small: icon:heart[sm]
+
+Large: icon:heart[lg]
+
+Double: icon:heart[2x]
+
+Quadruple: icon:heart[4x]
+
+== Icons with Title (Tooltip)
+
+Hover over icon:info-circle[title="More information"] for details.
+
+icon:lock[title="This content is secure"] Secure area.
+
+== Icons with Role (CSS Classes)
+
+icon:warning[role="red"] Danger: do not proceed!
+
+icon:check[role="green"] All systems go.
+
+icon:star[role="yellow"] Featured content.
+
+== Mixed with Other Inline Formatting
+
+*icon:bolt[] Fast* and icon:lock[] _Secure_
+
+The icon:database[] data is stored in `~/.config/app/data.db`.
+
+H~2~icon:flask[] + icon:fire[role="red"]CO~2~ → chemical experiment.
+
+E=mc^2^ was derived by icon:user[title="Albert Einstein"].
+
+== All Options Together
+
+icon:cog[2x,title="Settings",role="fa-spin"] Configure your application.
+
+== Icons in Lists
+
+* icon:check[] Item one complete
+* icon:check[] Item two complete
+* icon:times[] Item three pending
+
+== Icons in a Table
+
+[cols="1,3"]
+|===
+|Status |Description
+
+|icon:check[role="green"]
+|Operational
+
+|icon:warning[role="yellow"]
+|Degraded performance
+
+|icon:times[role="red"]
+|Service unavailable
+|===

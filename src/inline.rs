@@ -99,6 +99,17 @@ fn parse_spanned_inlines_with_base(chars: &[char], base: usize) -> Vec<SpannedIn
 
             result.push(link);
             index += consumed;
+        } else if let Some((icon, consumed)) = parse_inline_icon(chars, index, base) {
+            if let Some(start) = text_start.take() {
+                result.push(SpannedInline {
+                    inline: Inline::Text(std::mem::take(&mut text)),
+                    start: base + start,
+                    end: base + index,
+                });
+            }
+
+            result.push(icon);
+            index += consumed;
         } else if let Some((link, consumed)) = parse_link(chars, index, base) {
             if let Some(start) = text_start.take() {
                 result.push(SpannedInline {
@@ -272,6 +283,84 @@ fn parse_inline_image_attributes(
     let height = positional.get(2).filter(|s| !s.is_empty()).cloned();
 
     (alt, width, height)
+}
+
+fn parse_inline_icon(chars: &[char], start: usize, base: usize) -> Option<(SpannedInline, usize)> {
+    // Matches `icon:name[attrs]` — single-colon inline macro (no block form to reject)
+    let prefix: Vec<char> = "icon:".chars().collect();
+    if start + prefix.len() >= chars.len() {
+        return None;
+    }
+    for (i, &expected) in prefix.iter().enumerate() {
+        if chars.get(start + i).copied() != Some(expected) {
+            return None;
+        }
+    }
+
+    let name_start = start + prefix.len();
+    let mut i = name_start;
+    while i < chars.len() && chars[i] != '[' {
+        i += 1;
+    }
+    if i >= chars.len() || chars[i] != '[' {
+        return None;
+    }
+    let name: String = chars[name_start..i].iter().collect();
+    let name = name.trim().to_owned();
+    if name.is_empty() {
+        return None;
+    }
+
+    let bracket_start = i;
+    i += 1;
+    let mut depth = 1;
+    while i < chars.len() && depth > 0 {
+        if chars[i] == '[' {
+            depth += 1;
+        } else if chars[i] == ']' {
+            depth -= 1;
+        }
+        i += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+
+    let attr_text: String = chars[bracket_start + 1..i - 1].iter().collect();
+    let (size, title, role) = parse_inline_icon_attributes(&attr_text);
+
+    let consumed = i - start;
+    Some((
+        SpannedInline {
+            inline: Inline::Icon(crate::ast::InlineIcon { name, size, title, role }),
+            start: base + start,
+            end: base + i,
+        },
+        consumed,
+    ))
+}
+
+fn parse_inline_icon_attributes(attr_text: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let mut size = None;
+    let mut title = None;
+    let mut role = None;
+
+    for part in attr_text.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(val) = part.strip_prefix("title=") {
+            title = Some(val.trim_matches('"').to_owned());
+        } else if let Some(val) = part.strip_prefix("role=") {
+            role = Some(val.trim_matches('"').to_owned());
+        } else if !part.contains('=') && size.is_none() {
+            // First unnamed positional is the size
+            size = Some(part.to_owned());
+        }
+    }
+
+    (size, title, role)
 }
 
 fn inline_auto_generate_alt(target: &str) -> String {

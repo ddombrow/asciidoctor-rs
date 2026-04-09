@@ -171,6 +171,7 @@ pub enum Inline {
     Anchor(InlineAnchor),
     Passthrough(String),
     Image(InlineImage),
+    Icon(InlineIcon),
     Footnote(InlineFootnote),
 }
 
@@ -180,6 +181,14 @@ pub struct InlineImage {
     pub alt: String,
     pub width: Option<String>,
     pub height: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineIcon {
+    pub name: String,
+    pub size: Option<String>,  // first positional attr: 1x, 2x, 4x, sm, md, lg
+    pub title: Option<String>, // named attr: title=
+    pub role: Option<String>,  // named attr: role=
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,6 +280,7 @@ impl Inline {
                 .join(""),
             Self::Passthrough(raw) => raw.clone(),
             Self::Image(image) => image.alt.clone(),
+            Self::Icon(icon) => icon.name.clone(),
             Self::Footnote(footnote) => footnote
                 .inlines
                 .iter()
