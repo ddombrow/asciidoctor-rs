@@ -83,6 +83,20 @@ gamma = 3 # <3>
 <.> Second variable (auto).
 <3> Third variable (explicit).
 
+== XML Callout Syntax
+
+For XML/HTML source, use `<!--N-->` as the marker:
+
+[source,xml]
+----
+<root> <!--1-->
+  <child/> <!--2-->
+</root> <!--3-->
+----
+<1> Root element.
+<2> Child element.
+<3> End of document.
+
 == Callouts with Inline Formatting in Descriptions
 
 ----

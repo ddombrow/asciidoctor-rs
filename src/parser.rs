@@ -1478,6 +1478,24 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
 
 fn strip_callout_marker(line: &str, auto_counter: &mut u32) -> (String, Option<u32>) {
     let trimmed = line.trim_end();
+
+    // XML/HTML form: <!--N--> or <!--.--> at end of line
+    if let Some(rest) = trimmed.strip_suffix("-->") {
+        if let Some(start) = rest.rfind("<!--") {
+            let num_str = &rest[start + 4..];
+            if num_str == "." {
+                *auto_counter += 1;
+                let content = rest[..start].trim_end().to_owned();
+                return (content, Some(*auto_counter));
+            }
+            if let Ok(n) = num_str.parse::<u32>() {
+                let content = rest[..start].trim_end().to_owned();
+                return (content, Some(n));
+            }
+        }
+    }
+
+    // Standard form: <N> or <.> at end of line
     if let Some(rest) = trimmed.strip_suffix('>') {
         if let Some(start) = rest.rfind('<') {
             let num_str = &rest[start + 1..];
@@ -1492,6 +1510,7 @@ fn strip_callout_marker(line: &str, auto_counter: &mut u32) -> (String, Option<u
             }
         }
     }
+
     (line.to_owned(), None)
 }
 
