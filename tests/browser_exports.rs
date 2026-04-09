@@ -83,10 +83,9 @@ fn browser_prepare_document_ignores_header_comments() {
 
 #[wasm_bindgen_test]
 fn browser_prepare_document_exposes_author_attribute() {
-    let value = asciidoctor_rs::prepare_document_value(
-        "= Sample Document\n:author: Jane Doe\n\nHello.\n",
-    )
-    .expect("value export should succeed");
+    let value =
+        asciidoctor_rs::prepare_document_value("= Sample Document\n:author: Jane Doe\n\nHello.\n")
+            .expect("value export should succeed");
 
     let authors = Array::from(&get_property(&value, "authors"));
     assert_eq!(authors.length(), 1);
@@ -103,7 +102,9 @@ fn browser_prepare_document_exposes_author_attribute() {
         Some("Jane Doe")
     );
     assert_eq!(
-        get_property(&attributes, "firstname").as_string().as_deref(),
+        get_property(&attributes, "firstname")
+            .as_string()
+            .as_deref(),
         Some("Jane")
     );
     assert_eq!(
@@ -111,7 +112,9 @@ fn browser_prepare_document_exposes_author_attribute() {
         Some("Doe")
     );
     assert_eq!(
-        get_property(&attributes, "authorinitials").as_string().as_deref(),
+        get_property(&attributes, "authorinitials")
+            .as_string()
+            .as_deref(),
         Some("JD")
     );
 }
@@ -243,15 +246,21 @@ fn browser_prepare_document_exposes_explicit_authors_metadata() {
 
     let attributes = get_property(&value, "attributes");
     assert_eq!(
-        get_property(&attributes, "firstname").as_string().as_deref(),
+        get_property(&attributes, "firstname")
+            .as_string()
+            .as_deref(),
         Some("Doc")
     );
     assert_eq!(
-        get_property(&attributes, "lastname_2").as_string().as_deref(),
+        get_property(&attributes, "lastname_2")
+            .as_string()
+            .as_deref(),
         Some("Author")
     );
     assert_eq!(
-        get_property(&attributes, "authorinitials_2").as_string().as_deref(),
+        get_property(&attributes, "authorinitials_2")
+            .as_string()
+            .as_deref(),
         Some("OA")
     );
 }
@@ -320,8 +329,9 @@ fn browser_prepare_document_exposes_delimited_block_metadata() {
 
 #[wasm_bindgen_test]
 fn browser_prepare_document_exposes_admonition_blocks() {
-    let value = asciidoctor_rs::prepare_document_value("= Sample Document\n\nNOTE: This is just a note.\n")
-        .expect("value export should succeed");
+    let value =
+        asciidoctor_rs::prepare_document_value("= Sample Document\n\nNOTE: This is just a note.\n")
+            .expect("value export should succeed");
 
     let blocks = Array::from(&get_property(&value, "blocks"));
     let preamble = blocks.get(0);

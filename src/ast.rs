@@ -66,7 +66,7 @@ pub struct AdmonitionBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
-    pub lines: Vec<String>,          // content with <N> callout markers already stripped
+    pub lines: Vec<String>, // content with <N> callout markers already stripped
     pub callouts: Vec<(usize, u32)>, // (0-based line index, callout number)
     pub reftext: Option<String>,
     pub metadata: BlockMetadata,
@@ -200,9 +200,9 @@ pub struct InlineImage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineIcon {
     pub name: String,
-    pub size: Option<String>,  // first positional attr: 1x, 2x, 4x, sm, md, lg
+    pub size: Option<String>, // first positional attr: 1x, 2x, 4x, sm, md, lg
     pub title: Option<String>, // named attr: title=
-    pub role: Option<String>,  // named attr: role=
+    pub role: Option<String>, // named attr: role=
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

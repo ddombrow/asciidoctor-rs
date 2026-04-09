@@ -10,12 +10,7 @@ pub fn preprocess(input: &str, base_dir: &Path) -> String {
     expand_lines(input, base_dir, &mut seen, 0)
 }
 
-fn expand_lines(
-    input: &str,
-    base_dir: &Path,
-    seen: &mut HashSet<PathBuf>,
-    depth: u32,
-) -> String {
+fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth: u32) -> String {
     const MAX_DEPTH: u32 = 64;
     if depth > MAX_DEPTH {
         return input.to_owned();
@@ -159,8 +154,11 @@ mod tests {
 
     /// Create a unique temp directory for a test, cleaned up on drop via a guard.
     fn make_test_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("asciidoctor_rs_test_{}_{}", name, std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "asciidoctor_rs_test_{}_{}",
+            name,
+            std::process::id()
+        ));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

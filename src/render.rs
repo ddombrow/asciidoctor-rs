@@ -1,5 +1,5 @@
 use crate::prepare::{
-    prepare_document, DocumentBlock, DocumentSection, PreparedBlock, PreparedInline,
+    DocumentBlock, DocumentSection, PreparedBlock, PreparedInline, prepare_document,
 };
 
 struct RenderContext<'a> {
@@ -66,12 +66,7 @@ fn render_toc(
     html.push_str("</div>\n");
 }
 
-fn render_toc_sections(
-    html: &mut String,
-    sections: &[DocumentSection],
-    level: u8,
-    max_level: u8,
-) {
+fn render_toc_sections(html: &mut String, sections: &[DocumentSection], level: u8, max_level: u8) {
     if level > max_level || sections.is_empty() {
         return;
     }
@@ -93,11 +88,7 @@ fn render_toc_sections(
     html.push_str("</ul>\n");
 }
 
-fn render_block(
-    html: &mut String,
-    block: &PreparedBlock,
-    ctx: &RenderContext<'_>,
-) {
+fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_>) {
     match block {
         PreparedBlock::Preamble(preamble) => {
             html.push_str("<div id=\"preamble\">\n<div class=\"sectionbody\">\n");
@@ -235,11 +226,7 @@ fn render_description_list(
     html.push_str("</dl>\n</div>\n");
 }
 
-fn render_table(
-    html: &mut String,
-    table: &crate::prepare::TableBlock,
-    ctx: &RenderContext<'_>,
-) {
+fn render_table(html: &mut String, table: &crate::prepare::TableBlock, ctx: &RenderContext<'_>) {
     html.push_str("<table class=\"tableblock frame-all grid-all stretch\"");
     if let Some(id) = &table.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -336,7 +323,8 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
         ));
     }
     let lang = listing.attributes.get("language").map(String::as_str);
-    let is_source = listing.style.as_deref() == Some("source") && lang.is_some_and(|l| !l.is_empty());
+    let is_source =
+        listing.style.as_deref() == Some("source") && lang.is_some_and(|l| !l.is_empty());
 
     let rendered_content = if listing.callout_lines.is_empty() {
         escape_html(&listing.content)
@@ -350,7 +338,9 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
             .map(|(i, line)| {
                 let escaped = escape_html(line);
                 match conum_map.get(&i) {
-                    Some(n) => format!("{escaped}<i class=\"conum\" data-value=\"{n}\"></i><b>{n}</b>"),
+                    Some(n) => {
+                        format!("{escaped}<i class=\"conum\" data-value=\"{n}\"></i><b>{n}</b>")
+                    }
                     None => escaped,
                 }
             })
@@ -448,11 +438,7 @@ fn render_sidebar(
     html.push_str("</div>\n</div>\n");
 }
 
-fn render_open(
-    html: &mut String,
-    block: &crate::prepare::CompoundBlock,
-    ctx: &RenderContext<'_>,
-) {
+fn render_open(html: &mut String, block: &crate::prepare::CompoundBlock, ctx: &RenderContext<'_>) {
     html.push_str("<div class=\"openblock\"");
     if let Some(id) = &block.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -471,12 +457,12 @@ fn render_open(
     html.push_str("</div>\n</div>\n");
 }
 
-fn render_quote(
-    html: &mut String,
-    block: &crate::prepare::QuoteBlock,
-    ctx: &RenderContext<'_>,
-) {
-    let div_class = if block.is_verse { "verseblock" } else { "quoteblock" };
+fn render_quote(html: &mut String, block: &crate::prepare::QuoteBlock, ctx: &RenderContext<'_>) {
+    let div_class = if block.is_verse {
+        "verseblock"
+    } else {
+        "quoteblock"
+    };
     html.push_str(&format!("<div class=\"{div_class}\""));
     if let Some(id) = &block.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -1579,7 +1565,9 @@ mod tests {
         assert!(html.contains("<caption class=\"title\">Agents</caption>"));
         assert!(html.contains("<thead>"));
         assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Name</th>"));
-        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Peter</p></td>"));
+        assert!(html.contains(
+            "<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Peter</p></td>"
+        ));
     }
 
     #[test]
@@ -1590,7 +1578,9 @@ mod tests {
 
         assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Name</th>"));
         assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Email</th>"));
-        assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Peter</p></td>"));
+        assert!(html.contains(
+            "<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">Peter</p></td>"
+        ));
         assert!(html.contains("<td class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">peter@example.com</p></td>"));
     }
 
@@ -1614,8 +1604,11 @@ mod tests {
             ".Services\n[%header,cols=\"1,3\"]\n|===\n|Name\n|Details\n|API\n|First paragraph.\n\n* fast\n* typed\n|===",
         ));
 
-        assert!(html
-            .contains("<td class=\"tableblock halign-left valign-top\"><div class=\"paragraph\">"));
+        assert!(
+            html.contains(
+                "<td class=\"tableblock halign-left valign-top\"><div class=\"paragraph\">"
+            )
+        );
         assert!(html.contains("<p>First paragraph.</p>"));
         assert!(html.contains("<div class=\"ulist\">"));
         assert!(html.contains("<p>fast</p>"));
@@ -1889,7 +1882,9 @@ mod tests {
         let html = render_html(&crate::parser::parse_document(
             "image::tiger.png[Tiger, 200, 300]",
         ));
-        assert!(html.contains("<img src=\"tiger.png\" alt=\"Tiger\" width=\"200\" height=\"300\">"));
+        assert!(
+            html.contains("<img src=\"tiger.png\" alt=\"Tiger\" width=\"200\" height=\"300\">")
+        );
     }
 
     #[test]

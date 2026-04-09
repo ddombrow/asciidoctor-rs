@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{
     AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CalloutItem, CalloutList,
-    CompoundBlock, Document, Heading, ImageBlock, ListItem, Listing,
-    OrderedList, Paragraph, QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
+    CompoundBlock, Document, Heading, ImageBlock, ListItem, Listing, OrderedList, Paragraph,
+    QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
 };
 use crate::inline::parse_inlines;
 
@@ -134,7 +134,7 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
             continue;
         }
 
-        let Some((name, value)) = parse_attribute_entry(line) else {
+        let Some((name, value, consumed_lines)) = parse_attribute_entry_at(lines, index) else {
             break;
         };
         match name.as_str() {
@@ -144,7 +144,7 @@ fn parse_document_header(lines: &[&str]) -> (Option<Heading>, BTreeMap<String, S
             _ => {}
         }
         attributes.insert(name, value);
-        index += 1;
+        index += consumed_lines;
     }
 
     if saw_explicit_authors {
@@ -290,7 +290,26 @@ fn parse_blocks_from_lines(
             continue;
         }
 
-        if let Some((list, consumed_lines)) = parse_description_list(lines, index) { flush_paragraph( &mut blocks, &mut current_paragraph, &mut current_paragraph_anchor, &mut current_paragraph_prelude, ); push_block( &mut blocks, title, allow_document_title, Block::DescriptionList(apply_prelude_to_description_list( list, pending_block_prelude.take(), )), pending_anchor.take(), ); index += consumed_lines; continue; }
+        if let Some((list, consumed_lines)) = parse_description_list(lines, index) {
+            flush_paragraph(
+                &mut blocks,
+                &mut current_paragraph,
+                &mut current_paragraph_anchor,
+                &mut current_paragraph_prelude,
+            );
+            push_block(
+                &mut blocks,
+                title,
+                allow_document_title,
+                Block::DescriptionList(apply_prelude_to_description_list(
+                    list,
+                    pending_block_prelude.take(),
+                )),
+                pending_anchor.take(),
+            );
+            index += consumed_lines;
+            continue;
+        }
 
         if let Some((list, consumed_lines)) = parse_ordered_list(lines, index) {
             flush_paragraph(
@@ -356,10 +375,10 @@ fn parse_blocks_from_lines(
             && pending_block_prelude.is_none()
             && pending_anchor.is_none()
         {
-            if let Some((name, value)) = parse_attribute_entry(line) {
+            if let Some((name, value, consumed_lines)) = parse_attribute_entry_at(lines, index) {
                 if let Some(attributes) = document_attributes.as_deref_mut() {
                     attributes.insert(name, value);
-                    index += 1;
+                    index += consumed_lines;
                     continue;
                 }
             }
@@ -1174,7 +1193,9 @@ fn block_plain_text(block: &Block) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         Block::Listing(listing) | Block::Literal(listing) => listing.lines.join("\n"),
-        Block::Example(example) | Block::Sidebar(example) | Block::Open(example) => blocks_plain_text(&example.blocks),
+        Block::Example(example) | Block::Sidebar(example) | Block::Open(example) => {
+            blocks_plain_text(&example.blocks)
+        }
         Block::Quote(quote) => {
             if let Some(content) = &quote.content {
                 content.clone()
@@ -1312,7 +1333,12 @@ fn parse_delimited_block(
                 }
                 lines.push(content);
             }
-            Block::Listing(Listing { lines, callouts, reftext: None, metadata: prelude.metadata })
+            Block::Listing(Listing {
+                lines,
+                callouts,
+                reftext: None,
+                metadata: prelude.metadata,
+            })
         }
         "literal" => Block::Literal(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
@@ -1379,8 +1405,16 @@ fn parse_delimited_block(
                 let mut nested_title = None;
                 let blocks = parse_blocks_from_lines(inner_lines, &mut nested_title, false, None);
                 match style {
-                    "sidebar" => Block::Sidebar(CompoundBlock { blocks, reftext: None, metadata: prelude.metadata }),
-                    "example" => Block::Example(CompoundBlock { blocks, reftext: None, metadata: prelude.metadata }),
+                    "sidebar" => Block::Sidebar(CompoundBlock {
+                        blocks,
+                        reftext: None,
+                        metadata: prelude.metadata,
+                    }),
+                    "example" => Block::Example(CompoundBlock {
+                        blocks,
+                        reftext: None,
+                        metadata: prelude.metadata,
+                    }),
                     "quote" => Block::Quote(QuoteBlock {
                         blocks,
                         content: None,
@@ -1399,7 +1433,11 @@ fn parse_delimited_block(
                         reftext: None,
                         metadata: prelude.metadata,
                     }),
-                    _ => Block::Open(CompoundBlock { blocks, reftext: None, metadata: prelude.metadata }),
+                    _ => Block::Open(CompoundBlock {
+                        blocks,
+                        reftext: None,
+                        metadata: prelude.metadata,
+                    }),
                 }
             }
         }
@@ -1560,7 +1598,10 @@ fn parse_callout_list(lines: &[&str], index: usize) -> Option<(Block, usize)> {
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "++++" | "____" | "...." | "--" | "////")
+    matches!(
+        line.trim(),
+        "----" | "====" | "****" | "++++" | "____" | "...." | "--" | "////"
+    )
 }
 
 fn parse_block_title(line: &str) -> Option<String> {
@@ -1757,15 +1798,17 @@ fn parse_description_list(
             }
             if let Some(pos) = t_line.find("::") {
                 let remainder = t_line[pos + 2..].trim();
-                let is_valid_marker = t_line[pos + 2..].starts_with(' ') || t_line[pos + 2..].starts_with('\t') || t_line[pos + 2..].is_empty();
-                
+                let is_valid_marker = t_line[pos + 2..].starts_with(' ')
+                    || t_line[pos + 2..].starts_with('\t')
+                    || t_line[pos + 2..].is_empty();
+
                 if is_valid_marker {
                     let term_text = t_line[..pos].trim().to_string();
-                    terms.push(crate::ast::DescriptionListTerm { 
+                    terms.push(crate::ast::DescriptionListTerm {
                         text: term_text.clone(),
-                        inlines: crate::inline::parse_inlines(&term_text)
+                        inlines: crate::inline::parse_inlines(&term_text),
                     });
-                    
+
                     if !remainder.is_empty() {
                         current_desc.push_str(remainder);
                         term_consumed += 1;
@@ -1783,7 +1826,8 @@ fn parse_description_list(
         }
         index += term_consumed;
 
-        while index < lines.len() && !lines[index].trim().is_empty() && !lines[index].contains("::") {
+        while index < lines.len() && !lines[index].trim().is_empty() && !lines[index].contains("::")
+        {
             if !current_desc.is_empty() {
                 current_desc.push('\n');
             }
@@ -1805,10 +1849,7 @@ fn parse_description_list(
             })
         };
 
-        items.push(crate::ast::DescriptionListItem {
-            terms,
-            description,
-        });
+        items.push(crate::ast::DescriptionListItem { terms, description });
     }
 
     if items.is_empty() {
@@ -2165,7 +2206,10 @@ fn make_block_from_paragraph(
     }
 
     // Indented paragraph (leading space/tab) → literal block
-    if lines.first().is_some_and(|l| l.starts_with(' ') || l.starts_with('\t')) {
+    if lines
+        .first()
+        .is_some_and(|l| l.starts_with(' ') || l.starts_with('\t'))
+    {
         return Block::Literal(Listing {
             lines,
             callouts: vec![],
@@ -2321,6 +2365,50 @@ fn parse_attribute_entry(line: &str) -> Option<(String, String)> {
         name.to_owned(),
         stripped[separator + 1..].trim_start().to_owned(),
     ))
+}
+
+fn parse_attribute_entry_at(lines: &[&str], index: usize) -> Option<(String, String, usize)> {
+    let line = *lines.get(index)?;
+    let stripped = line.strip_prefix(':')?;
+    let separator = stripped.find(':')?;
+    let name = stripped[..separator].trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let mut value = String::new();
+    let mut consumed_lines = 0;
+    let mut segment = stripped[separator + 1..].trim_start();
+
+    loop {
+        consumed_lines += 1;
+        let has_next = index + consumed_lines < lines.len();
+
+        if let Some((continued, hard_wrap)) =
+            parse_attribute_continuation_segment(segment, has_next)
+        {
+            value.push_str(continued);
+            value.push(if hard_wrap { '\n' } else { ' ' });
+            segment = lines[index + consumed_lines].trim_start();
+            continue;
+        }
+
+        value.push_str(segment);
+        return Some((name.to_owned(), value, consumed_lines));
+    }
+}
+
+fn parse_attribute_continuation_segment<'a>(
+    segment: &'a str,
+    has_next: bool,
+) -> Option<(&'a str, bool)> {
+    if !has_next {
+        return None;
+    }
+
+    let trimmed = segment.trim_end();
+    let continued = trimmed.strip_suffix(" \\")?;
+    Some((continued, continued.ends_with(" +")))
 }
 
 fn parse_implicit_author_line(
@@ -2853,6 +2941,32 @@ mod tests {
     }
 
     #[test]
+    fn parses_multiline_document_header_attribute_with_soft_wraps() {
+        let document = parse_document(
+            "= Document Title\n:description: If you have a very long line of text \\\nthat you need to substitute regularly in a document, \\\n  you may find it easier to split the value neatly.\n\ncontent",
+        );
+
+        assert_eq!(
+            document.attributes.get("description").map(String::as_str),
+            Some(
+                "If you have a very long line of text that you need to substitute regularly in a document, you may find it easier to split the value neatly."
+            )
+        );
+    }
+
+    #[test]
+    fn parses_multiline_document_header_attribute_with_hard_wraps() {
+        let document = parse_document(
+            "= Document Title\n:haiku: Write your docs in text, + \\\n  AsciiDoc makes it easy, + \\\n  Now get back to work!\n\ncontent",
+        );
+
+        assert_eq!(
+            document.attributes.get("haiku").map(String::as_str),
+            Some("Write your docs in text, +\nAsciiDoc makes it easy, +\nNow get back to work!")
+        );
+    }
+
+    #[test]
     fn parses_author_attribute_in_document_header() {
         let document = parse_document("= Document Title\n:author: Jane Doe\n\ncontent");
 
@@ -3300,6 +3414,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_multiline_body_attribute_before_later_blocks() {
+        let document = parse_document(
+            "= Demo\n\nIntro paragraph.\n\n:description: first segment \\\n  second segment\n\nTail paragraph.",
+        );
+
+        assert_eq!(
+            document.attributes.get("description").map(String::as_str),
+            Some("first segment second segment")
+        );
+        assert_eq!(document.blocks.len(), 2);
+    }
+
+    #[test]
     fn does_not_treat_mixed_markers_as_heading() {
         let document = parse_document("=#= My Title");
 
@@ -3640,8 +3767,9 @@ mod tests {
 
     #[test]
     fn parses_tables_with_header_option() {
-        let document =
-            parse_document(".Agents\n[%header,cols=\"30%,\"]\n|===\n|Name|Email\n|Peter|peter@example.com\n|Adam|adam@example.com\n|===");
+        let document = parse_document(
+            ".Agents\n[%header,cols=\"30%,\"]\n|===\n|Name|Email\n|Peter|peter@example.com\n|Adam|adam@example.com\n|===",
+        );
 
         let [Block::Table(table)] = document.blocks.as_slice() else {
             panic!("expected table");
@@ -4179,7 +4307,8 @@ mod tests {
 
     #[test]
     fn parses_quote_block() {
-        let document = parse_document("[quote, Abraham Lincoln, Gettysburg Address]\n____\nFour score.\n____");
+        let document =
+            parse_document("[quote, Abraham Lincoln, Gettysburg Address]\n____\nFour score.\n____");
 
         let [Block::Quote(quote)] = document.blocks.as_slice() else {
             panic!("expected quote block");
@@ -4205,7 +4334,9 @@ mod tests {
 
     #[test]
     fn parses_verse_block() {
-        let document = parse_document("[verse, Carl Sandburg, Fog]\n____\nThe fog comes\non little cat feet.\n____");
+        let document = parse_document(
+            "[verse, Carl Sandburg, Fog]\n____\nThe fog comes\non little cat feet.\n____",
+        );
 
         let [Block::Quote(quote)] = document.blocks.as_slice() else {
             panic!("expected verse block");
@@ -4213,7 +4344,10 @@ mod tests {
         assert!(quote.is_verse);
         assert_eq!(quote.attribution.as_deref(), Some("Carl Sandburg"));
         assert_eq!(quote.citetitle.as_deref(), Some("Fog"));
-        assert_eq!(quote.content.as_deref(), Some("The fog comes\non little cat feet."));
+        assert_eq!(
+            quote.content.as_deref(),
+            Some("The fog comes\non little cat feet.")
+        );
     }
 
     #[test]
@@ -4244,7 +4378,10 @@ mod tests {
         let [Block::Literal(literal)] = document.blocks.as_slice() else {
             panic!("expected literal block");
         };
-        assert_eq!(literal.lines, vec![" indented line one", " indented line two"]);
+        assert_eq!(
+            literal.lines,
+            vec![" indented line one", " indented line two"]
+        );
     }
 
     #[test]

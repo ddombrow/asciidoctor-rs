@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -26,7 +26,10 @@ impl Serialize for AsgDocument {
         let include_attributes = self.header.is_some() || !self.attributes.is_empty();
         let include_header = self.header.is_some();
         let include_blocks = !self.blocks.is_empty();
-        let field_count = 3 + usize::from(include_attributes) + usize::from(include_header) + usize::from(include_blocks);
+        let field_count = 3
+            + usize::from(include_attributes)
+            + usize::from(include_header)
+            + usize::from(include_blocks);
         let mut state = serializer.serialize_struct("AsgDocument", field_count)?;
         state.serialize_field("name", &self.name)?;
         state.serialize_field("type", &self.node_type)?;
@@ -169,7 +172,9 @@ pub fn render_tck_json(input: &str) -> serde_json::Result<String> {
 
 pub fn render_tck_inline_json(input: &str) -> serde_json::Result<String> {
     let normalized = normalize_tck_newlines(input);
-    serde_json::to_string_pretty(&parse_tck_inlines(trim_tck_inline_terminal_newline(normalized.as_ref())))
+    serde_json::to_string_pretty(&parse_tck_inlines(trim_tck_inline_terminal_newline(
+        normalized.as_ref(),
+    )))
 }
 
 pub fn render_tck_json_from_request(request_json: &str) -> Result<String, String> {
@@ -202,8 +207,9 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
             index += consumed;
             index = skip_header_comments(&lines, index);
 
-            if let Some(author_line) =
-                lines.get(index).and_then(|line| parse_implicit_author_line(&lines, index, line))
+            if let Some(author_line) = lines
+                .get(index)
+                .and_then(|line| parse_implicit_author_line(&lines, index, line))
             {
                 insert_author_attributes(&mut attributes, &author_line.authors);
                 header_end = Position {
@@ -213,8 +219,9 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
                 index += 1;
                 index = skip_header_comments(&lines, index);
 
-                if let Some(revision_line) =
-                    lines.get(index).and_then(|line| parse_implicit_revision_line(line))
+                if let Some(revision_line) = lines
+                    .get(index)
+                    .and_then(|line| parse_implicit_revision_line(line))
                 {
                     attributes.insert("revnumber".to_owned(), revision_line.number);
                     if let Some(date) = revision_line.date {
@@ -243,7 +250,9 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
                     continue;
                 }
 
-                if let Some((name, value, end_col)) = parse_attribute_entry(line) {
+                if let Some((name, value, consumed_lines, end_col)) =
+                    parse_attribute_entry_at(&lines, index)
+                {
                     match name.as_str() {
                         "author" => saw_explicit_author = true,
                         "authors" => saw_explicit_authors = true,
@@ -252,10 +261,10 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
                     }
                     attributes.insert(name, value);
                     header_end = Position {
-                        line: index + 1,
+                        line: index + consumed_lines,
                         col: end_col,
                     };
-                    index += 1;
+                    index += consumed_lines;
                     continue;
                 }
 
@@ -306,7 +315,9 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
             continue;
         }
 
-        if let Some((name, value, _end_col)) = parse_attribute_entry(line) {
+        if let Some((name, value, consumed_lines, _end_col)) =
+            parse_attribute_entry_at(&lines, index)
+        {
             match name.as_str() {
                 "author" => saw_explicit_author = true,
                 "authors" => saw_explicit_authors = true,
@@ -314,7 +325,7 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
                 _ => {}
             }
             attributes.insert(name, value);
-            index += 1;
+            index += consumed_lines;
             continue;
         }
 
@@ -362,7 +373,8 @@ pub fn parse_tck_document(input: &str) -> AsgDocument {
 }
 
 fn block_start_position(block: &AsgBlock) -> Position {
-    block.metadata
+    block
+        .metadata
         .as_ref()
         .map(|metadata| metadata.location[0].clone())
         .unwrap_or_else(|| block.location[0].clone())
@@ -495,7 +507,8 @@ fn parse_blocks(
             continue;
         }
 
-        if let Some((mut block, consumed_lines)) = parse_delimited_block(lines, index, line_offset) {
+        if let Some((mut block, consumed_lines)) = parse_delimited_block(lines, index, line_offset)
+        {
             flush_paragraph(
                 &mut blocks,
                 &mut paragraph_start,
@@ -510,7 +523,9 @@ fn parse_blocks(
             continue;
         }
 
-        if let Some((mut block, consumed_lines)) = parse_styled_admonition_paragraph(lines, index, line_offset) {
+        if let Some((mut block, consumed_lines)) =
+            parse_styled_admonition_paragraph(lines, index, line_offset)
+        {
             flush_paragraph(
                 &mut blocks,
                 &mut paragraph_start,
@@ -525,7 +540,9 @@ fn parse_blocks(
             continue;
         }
 
-        if let Some((mut block, consumed_lines)) = parse_admonition_paragraph(lines, index, line_offset) {
+        if let Some((mut block, consumed_lines)) =
+            parse_admonition_paragraph(lines, index, line_offset)
+        {
             flush_paragraph(
                 &mut blocks,
                 &mut paragraph_start,
@@ -541,10 +558,12 @@ fn parse_blocks(
         }
 
         if paragraph_start.is_none() && pending_anchor.is_none() {
-            if let Some((name, value, _end_col)) = parse_attribute_entry(line) {
+            if let Some((name, value, consumed_lines, _end_col)) =
+                parse_attribute_entry_at(&lines, index)
+            {
                 if let Some(attributes) = document_attributes.as_deref_mut() {
                     attributes.insert(name, value);
-                    index += 1;
+                    index += consumed_lines;
                     continue;
                 }
             }
@@ -574,8 +593,14 @@ fn parse_blocks(
                 let item_line_no = line_offset + list_index;
                 let content_col = list_line.len() - marker.content.len() + 1;
                 let item_end_col = list_line.trim_end().len();
-                let item_start = Position { line: item_line_no, col: 1 };
-                let item_end = Position { line: item_line_no, col: item_end_col };
+                let item_start = Position {
+                    line: item_line_no,
+                    col: 1,
+                };
+                let item_end = Position {
+                    line: item_line_no,
+                    col: item_end_col,
+                };
                 let principal = parse_tck_inlines_at(marker.content, item_line_no, content_col);
                 items.push(AsgListItem {
                     name: "listItem",
@@ -588,7 +613,10 @@ fn parse_blocks(
                 list_index += 1;
             }
 
-            let list_start = Position { line: line_offset + index, col: 1 };
+            let list_start = Position {
+                line: line_offset + index,
+                col: 1,
+            };
             let list_end = list_end.unwrap_or_else(|| list_start.clone());
             let mut block = AsgBlock {
                 name: "list",
@@ -870,17 +898,19 @@ fn parse_block_prelude(lines: &[&str], index: usize, line_offset: usize) -> Pars
         && let Some(title) = parse_block_title(line)
     {
         let next = cursor + 1;
-        if lines
-            .get(next)
-            .is_some_and(|line| parse_attribute_list_line(line).is_some() || is_delimited_block_delimiter(line))
-        {
+        if lines.get(next).is_some_and(|line| {
+            parse_attribute_list_line(line).is_some() || is_delimited_block_delimiter(line)
+        }) {
             let title_line = line_offset + cursor;
             prelude.title = Some(vec![InlineText {
                 name: "text",
                 node_type: "string",
                 value: title.clone(),
                 location: [
-                    Position { line: title_line, col: 2 },
+                    Position {
+                        line: title_line,
+                        col: 2,
+                    },
                     Position {
                         line: title_line,
                         col: lines[cursor].len(),
@@ -888,7 +918,10 @@ fn parse_block_prelude(lines: &[&str], index: usize, line_offset: usize) -> Pars
                 ],
             }]);
             title_raw = Some(title);
-            metadata_start = Some(Position { line: title_line, col: 1 });
+            metadata_start = Some(Position {
+                line: title_line,
+                col: 1,
+            });
             metadata_end = Some(Position {
                 line: title_line,
                 col: lines[cursor].len(),
@@ -910,7 +943,10 @@ fn parse_block_prelude(lines: &[&str], index: usize, line_offset: usize) -> Pars
                 &mut metadata_roles,
                 &entries,
             );
-            metadata_start.get_or_insert(Position { line: attr_line, col: 1 });
+            metadata_start.get_or_insert(Position {
+                line: attr_line,
+                col: 1,
+            });
             metadata_end = Some(Position {
                 line: attr_line,
                 col: lines[cursor].len(),
@@ -923,19 +959,31 @@ fn parse_block_prelude(lines: &[&str], index: usize, line_offset: usize) -> Pars
         metadata_attributes.insert("title".into(), title_raw);
     }
     if let Some(id) = &prelude.id {
-        metadata_attributes.entry("id".into()).or_insert_with(|| id.clone());
+        metadata_attributes
+            .entry("id".into())
+            .or_insert_with(|| id.clone());
     }
 
     prelude.consumed_lines = cursor - index;
     prelude.start = metadata_start.clone();
-    if metadata_start.is_some() || !metadata_attributes.is_empty() || !metadata_options.is_empty() || !metadata_roles.is_empty() {
+    if metadata_start.is_some()
+        || !metadata_attributes.is_empty()
+        || !metadata_options.is_empty()
+        || !metadata_roles.is_empty()
+    {
         prelude.metadata = Some(AsgBlockMetadata {
             attributes: metadata_attributes,
             options: metadata_options,
             roles: metadata_roles,
             location: [
-                metadata_start.unwrap_or(Position { line: line_offset + index, col: 1 }),
-                metadata_end.unwrap_or(Position { line: line_offset + index, col: 1 }),
+                metadata_start.unwrap_or(Position {
+                    line: line_offset + index,
+                    col: 1,
+                }),
+                metadata_end.unwrap_or(Position {
+                    line: line_offset + index,
+                    col: 1,
+                }),
             ],
         });
     }
@@ -982,7 +1030,10 @@ fn split_attribute_list(input: &str) -> Vec<String> {
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "====" | "****" | "____" | "...." | "--" | "////")
+    matches!(
+        line.trim(),
+        "----" | "====" | "****" | "____" | "...." | "--" | "////"
+    )
 }
 
 fn apply_attribute_list(
@@ -1001,7 +1052,11 @@ fn apply_attribute_list(
         if let Some((name, value)) = parse_named_attribute(entry) {
             attributes.insert(name.clone(), value.clone());
             if name == "opts" {
-                for option in value.split(',').map(str::trim).filter(|value| !value.is_empty()) {
+                for option in value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
                     if !options.iter().any(|existing| existing == option) {
                         options.push(option.to_owned());
                     }
@@ -1026,7 +1081,11 @@ fn apply_attribute_list(
 
         if let Some(value) = entry.strip_prefix('.') {
             attributes.insert(format!("${slot}"), entry.clone());
-            for role in value.split('.').map(str::trim).filter(|value| !value.is_empty()) {
+            for role in value
+                .split('.')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
                 if !roles.iter().any(|existing| existing == role) {
                     roles.push(role.to_owned());
                 }
@@ -1039,7 +1098,11 @@ fn apply_attribute_list(
 
         if let Some(value) = entry.strip_prefix('%') {
             attributes.insert(format!("${slot}"), entry.clone());
-            for option in value.split('%').map(str::trim).filter(|value| !value.is_empty()) {
+            for option in value
+                .split('%')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
                 if !options.iter().any(|existing| existing == option) {
                     options.push(option.to_owned());
                 }
@@ -1051,7 +1114,9 @@ fn apply_attribute_list(
         attributes.insert(format!("${slot}"), entry.clone());
         if !attributes.contains_key("style") {
             attributes.insert("style".into(), entry.clone());
-        } else if attributes.get("style").is_some_and(|style| style == "source")
+        } else if attributes
+            .get("style")
+            .is_some_and(|style| style == "source")
             && !attributes.contains_key("language")
         {
             attributes.insert("language".into(), entry.clone());
@@ -1065,7 +1130,10 @@ fn parse_named_attribute(entry: &str) -> Option<(String, String)> {
     if name.is_empty() {
         return None;
     }
-    Some((name.to_owned(), unquote_attribute_value(entry[separator + 1..].trim())))
+    Some((
+        name.to_owned(),
+        unquote_attribute_value(entry[separator + 1..].trim()),
+    ))
 }
 
 fn unquote_attribute_value(value: &str) -> String {
@@ -1307,13 +1375,20 @@ fn parse_block_anchor(line: &str) -> Option<PendingBlockAnchor> {
         .strip_prefix("[[")
         .and_then(|rest| rest.strip_suffix("]]"))
     {
-        let id = inner.split_once(',').map(|(id, _)| id).unwrap_or(inner).trim();
+        let id = inner
+            .split_once(',')
+            .map(|(id, _)| id)
+            .unwrap_or(inner)
+            .trim();
         if !id.is_empty() {
             return Some(PendingBlockAnchor { id: id.to_owned() });
         }
     }
 
-    if let Some(inner) = trimmed.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+    if let Some(inner) = trimmed
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
         for part in split_attribute_list(inner) {
             if let Some(id) = part.strip_prefix('#') {
                 let id = id.trim();
@@ -1442,6 +1517,58 @@ fn parse_attribute_entry(line: &str) -> Option<(String, String, usize)> {
     Some((name.to_owned(), value, line.len()))
 }
 
+fn parse_attribute_entry_at(
+    lines: &[&str],
+    index: usize,
+) -> Option<(String, String, usize, usize)> {
+    let line = *lines.get(index)?;
+    let stripped = line.strip_prefix(':')?;
+    let separator = stripped.find(':')?;
+    let name = stripped[..separator].trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let mut value = String::new();
+    let mut consumed_lines = 0;
+    let mut segment = stripped[separator + 1..].trim_start();
+
+    loop {
+        consumed_lines += 1;
+        let has_next = index + consumed_lines < lines.len();
+
+        if let Some((continued, hard_wrap)) =
+            parse_attribute_continuation_segment(segment, has_next)
+        {
+            value.push_str(continued);
+            value.push(if hard_wrap { '\n' } else { ' ' });
+            segment = lines[index + consumed_lines].trim_start();
+            continue;
+        }
+
+        value.push_str(segment);
+        return Some((
+            name.to_owned(),
+            value,
+            consumed_lines,
+            lines[index + consumed_lines - 1].len(),
+        ));
+    }
+}
+
+fn parse_attribute_continuation_segment<'a>(
+    segment: &'a str,
+    has_next: bool,
+) -> Option<(&'a str, bool)> {
+    if !has_next {
+        return None;
+    }
+
+    let trimmed = segment.trim_end();
+    let continued = trimmed.strip_suffix(" \\")?;
+    Some((continued, continued.ends_with(" +")))
+}
+
 fn parse_implicit_author_line(
     lines: &[&str],
     index: usize,
@@ -1488,10 +1615,7 @@ fn parse_implicit_author_entry(entry: &str) -> Option<ImplicitAuthor> {
     build_author(trimmed, None)
 }
 
-fn insert_author_attributes(
-    attributes: &mut BTreeMap<String, String>,
-    authors: &[ImplicitAuthor],
-) {
+fn insert_author_attributes(attributes: &mut BTreeMap<String, String>, authors: &[ImplicitAuthor]) {
     if authors.is_empty() {
         return;
     }
@@ -1569,8 +1693,9 @@ fn normalize_explicit_author_attributes(
     source_key: &str,
     preserve_primary_initials: bool,
 ) {
-    let explicit_primary_initials =
-        preserve_primary_initials.then(|| attributes.get("authorinitials").cloned()).flatten();
+    let explicit_primary_initials = preserve_primary_initials
+        .then(|| attributes.get("authorinitials").cloned())
+        .flatten();
     let source_value = attributes.get(source_key).cloned().unwrap_or_default();
     let mut authors = if source_key == "authors" {
         source_value
@@ -1654,11 +1779,15 @@ fn build_author(name: &str, email: Option<String>) -> Option<ImplicitAuthor> {
     } else {
         None
     };
-    let authorinitials = [Some(firstname.as_str()), middlename.as_deref(), lastname.as_deref()]
-        .into_iter()
-        .flatten()
-        .filter_map(|part| part.chars().next())
-        .collect::<String>();
+    let authorinitials = [
+        Some(firstname.as_str()),
+        middlename.as_deref(),
+        lastname.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|part| part.chars().next())
+    .collect::<String>();
     let display_name = match (&middlename, &lastname) {
         (Some(middlename), Some(lastname)) => format!("{firstname} {middlename} {lastname}"),
         (None, Some(lastname)) => format!("{firstname} {lastname}"),
@@ -2120,7 +2249,9 @@ fn offset_to_end_position(
 
 #[cfg(test)]
 mod tests {
-    use crate::tck::{AsgInline, parse_tck_document, parse_tck_inlines, render_tck_json_from_request};
+    use crate::tck::{
+        AsgInline, parse_tck_document, parse_tck_inlines, render_tck_json_from_request,
+    };
 
     #[test]
     fn renders_ordered_list_block() {
@@ -2182,11 +2313,44 @@ mod tests {
             parse_tck_document("// comment\n= Document Title\n// note\n:toc: left\n\nbody");
 
         assert_eq!(
-            document.header.as_ref().and_then(|header| header.title.first()).map(|title| title.value.as_str()),
+            document
+                .header
+                .as_ref()
+                .and_then(|header| header.title.first())
+                .map(|title| title.value.as_str()),
             Some("Document Title")
         );
-        assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
+        assert_eq!(
+            document.attributes.get("toc").map(String::as_str),
+            Some("left")
+        );
         assert_eq!(document.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_multiline_header_attribute_with_soft_wraps_in_tck_document() {
+        let document = parse_tck_document(
+            "= Document Title\n:description: If you have a very long line of text \\\nthat you need to substitute regularly in a document, \\\n  you may find it easier to split the value neatly.\n\nbody",
+        );
+
+        assert_eq!(
+            document.attributes.get("description").map(String::as_str),
+            Some(
+                "If you have a very long line of text that you need to substitute regularly in a document, you may find it easier to split the value neatly."
+            )
+        );
+    }
+
+    #[test]
+    fn parses_multiline_header_attribute_with_hard_wraps_in_tck_document() {
+        let document = parse_tck_document(
+            "= Document Title\n:haiku: Write your docs in text, + \\\n  AsciiDoc makes it easy, + \\\n  Now get back to work!\n\nbody",
+        );
+
+        assert_eq!(
+            document.attributes.get("haiku").map(String::as_str),
+            Some("Write your docs in text, +\nAsciiDoc makes it easy, +\nNow get back to work!")
+        );
     }
 
     #[test]
@@ -2213,8 +2377,7 @@ mod tests {
 
     #[test]
     fn preserves_comments_inside_listing_block() {
-        let document =
-            parse_tck_document("= Title\n\n----\n// keep this line\ncode here\n----");
+        let document = parse_tck_document("= Title\n\n----\n// keep this line\ncode here\n----");
 
         // One body block: the listing
         assert_eq!(document.blocks.len(), 1);
@@ -2237,10 +2400,14 @@ mod tests {
 
     #[test]
     fn parses_top_level_attributes_without_header_in_tck_document() {
-        let document = parse_tck_document(":icons:\n:iconsdir: /site/icons\n\nTIP: Ship it carefully.");
+        let document =
+            parse_tck_document(":icons:\n:iconsdir: /site/icons\n\nTIP: Ship it carefully.");
 
         assert!(document.header.is_none());
-        assert_eq!(document.attributes.get("icons").map(String::as_str), Some(""));
+        assert_eq!(
+            document.attributes.get("icons").map(String::as_str),
+            Some("")
+        );
         assert_eq!(
             document.attributes.get("iconsdir").map(String::as_str),
             Some("/site/icons")
@@ -2254,10 +2421,26 @@ mod tests {
             "= Demo\n\nIntro paragraph.\n\n:icons:\n:iconsdir: /site/icons\n\nTIP: Ship it carefully.",
         );
 
-        assert_eq!(document.attributes.get("icons").map(String::as_str), Some(""));
+        assert_eq!(
+            document.attributes.get("icons").map(String::as_str),
+            Some("")
+        );
         assert_eq!(
             document.attributes.get("iconsdir").map(String::as_str),
             Some("/site/icons")
+        );
+        assert_eq!(document.blocks.len(), 2);
+    }
+
+    #[test]
+    fn parses_multiline_body_attribute_before_later_blocks_in_tck_document() {
+        let document = parse_tck_document(
+            "= Demo\n\nIntro paragraph.\n\n:description: first segment \\\n  second segment\n\nTIP: Ship it carefully.",
+        );
+
+        assert_eq!(
+            document.attributes.get("description").map(String::as_str),
+            Some("first segment second segment")
         );
         assert_eq!(document.blocks.len(), 2);
     }
@@ -2284,7 +2467,10 @@ mod tests {
             document.attributes.get("revdate").map(String::as_str),
             Some("2001-01-01")
         );
-        assert_eq!(document.attributes.get("toc").map(String::as_str), Some("left"));
+        assert_eq!(
+            document.attributes.get("toc").map(String::as_str),
+            Some("left")
+        );
         assert_eq!(
             document.attributes.get("firstname").map(String::as_str),
             Some("Stuart")
@@ -2294,7 +2480,10 @@ mod tests {
             Some("Rackham")
         );
         assert_eq!(
-            document.attributes.get("authorinitials").map(String::as_str),
+            document
+                .attributes
+                .get("authorinitials")
+                .map(String::as_str),
             Some("SR")
         );
     }
@@ -2326,15 +2515,19 @@ mod tests {
             Some("junior@asciidoctor.org")
         );
         assert_eq!(
-            document.attributes.get("authorinitials_2").map(String::as_str),
+            document
+                .attributes
+                .get("authorinitials_2")
+                .map(String::as_str),
             Some("JW")
         );
     }
 
     #[test]
     fn parses_explicit_author_metadata_in_tck_document_parsing() {
-        let document =
-            parse_tck_document("= Document Title\n:author: Doc Writer\n:email: thedoctor@asciidoc.org\n\nbody");
+        let document = parse_tck_document(
+            "= Document Title\n:author: Doc Writer\n:email: thedoctor@asciidoc.org\n\nbody",
+        );
 
         assert_eq!(
             document.attributes.get("firstname").map(String::as_str),
@@ -2345,7 +2538,10 @@ mod tests {
             Some("Writer")
         );
         assert_eq!(
-            document.attributes.get("authorinitials").map(String::as_str),
+            document
+                .attributes
+                .get("authorinitials")
+                .map(String::as_str),
             Some("DW")
         );
         assert_eq!(
@@ -2372,7 +2568,10 @@ mod tests {
             Some("Author")
         );
         assert_eq!(
-            document.attributes.get("authorinitials_2").map(String::as_str),
+            document
+                .attributes
+                .get("authorinitials_2")
+                .map(String::as_str),
             Some("OA")
         );
     }
@@ -2486,7 +2685,12 @@ mod tests {
         assert_eq!(block.name, "sidebar");
         assert_eq!(block.form, Some("delimited"));
         assert_eq!(block.delimiter, Some("****"));
-        assert!(block.blocks.as_ref().is_some_and(|blocks| !blocks.is_empty()));
+        assert!(
+            block
+                .blocks
+                .as_ref()
+                .is_some_and(|blocks| !blocks.is_empty())
+        );
     }
 
     #[test]
@@ -2494,12 +2698,31 @@ mod tests {
         let document = parse_tck_document(".Exhibit A\n[source,rust]\n----\nputs 'hello'\n----");
         let block = document.blocks.first().expect("listing block");
 
-        assert_eq!(block.title.as_ref().and_then(|title| title.first()).map(|text| text.value.as_str()), Some("Exhibit A"));
+        assert_eq!(
+            block
+                .title
+                .as_ref()
+                .and_then(|title| title.first())
+                .map(|text| text.value.as_str()),
+            Some("Exhibit A")
+        );
         let metadata = block.metadata.as_ref().expect("metadata");
-        assert_eq!(metadata.attributes.get("$1").map(String::as_str), Some("source"));
-        assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("source"));
-        assert_eq!(metadata.attributes.get("language").map(String::as_str), Some("rust"));
-        assert_eq!(metadata.attributes.get("title").map(String::as_str), Some("Exhibit A"));
+        assert_eq!(
+            metadata.attributes.get("$1").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            metadata.attributes.get("language").map(String::as_str),
+            Some("rust")
+        );
+        assert_eq!(
+            metadata.attributes.get("title").map(String::as_str),
+            Some("Exhibit A")
+        );
     }
 
     #[test]
@@ -2545,8 +2768,14 @@ mod tests {
         assert_eq!(block.form, Some("paragraph"));
         assert_eq!(block.variant, Some("note"));
         let metadata = block.metadata.as_ref().expect("metadata");
-        assert_eq!(metadata.attributes.get("$1").map(String::as_str), Some("NOTE"));
-        assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("NOTE"));
+        assert_eq!(
+            metadata.attributes.get("$1").map(String::as_str),
+            Some("NOTE")
+        );
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("NOTE")
+        );
     }
 
     #[test]
@@ -2559,8 +2788,14 @@ mod tests {
         assert_eq!(block.variant, Some("tip"));
         assert_eq!(block.delimiter, Some("===="));
         let metadata = block.metadata.as_ref().expect("metadata");
-        assert_eq!(metadata.attributes.get("$1").map(String::as_str), Some("TIP"));
-        assert_eq!(metadata.attributes.get("style").map(String::as_str), Some("TIP"));
+        assert_eq!(
+            metadata.attributes.get("$1").map(String::as_str),
+            Some("TIP")
+        );
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("TIP")
+        );
     }
 
     #[test]
@@ -2575,8 +2810,9 @@ mod tests {
 
     #[test]
     fn renders_tck_anchored_delimited_blocks() {
-        let document =
-            parse_tck_document("[[code-sample]]\n----\nputs 'hello'\n----\n\n[[aside]]\n****\ninside\n****");
+        let document = parse_tck_document(
+            "[[code-sample]]\n----\nputs 'hello'\n----\n\n[[aside]]\n****\ninside\n****",
+        );
 
         let listing = document.blocks.first().expect("listing block");
         assert_eq!(listing.name, "listing");
@@ -2597,12 +2833,17 @@ mod tests {
         assert_eq!(block.delimiter, Some("____"));
         assert!(block.blocks.is_some());
         let metadata = block.metadata.as_ref().expect("metadata");
-        assert_eq!(metadata.attributes.get("$2").map(String::as_str), Some("Abraham Lincoln"));
+        assert_eq!(
+            metadata.attributes.get("$2").map(String::as_str),
+            Some("Abraham Lincoln")
+        );
     }
 
     #[test]
     fn renders_tck_verse_block() {
-        let document = parse_tck_document("[verse, Carl Sandburg, Fog]\n____\nThe fog comes\non little cat feet.\n____");
+        let document = parse_tck_document(
+            "[verse, Carl Sandburg, Fog]\n____\nThe fog comes\non little cat feet.\n____",
+        );
         let block = document.blocks.first().expect("verse block");
 
         assert_eq!(block.name, "verse");

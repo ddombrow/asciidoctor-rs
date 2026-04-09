@@ -1,5 +1,5 @@
-use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 
 #[pyfunction]
 fn render_html(input: &str) -> String {
@@ -16,8 +16,7 @@ fn prepare_document_json(input: &str) -> PyResult<String> {
 
 #[pyfunction]
 fn render_tck_json(input: &str) -> PyResult<String> {
-    crate::render_tck_json(input)
-        .map_err(|e| PyValueError::new_err(e.to_string()))
+    crate::render_tck_json(input).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 #[pymodule]

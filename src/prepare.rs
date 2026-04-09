@@ -948,10 +948,14 @@ fn prepare_listing(listing: &AstListing) -> ListingBlock {
 
 fn prepare_callout_list(colist: &crate::ast::CalloutList) -> CalloutListBlock {
     CalloutListBlock {
-        items: colist.items.iter().map(|item| CalloutItemBlock {
-            number: item.number,
-            inlines: prepare_inlines(&item.inlines),
-        }).collect(),
+        items: colist
+            .items
+            .iter()
+            .map(|item| CalloutItemBlock {
+                number: item.number,
+                inlines: prepare_inlines(&item.inlines),
+            })
+            .collect(),
     }
 }
 
@@ -1267,7 +1271,9 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     collect_table_row_inline_anchor_refs(row, refs);
                 }
             }
-            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) | PreparedBlock::Open(example) => {
+            PreparedBlock::Example(example)
+            | PreparedBlock::Sidebar(example)
+            | PreparedBlock::Open(example) => {
                 if let Some(id) = &example.id {
                     refs.entry(normalize_section_ref_key(id))
                         .or_insert(BlockRef {
@@ -1298,7 +1304,9 @@ fn collect_block_refs_into(blocks: &[PreparedBlock], refs: &mut BTreeMap<String,
                     });
                 collect_block_refs_into(&section.blocks, refs);
             }
-            PreparedBlock::Passthrough(_) | PreparedBlock::Toc(_) | PreparedBlock::CalloutList(_) => {}
+            PreparedBlock::Passthrough(_)
+            | PreparedBlock::Toc(_)
+            | PreparedBlock::CalloutList(_) => {}
             PreparedBlock::Image(image) => {
                 if let Some(id) = &image.id {
                     refs.entry(normalize_section_ref_key(id))
@@ -1338,8 +1346,10 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
             PreparedInline::Footnote(footnote) => {
                 collect_inline_anchor_refs(&footnote.inlines, refs)
             }
-            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) | PreparedInline::Icon(_) => {
-            }
+            PreparedInline::Text(_)
+            | PreparedInline::Passthrough(_)
+            | PreparedInline::Image(_)
+            | PreparedInline::Icon(_) => {}
         }
     }
 }
@@ -1406,7 +1416,9 @@ fn resolve_xrefs_in_blocks(
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
             | PreparedBlock::Toc(_) => {}
-            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) | PreparedBlock::Open(example) => {
+            PreparedBlock::Example(example)
+            | PreparedBlock::Sidebar(example)
+            | PreparedBlock::Open(example) => {
                 resolve_xrefs_in_blocks(&mut example.blocks, section_refs, block_refs)
             }
             PreparedBlock::Quote(quote) => {
@@ -1500,7 +1512,9 @@ fn collect_footnotes_from_blocks(
             | PreparedBlock::Passthrough(_)
             | PreparedBlock::Image(_)
             | PreparedBlock::Toc(_) => {}
-            PreparedBlock::Example(example) | PreparedBlock::Sidebar(example) | PreparedBlock::Open(example) => {
+            PreparedBlock::Example(example)
+            | PreparedBlock::Sidebar(example)
+            | PreparedBlock::Open(example) => {
                 collect_footnotes_from_blocks(&mut example.blocks, footnotes, next_index)
             }
             PreparedBlock::Quote(quote) => {
@@ -1521,8 +1535,10 @@ fn collect_footnotes_from_inlines(
 ) {
     for inline in inlines {
         match inline {
-            PreparedInline::Text(_) | PreparedInline::Passthrough(_) | PreparedInline::Image(_) | PreparedInline::Icon(_) => {
-            }
+            PreparedInline::Text(_)
+            | PreparedInline::Passthrough(_)
+            | PreparedInline::Image(_)
+            | PreparedInline::Icon(_) => {}
             PreparedInline::Span(span) => {
                 collect_footnotes_from_inlines(&mut span.inlines, footnotes, next_index)
             }
@@ -1643,7 +1659,9 @@ fn prepared_block_plain_text(block: &PreparedBlock) -> String {
             .flat_map(|row| row.cells.iter().map(|cell| cell.content.clone()))
             .collect::<Vec<_>>()
             .join("\n"),
-        PreparedBlock::Listing(listing) | PreparedBlock::Literal(listing) => listing.content.clone(),
+        PreparedBlock::Listing(listing) | PreparedBlock::Literal(listing) => {
+            listing.content.clone()
+        }
         PreparedBlock::Quote(quote) => {
             if quote.content.is_empty() {
                 prepared_blocks_plain_text(&quote.blocks)
@@ -1783,11 +1801,7 @@ fn slugify(title: &str) -> String {
         slug.pop();
     }
 
-    if slug == "_" {
-        "_section".into()
-    } else {
-        slug
-    }
+    if slug == "_" { "_section".into() } else { slug }
 }
 
 fn xref_href(target: &str) -> String {
@@ -1858,8 +1872,8 @@ mod tests {
     };
     use crate::parser::parse_document;
     use crate::prepare::{
-        prepare_document, prepared_document_to_json, ContentModel, PreparedBlock, PreparedInline,
-        TextInline,
+        ContentModel, PreparedBlock, PreparedInline, TextInline, prepare_document,
+        prepared_document_to_json,
     };
 
     #[test]

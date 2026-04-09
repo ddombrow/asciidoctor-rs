@@ -178,7 +178,10 @@ fn parse_span(chars: &[char], start: usize, base: usize) -> Option<(SpannedInlin
     };
 
     // Subscript and superscript are constrained-only (no ~~ or ^^ unconstrained form)
-    if matches!(variant, InlineVariant::Subscript | InlineVariant::Superscript) {
+    if matches!(
+        variant,
+        InlineVariant::Subscript | InlineVariant::Superscript
+    ) {
         return parse_constrained_span(chars, start, base, marker, variant);
     }
 
@@ -332,7 +335,12 @@ fn parse_inline_icon(chars: &[char], start: usize, base: usize) -> Option<(Spann
     let consumed = i - start;
     Some((
         SpannedInline {
-            inline: Inline::Icon(crate::ast::InlineIcon { name, size, title, role }),
+            inline: Inline::Icon(crate::ast::InlineIcon {
+                name,
+                size,
+                title,
+                role,
+            }),
             start: base + start,
             end: base + i,
         },
@@ -340,7 +348,9 @@ fn parse_inline_icon(chars: &[char], start: usize, base: usize) -> Option<(Spann
     ))
 }
 
-fn parse_inline_icon_attributes(attr_text: &str) -> (Option<String>, Option<String>, Option<String>) {
+fn parse_inline_icon_attributes(
+    attr_text: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
     let mut size = None;
     let mut title = None;
     let mut role = None;
@@ -366,7 +376,10 @@ fn parse_inline_icon_attributes(attr_text: &str) -> (Option<String>, Option<Stri
 fn inline_auto_generate_alt(target: &str) -> String {
     let filename = target.rsplit('/').next().unwrap_or(target);
     let filename = filename.rsplit('\\').next().unwrap_or(filename);
-    let stem = filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename);
+    let stem = filename
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(filename);
     stem.replace('-', " ").replace('_', " ")
 }
 
@@ -382,10 +395,11 @@ fn parse_footnote(chars: &[char], start: usize, base: usize) -> Option<(SpannedI
 
     let (text_start, text_end, consumed) = parse_bracket_text(chars, start + PREFIX.len() - 1)?;
     let source = chars[text_start..text_end].iter().collect::<String>();
-    let inlines = parse_spanned_inlines_with_base(&source.chars().collect::<Vec<_>>(), base + text_start)
-        .into_iter()
-        .map(|inline| inline.inline)
-        .collect();
+    let inlines =
+        parse_spanned_inlines_with_base(&source.chars().collect::<Vec<_>>(), base + text_start)
+            .into_iter()
+            .map(|inline| inline.inline)
+            .collect();
 
     Some((
         SpannedInline {
@@ -971,7 +985,10 @@ fn parse_constrained_span(
 ) -> Option<(SpannedInline, usize)> {
     // Subscript (~) and superscript (^) are designed to sit adjacent to alphanumeric
     // characters (e.g. H~2~O, E=mc^2^), so the word-boundary constraints do not apply.
-    let adjacent_ok = matches!(variant, InlineVariant::Subscript | InlineVariant::Superscript);
+    let adjacent_ok = matches!(
+        variant,
+        InlineVariant::Subscript | InlineVariant::Superscript
+    );
 
     let opener = *chars.get(start + 1)?;
     if (!adjacent_ok && start > 0 && chars[start - 1].is_alphanumeric())

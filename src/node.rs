@@ -1,5 +1,5 @@
-use napi::bindgen_prelude::Result;
 use napi::Error;
+use napi::bindgen_prelude::Result;
 use napi_derive::napi;
 
 #[napi]
