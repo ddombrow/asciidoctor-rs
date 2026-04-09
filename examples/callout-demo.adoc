@@ -57,6 +57,32 @@ gamma = 3 # <2>
 <2> Third variable, but referenced as callout two.
 <3> Second variable, but referenced as callout three.
 
+== Auto-Numbered Callouts
+
+Using `<.>` instead of explicit numbers — they auto-increment:
+
+----
+def greet(name) # <.>
+  puts "Hello, #{name}!" # <.>
+end # <.>
+----
+<.> Define the method.
+<.> Print the greeting.
+<.> End of method.
+
+== Mixed Numbering
+
+Explicit numbers and auto-numbers in the same block:
+
+----
+alpha = 1 # <2>
+beta  = 2 # <.>
+gamma = 3 # <3>
+----
+<1> First variable (explicit).
+<.> Second variable (auto).
+<3> Third variable (explicit).
+
 == Callouts with Inline Formatting in Descriptions
 
 ----

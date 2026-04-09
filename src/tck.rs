@@ -621,7 +621,8 @@ fn parse_blocks(
             let trimmed = line.trim_start();
             let is_callout = trimmed.starts_with('<')
                 && trimmed.find('>').is_some_and(|i| {
-                    trimmed[1..i].chars().all(|c| c.is_ascii_digit()) && i > 1
+                    let inner = &trimmed[1..i];
+                    inner == "." || (inner.chars().all(|c| c.is_ascii_digit()) && i > 1)
                 });
             if is_callout {
                 flush_paragraph(

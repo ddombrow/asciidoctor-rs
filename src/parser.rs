@@ -1304,8 +1304,9 @@ fn parse_delimited_block(
         "listing" => {
             let mut lines = Vec::new();
             let mut callouts = Vec::new();
+            let mut auto_counter: u32 = 0;
             for (idx, &line) in inner_lines.iter().enumerate() {
-                let (content, marker) = strip_callout_marker(line);
+                let (content, marker) = strip_callout_marker(line, &mut auto_counter);
                 if let Some(n) = marker {
                     callouts.push((idx, n));
                 }
@@ -1475,11 +1476,16 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
     (prelude.consumed_lines > 0).then_some(prelude)
 }
 
-fn strip_callout_marker(line: &str) -> (String, Option<u32>) {
+fn strip_callout_marker(line: &str, auto_counter: &mut u32) -> (String, Option<u32>) {
     let trimmed = line.trim_end();
     if let Some(rest) = trimmed.strip_suffix('>') {
         if let Some(start) = rest.rfind('<') {
             let num_str = &rest[start + 1..];
+            if num_str == "." {
+                *auto_counter += 1;
+                let content = rest[..start].trim_end().to_owned();
+                return (content, Some(*auto_counter));
+            }
             if let Ok(n) = num_str.parse::<u32>() {
                 let content = rest[..start].trim_end().to_owned();
                 return (content, Some(n));
@@ -1490,16 +1496,25 @@ fn strip_callout_marker(line: &str) -> (String, Option<u32>) {
 }
 
 fn parse_callout_list(lines: &[&str], index: usize) -> Option<(Block, usize)> {
-    // A callout list is one or more consecutive lines matching `<N> description`
+    // A callout list is one or more consecutive lines matching `<N>` or `<.>` + description
     let mut items = Vec::new();
     let mut i = index;
+    let mut auto_counter: u32 = 0;
     while i < lines.len() {
         let line = lines[i];
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix('<') {
             if let Some(gt) = rest.find('>') {
                 let num_str = &rest[..gt];
-                if let Ok(n) = num_str.parse::<u32>() {
+                let n = if num_str == "." {
+                    auto_counter += 1;
+                    Some(auto_counter)
+                } else if let Ok(n) = num_str.parse::<u32>() {
+                    Some(n)
+                } else {
+                    None
+                };
+                if let Some(n) = n {
                     let content = rest[gt + 1..].trim();
                     items.push(CalloutItem {
                         number: n,
