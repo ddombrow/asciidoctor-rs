@@ -335,13 +335,15 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
             escape_html(title)
         ));
     }
-    html.push_str("<div class=\"content\">\n<pre>");
-    if listing.callout_lines.is_empty() {
-        html.push_str(&escape_html(&listing.content));
+    let lang = listing.attributes.get("language").map(String::as_str);
+    let is_source = listing.style.as_deref() == Some("source") && lang.is_some_and(|l| !l.is_empty());
+
+    let rendered_content = if listing.callout_lines.is_empty() {
+        escape_html(&listing.content)
     } else {
         let conum_map: std::collections::HashMap<usize, u32> =
             listing.callout_lines.iter().copied().collect();
-        let rendered = listing
+        listing
             .content
             .split('\n')
             .enumerate()
@@ -353,10 +355,21 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
                 }
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        html.push_str(&rendered);
+            .join("\n")
+    };
+
+    if is_source {
+        let l = lang.unwrap();
+        html.push_str(&format!(
+            "<div class=\"content\">\n<pre class=\"highlight\"><code class=\"language-{l}\" data-lang=\"{l}\">"
+        ));
+        html.push_str(&rendered_content);
+        html.push_str("</code></pre>\n</div>\n</div>\n");
+    } else {
+        html.push_str("<div class=\"content\">\n<pre>");
+        html.push_str(&rendered_content);
+        html.push_str("</pre>\n</div>\n</div>\n");
     }
-    html.push_str("</pre>\n</div>\n</div>\n");
 }
 
 fn render_callout_list(html: &mut String, colist: &crate::prepare::CalloutListBlock) {

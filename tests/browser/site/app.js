@@ -15,6 +15,10 @@ const asciidoctorFontsHref =
   "/site/vendor/google-fonts.css";
 const asciidoctorFontsFallbackHref =
   "https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700";
+const highlightJsStylesheetHref =
+  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css";
+const highlightJsScriptHref =
+  "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js";
 
 const sample = `= Sample Document
 
@@ -414,11 +418,16 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
           : escapeHtml(line)
       )
       .join("\n");
+    const lang = block.attributes?.language;
+    const isSource = block.style === "source" && lang;
+    const innerHtml = isSource
+      ? `<pre class="highlight"><code class="language-${escapeHtml(lang)}" data-lang="${escapeHtml(lang)}">${renderedContent}</code></pre>`
+      : `<pre>${renderedContent}</pre>`;
     return `
       <div class="listingblock"${id}>
         ${title}
         <div class="content">
-          <pre>${renderedContent}</pre>
+          ${innerHtml}
         </div>
       </div>
     `;
@@ -646,6 +655,7 @@ function renderPreview(document) {
       <link rel="stylesheet" href="${fontAwesomeStylesheetHref}" onerror="this.onerror=null;this.href='${fontAwesomeStylesheetFallbackHref}'" />
       <link rel="stylesheet" href="${asciidoctorFontsHref}" onerror="this.onerror=null;this.href='${asciidoctorFontsFallbackHref}'" />
       <link rel="stylesheet" href="${asciidoctorStylesheetHref}" onerror="this.onerror=null;this.href='${asciidoctorStylesheetFallbackHref}'" />
+      <link rel="stylesheet" href="${highlightJsStylesheetHref}" />
       <style>
         body {
           margin: 0;
@@ -675,6 +685,7 @@ function renderPreview(document) {
       <div class="page-shell">
         ${renderDocument(document)}
       </div>
+      <script src="${highlightJsScriptHref}" onload="hljs.highlightAll()"></script>
     </body>
   </html>`);
   doc.close();

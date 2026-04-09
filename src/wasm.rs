@@ -1,4 +1,6 @@
 #[cfg(feature = "wasm")]
+use serde::Serialize as _;
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "wasm")]
@@ -15,7 +17,10 @@ pub fn prepare_document_json(input: &str) -> Result<String, JsValue> {
 pub fn prepare_document_value(input: &str) -> Result<JsValue, JsValue> {
     let document = crate::parse_document(input);
     let prepared = crate::prepare_document(&document);
-    serde_wasm_bindgen::to_value(&prepared).map_err(|error| JsValue::from_str(&error.to_string()))
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    prepared
+        .serialize(&serializer)
+        .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 #[cfg(all(test, feature = "wasm"))]

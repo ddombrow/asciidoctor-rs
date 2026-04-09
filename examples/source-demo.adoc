@@ -1,0 +1,85 @@
+= Source Block Highlighting Demo
+
+== Ruby
+
+[source,ruby]
+----
+require 'sinatra'
+
+get '/hi' do
+  "Hello World!"
+end
+----
+
+== Rust
+
+[source,rust]
+----
+fn main() {
+    println!("Hello, world!");
+}
+----
+
+== JavaScript
+
+[source,javascript]
+----
+function greet(name) {
+  return `Hello, ${name}!`;
+}
+
+console.log(greet("World"));
+----
+
+== Bash
+
+[source,bash]
+----
+#!/usr/bin/env bash
+for file in *.adoc; do
+  echo "Processing $file"
+done
+----
+
+== XML
+
+[source,xml]
+----
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <child id="1">content</child>
+</root>
+----
+
+== Source Block with Title
+
+.Fibonacci sequence in Python
+[source,python]
+----
+def fib(n):
+    a, b = 0, 1
+    for _ in range(n):
+        yield a
+        a, b = b, a + b
+----
+
+== Source Block with Callouts
+
+[source,ruby]
+----
+require 'sinatra' # <1>
+
+get '/hi' do # <2>
+  "Hello World!" # <3>
+end
+----
+<1> Import the Sinatra library.
+<2> Define the route for GET /hi.
+<3> Return the response body.
+
+== Plain Listing (no language)
+
+----
+this is plain preformatted text
+no syntax highlighting here
+----
