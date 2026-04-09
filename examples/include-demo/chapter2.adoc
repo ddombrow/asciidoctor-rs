@@ -1,0 +1,11 @@
+= Implementation
+
+This is the second chapter, also included with `leveloffset=+1`.
+
+== Architecture
+
+The system is structured into a preprocessor stage and a parser stage.
+
+== Details
+
+Each stage is independent and can be tested in isolation.

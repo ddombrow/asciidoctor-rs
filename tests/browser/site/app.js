@@ -39,6 +39,9 @@ const jsonEl = document.querySelector("#json-output");
 const previewFrameEl = document.querySelector("#preview-frame");
 const renderButton = document.querySelector("#render");
 const sampleButton = document.querySelector("#load-sample");
+const openFileEl = document.querySelector("#open-file");
+const filePathEl = document.querySelector("#file-path");
+const loadPathButton = document.querySelector("#load-path");
 let renderTimer = null;
 
 window.__asciidoctorState = "loading";
@@ -67,6 +70,53 @@ renderButton.addEventListener("click", () => {
 sampleButton.addEventListener("click", () => {
   sourceEl.value = sample;
   renderSource(sample);
+});
+
+async function loadFromPath(path) {
+  console.log("[load] loadFromPath called with:", path);
+  if (!path.trim()) {
+    updateStatus("error", "Path is empty");
+    return;
+  }
+  updateStatus("loading", `Loading ${path}...`);
+  try {
+    const url = `/api/expand?path=${encodeURIComponent(path.trim())}`;
+    console.log("[load] fetching:", url);
+    const resp = await fetch(url);
+    console.log("[load] response status:", resp.status);
+    if (!resp.ok) {
+      updateStatus("error", `Could not load: ${path} (${resp.status})`);
+      return;
+    }
+    const text = await resp.text();
+    console.log("[load] got", text.length, "chars");
+    sourceEl.value = text;
+    renderSource(text);
+  } catch (err) {
+    console.error("[load] error:", err);
+    updateStatus("error", String(err));
+  }
+}
+
+console.log("[load] loadPathButton:", loadPathButton, "filePathEl:", filePathEl);
+loadPathButton?.addEventListener("click", () => loadFromPath(filePathEl.value));
+
+filePathEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadFromPath(filePathEl.value);
+});
+
+openFileEl.addEventListener("change", () => {
+  const file = openFileEl.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target.result;
+    sourceEl.value = text;
+    renderSource(text);
+  };
+  reader.readAsText(file);
+  // Reset so the same file can be re-opened
+  openFileEl.value = "";
 });
 
 sourceEl.addEventListener("keydown", (event) => {

@@ -1,0 +1,11 @@
+= Introduction
+
+This is the first chapter. It was in a separate file, included with `leveloffset=+1` so its top-level heading (`=`) becomes a section heading (`==`).
+
+== Background
+
+Some background context for the introduction.
+
+== Motivation
+
+Why this project exists.

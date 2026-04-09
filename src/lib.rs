@@ -2,6 +2,7 @@ pub mod ast;
 pub mod inline;
 pub mod parser;
 pub mod prepare;
+pub mod preprocessor;
 pub mod render;
 pub mod tck;
 
@@ -21,6 +22,7 @@ pub use ast::{
 };
 pub use inline::{SpannedInline, parse_inlines, parse_spanned_inlines};
 pub use parser::parse_document;
+pub use preprocessor::preprocess;
 pub use prepare::{
     AdmonitionBlock as PreparedAdmonitionBlock, AnchorInline, Author, CompoundBlock, DocumentBlock,
     DocumentSection, Footnote, LinkInline, ParagraphBlock, PassthroughBlock, PassthroughInline,

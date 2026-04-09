@@ -1,0 +1,2 @@
+NOTE: This note is a reusable fragment included from `shared/note.adoc`.
+It has no heading of its own and drops in as-is.

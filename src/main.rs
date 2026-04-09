@@ -44,7 +44,12 @@ fn run_with_path(path: String, format: OutputFormat) -> ExitCode {
         }
     };
 
-    let document = asciidoctor_rs::parse_document(&input);
+    let base_dir = std::path::Path::new(&path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let expanded = asciidoctor_rs::preprocess(&input, base_dir);
+
+    let document = asciidoctor_rs::parse_document(&expanded);
     match format {
         OutputFormat::Html => {
             let html = asciidoctor_rs::render_html(&document);
@@ -62,7 +67,7 @@ fn run_with_path(path: String, format: OutputFormat) -> ExitCode {
             println!("{json}");
         }
         OutputFormat::TckJson => {
-            let json = match asciidoctor_rs::render_tck_json(&input) {
+            let json = match asciidoctor_rs::render_tck_json(&expanded) {
                 Ok(json) => json,
                 Err(error) => {
                     eprintln!("failed to serialize TCK document: {error}");

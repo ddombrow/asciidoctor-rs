@@ -1,0 +1,10 @@
+= Multi-File Document Demo
+:author: Dan Dombrowsky
+
+This document is assembled from multiple files using the include directive.
+
+include::chapter1.adoc[leveloffset=+1]
+
+include::chapter2.adoc[leveloffset=+1]
+
+include::shared/note.adoc[]
