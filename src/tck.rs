@@ -414,14 +414,16 @@ fn parse_blocks(
         let absolute_index = line_offset + index - 1;
         let line = lines[index];
 
-        // Block comment delimiter (////): consume everything until the closing ////
-        if line.trim() == "////" {
+        // Block comment delimiter: consume everything until the matching closing delimiter.
+        if let Some((delimiter, _, _)) =
+            parse_delimited_block_marker(line).filter(|(_, kind, _)| *kind == "comment")
+        {
             index += 1;
-            while index < lines.len() && lines[index].trim() != "////" {
+            while index < lines.len() && lines[index].trim() != delimiter {
                 index += 1;
             }
             if index < lines.len() {
-                index += 1; // consume the closing ////
+                index += 1;
             }
             continue;
         }
@@ -445,9 +447,29 @@ fn parse_blocks(
             continue;
         }
 
-        if let Some((heading, heading_range, consumed_lines)) =
-            parse_heading_line(lines, index, line_offset)
+        if let Some((mut block, consumed_lines)) = parse_delimited_block(lines, index, line_offset)
         {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            apply_anchor_to_block(&mut block, pending_anchor.take());
+            last_end = Some(block.location[1].clone());
+            blocks.push(block);
+            index += consumed_lines;
+            continue;
+        }
+
+        let heading = if paragraph_lines.is_empty() {
+            parse_heading_line(lines, index, line_offset)
+        } else {
+            parse_atx_heading_line(lines[index], line_offset + index)
+                .map(|(heading, range)| (heading, range, 1))
+        };
+        if let Some((heading, heading_range, consumed_lines)) = heading {
             if let Some(level) = stop_at_level {
                 if heading.level <= level {
                     break;
@@ -504,22 +526,6 @@ fn parse_blocks(
 
             index = child_start
                 + count_consumed_lines(&lines[child_start..], stop_at_level, heading.level);
-            continue;
-        }
-
-        if let Some((mut block, consumed_lines)) = parse_delimited_block(lines, index, line_offset)
-        {
-            flush_paragraph(
-                &mut blocks,
-                &mut paragraph_start,
-                &mut paragraph_lines,
-                line_offset,
-                &mut last_end,
-            );
-            apply_anchor_to_block(&mut block, pending_anchor.take());
-            last_end = Some(block.location[1].clone());
-            blocks.push(block);
-            index += consumed_lines;
             continue;
         }
 
@@ -723,16 +729,11 @@ fn parse_delimited_block(
 ) -> Option<(AsgBlock, usize)> {
     let prelude = parse_block_prelude(lines, index, line_offset);
     let delimiter_index = index + prelude.consumed_lines;
-    let delimiter = lines.get(delimiter_index)?.trim();
-    let name = match delimiter {
-        "----" => "listing",
-        "====" => "example",
-        "****" => "sidebar",
-        "____" => "quote",
-        "...." => "literal",
-        "--" => "open",
-        _ => return None,
-    };
+    let (delimiter, name, canonical_delimiter) =
+        parse_delimited_block_marker(lines.get(delimiter_index)?)?;
+    if name == "comment" {
+        return None;
+    }
 
     let closing_index = lines[delimiter_index + 1..]
         .iter()
@@ -743,7 +744,7 @@ fn parse_delimited_block(
     let inner_lines = &lines[delimiter_index + 1..closing_index];
     let consumed = closing_index - index + 1;
 
-    if delimiter == "===="
+    if name == "example"
         && let Some(variant) = prelude
             .metadata
             .as_ref()
@@ -760,7 +761,7 @@ fn parse_delimited_block(
                 metadata: prelude.metadata,
                 level: None,
                 form: Some("delimited"),
-                delimiter: Some("===="),
+                delimiter: Some(canonical_delimiter),
                 inlines: None,
                 blocks: Some(children),
                 variant: Some(variant),
@@ -789,15 +790,7 @@ fn parse_delimited_block(
         metadata: prelude.metadata,
         level: None,
         form: Some("delimited"),
-        delimiter: Some(match delimiter {
-            "----" => "----",
-            "====" => "====",
-            "****" => "****",
-            "____" => "____",
-            "...." => "....",
-            "--" => "--",
-            _ => unreachable!(),
-        }),
+        delimiter: Some(canonical_delimiter),
         inlines: None,
         blocks: None,
         variant: None,
@@ -1030,10 +1023,36 @@ fn split_attribute_list(input: &str) -> Vec<String> {
 }
 
 fn is_delimited_block_delimiter(line: &str) -> bool {
-    matches!(
-        line.trim(),
-        "----" | "====" | "****" | "____" | "...." | "--" | "////"
-    )
+    parse_delimited_block_marker(line).is_some()
+}
+
+fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str, &'static str)> {
+    let trimmed = line.trim();
+    if trimmed == "--" {
+        return Some((trimmed, "open", "--"));
+    }
+
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < 4 {
+        return None;
+    }
+
+    let first = *bytes.first()?;
+    if !bytes.iter().all(|byte| *byte == first) {
+        return None;
+    }
+
+    let (name, canonical_delimiter) = match first {
+        b'-' => ("listing", "----"),
+        b'=' => ("example", "===="),
+        b'*' => ("sidebar", "****"),
+        b'_' => ("quote", "____"),
+        b'.' => ("literal", "...."),
+        b'/' => ("comment", "////"),
+        _ => return None,
+    };
+
+    Some((trimmed, name, canonical_delimiter))
 }
 
 fn apply_attribute_list(
@@ -1496,7 +1515,7 @@ fn parse_list_content(remainder: &str) -> Option<&str> {
 }
 
 fn is_comment_line(line: &str) -> bool {
-    line.trim_start().starts_with("//")
+    line.trim_start().starts_with("//") && parse_delimited_block_marker(line).is_none()
 }
 
 fn skip_header_comments(lines: &[&str], mut index: usize) -> usize {
@@ -1909,7 +1928,11 @@ fn parse_setext_heading_line(
     line_offset: usize,
 ) -> Option<(HeadingParse, [Position; 2], usize)> {
     let title_line = *lines.get(index)?;
-    if parse_attribute_list_line(title_line.trim()).is_some() {
+    let title = title_line.trim();
+    if title.is_empty()
+        || !title.chars().any(char::is_alphanumeric)
+        || parse_attribute_list_line(title).is_some()
+    {
         return None;
     }
     let underline = lines.get(index + 1)?.trim();
@@ -1931,7 +1954,7 @@ fn parse_setext_heading_line(
             },
             Position {
                 line: line_offset + index,
-                col: title_line.len(),
+                col: title.len(),
             },
         ],
         2,
@@ -2678,6 +2701,23 @@ mod tests {
     }
 
     #[test]
+    fn renders_tck_delimited_listing_block_with_longer_delimiters() {
+        let document = parse_tck_document("------\ndef main\n  puts 'hello'\nend\n------");
+        let block = document.blocks.first().expect("listing block");
+
+        assert_eq!(block.name, "listing");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("----"));
+        let Some(inlines) = &block.inlines else {
+            panic!("expected listing text");
+        };
+        let AsgInline::Text(text) = &inlines[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "def main\n  puts 'hello'\nend");
+    }
+
+    #[test]
     fn renders_tck_delimited_sidebar_block() {
         let document = parse_tck_document("****\n* one\n* two\n****");
         let block = document.blocks.first().expect("sidebar block");
@@ -2796,6 +2836,28 @@ mod tests {
             metadata.attributes.get("style").map(String::as_str),
             Some("TIP")
         );
+    }
+
+    #[test]
+    fn renders_tck_nested_example_blocks_with_longer_child_delimiters() {
+        let document = parse_tck_document("====\n======\ninside\n======\n====");
+        let block = document.blocks.first().expect("outer example");
+
+        assert_eq!(block.name, "example");
+        let inner = block
+            .blocks
+            .as_ref()
+            .and_then(|blocks| blocks.first())
+            .expect("inner example");
+        assert_eq!(inner.name, "example");
+    }
+
+    #[test]
+    fn ignores_tck_comment_blocks_with_longer_delimiters() {
+        let document = parse_tck_document("//////\nignore me\n//////\n\nvisible");
+
+        assert_eq!(document.blocks.len(), 1);
+        assert_eq!(document.blocks[0].name, "paragraph");
     }
 
     #[test]

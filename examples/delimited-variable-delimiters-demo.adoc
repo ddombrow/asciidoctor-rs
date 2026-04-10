@@ -1,0 +1,45 @@
+= Delimited Variable Delimiters Demo
+
+This document exercises variable-length delimited block parsing.
+
+== Longer Listing Delimiters
+
+------
+This listing uses six dashes instead of four.
+include::not-expanded.adoc[]
+------
+
+The include macro above should remain literal because it is inside a listing block.
+
+== Nested Example Block with Longer Child Delimiters
+
+====
+The outer example uses the canonical delimiter length.
+
+======
+The inner example uses a longer delimiter length.
+======
+
+Back in the outer example block.
+====
+
+== Nested Example Block with Shorter Child Delimiters
+
+======
+The outer example uses a longer delimiter length.
+
+====
+The inner example uses the canonical delimiter length.
+====
+
+Back in the longer outer example block.
+======
+
+== Longer Comment Delimiters
+
+//////
+This entire block should be ignored by the parser.
+It exercises longer comment fences.
+//////
+
+This paragraph should appear immediately after the ignored comment block.

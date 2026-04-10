@@ -17,11 +17,11 @@ fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth
     }
 
     let mut out = String::with_capacity(input.len());
-    let mut delimited_block_delimiter: Option<&'static str> = None;
+    let mut delimited_block_delimiter: Option<String> = None;
 
     for line in input.lines() {
         // Track delimited block state to skip includes inside verbatim blocks.
-        if let Some(open_delim) = delimited_block_delimiter {
+        if let Some(open_delim) = delimited_block_delimiter.as_deref() {
             out.push_str(line);
             out.push('\n');
             if line.trim() == open_delim {
@@ -73,16 +73,21 @@ fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth
     out
 }
 
-/// Returns the canonical delimiter string if `line` opens a delimited block.
-fn opening_block_delimiter(line: &str) -> Option<&'static str> {
-    match line.trim() {
-        "----" => Some("----"),
-        "====" => Some("===="),
-        "****" => Some("****"),
-        "++++" => Some("++++"),
-        "____" => Some("____"),
-        "...." => Some("...."),
-        "////" => Some("////"),
+/// Returns the exact delimiter string if `line` opens a tracked delimited block.
+fn opening_block_delimiter(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < 4 {
+        return None;
+    }
+
+    let first = *bytes.first()?;
+    if !bytes.iter().all(|byte| *byte == first) {
+        return None;
+    }
+
+    match first {
+        b'-' | b'=' | b'*' | b'+' | b'_' | b'.' | b'/' => Some(trimmed.to_owned()),
         _ => None,
     }
 }
@@ -198,6 +203,16 @@ mod tests {
         let out = preprocess(input, &dir);
         cleanup(&dir);
         assert_eq!(out, "----\ninclude::child.adoc[]\n----\n");
+    }
+
+    #[test]
+    fn does_not_expand_inside_listing_block_with_longer_delimiter() {
+        let dir = make_test_dir("listing_long");
+        write(&dir, "child.adoc", "should not appear\n");
+        let input = "------\ninclude::child.adoc[]\n------\n";
+        let out = preprocess(input, &dir);
+        cleanup(&dir);
+        assert_eq!(out, "------\ninclude::child.adoc[]\n------\n");
     }
 
     #[test]
