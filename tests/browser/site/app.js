@@ -241,6 +241,21 @@ function renderBlocks(blocks, sectionLevel = 0, documentAttributes = {}, section
   return blocks.map((block) => renderBlock(block, sectionLevel, documentAttributes, sections)).join("");
 }
 
+function trimDelimitedBlockLines(content) {
+  const lines = content === "" ? [] : String(content).split("\n");
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start].trim() === "") {
+    start += 1;
+  }
+  while (end > start && lines[end - 1].trim() === "") {
+    end -= 1;
+  }
+
+  return { lineOffset: start, lines: lines.slice(start, end) };
+}
+
 function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sections = []) {
   if (block.type === "preamble") {
     return `
@@ -412,11 +427,12 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     const title = block.title
       ? `<div class="title">${escapeHtml(block.title)}</div>`
       : "";
+    const content = trimDelimitedBlockLines(block.content ?? "").lines.join("\n");
     return `
       <div class="literalblock"${id}>
         ${title}
         <div class="content">
-          <pre>${escapeHtml(block.content ?? "")}</pre>
+          <pre>${escapeHtml(content)}</pre>
         </div>
       </div>
     `;
@@ -430,11 +446,11 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     const calloutMap = Object.fromEntries(
       (block.calloutLines ?? []).map(([i, n]) => [i, n])
     );
-    const lines = (block.content ?? "").split("\n");
+    const { lineOffset, lines } = trimDelimitedBlockLines(block.content ?? "");
     const renderedContent = lines
       .map((line, i) =>
-        calloutMap[i] !== undefined
-          ? `${escapeHtml(line)}<i class="conum" data-value="${calloutMap[i]}"></i><b>${calloutMap[i]}</b>`
+        calloutMap[i + lineOffset] !== undefined
+          ? `${escapeHtml(line)}<i class="conum" data-value="${calloutMap[i + lineOffset]}"></i><b>${calloutMap[i + lineOffset]}</b>`
           : escapeHtml(line)
       )
       .join("\n");
@@ -500,10 +516,11 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       ? `<div class="attribution">\n&#8212; ${escapeHtml(block.attribution ?? "")}${block.citetitle ? `<br>\n<cite>${escapeHtml(block.citetitle)}</cite>` : ""}\n</div>`
       : "";
     if (block.isVerse) {
+      const content = trimDelimitedBlockLines(block.content ?? "").lines.join("\n");
       return `
         <div class="verseblock"${id}>
           ${title}
-          <pre class="content">${escapeHtml(block.content ?? "")}</pre>
+          <pre class="content">${escapeHtml(content)}</pre>
           ${attribution}
         </div>
       `;
@@ -533,7 +550,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   }
 
   if (block.type === "passthrough") {
-    return block.content ?? "";
+    return trimDelimitedBlockLines(block.content ?? "").lines.join("\n");
   }
 
   if (block.type === "image") {

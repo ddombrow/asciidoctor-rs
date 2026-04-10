@@ -494,6 +494,43 @@ inside example
   await expect(frame.locator(".exampleblock p")).toHaveText("inside example");
 });
 
+test("preview trims outer blank lines in delimited verbatim blocks", async ({ page }) => {
+  const source = `= Sample Document
+
+----
+
+println!("hello")
+
+println!("goodbye")
+
+----
+
+....
+
+  first line
+
+last line
+
+....
+
+[verse]
+____
+
+line one
+
+line two
+
+____`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".listingblock pre")).toHaveText('println!("hello")\n\nprintln!("goodbye")');
+  await expect(frame.locator(".literalblock pre")).toHaveText("  first line\n\nlast line");
+  await expect(frame.locator(".verseblock pre.content")).toHaveText("line one\n\nline two");
+});
+
 test("exports and renders tables", async ({ page }) => {
   const source = `= Sample Document
 

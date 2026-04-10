@@ -88,6 +88,26 @@ fn render_toc_sections(html: &mut String, sections: &[DocumentSection], level: u
     html.push_str("</ul>\n");
 }
 
+fn trimmed_delimited_content_lines(content: &str) -> (usize, Vec<&str>) {
+    let lines = if content.is_empty() {
+        Vec::new()
+    } else {
+        content.split('\n').collect::<Vec<_>>()
+    };
+
+    let start = lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .unwrap_or(lines.len());
+    let end = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .map(|idx| idx + 1)
+        .unwrap_or(start);
+
+    (start, lines[start..end].to_vec())
+}
+
 fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_>) {
     match block {
         PreparedBlock::Preamble(preamble) => {
@@ -111,7 +131,7 @@ fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_
         PreparedBlock::Open(open) => render_open(html, open, ctx),
         PreparedBlock::Quote(quote) => render_quote(html, quote, ctx),
         PreparedBlock::Passthrough(p) => {
-            html.push_str(&p.content);
+            html.push_str(&trimmed_delimited_content_lines(&p.content).1.join("\n"));
             html.push('\n');
         }
         PreparedBlock::Image(image) => render_image_block(html, image, ctx),
@@ -325,19 +345,20 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
     let lang = listing.attributes.get("language").map(String::as_str);
     let is_source =
         listing.style.as_deref() == Some("source") && lang.is_some_and(|l| !l.is_empty());
+    let (line_offset, lines) = trimmed_delimited_content_lines(&listing.content);
 
     let rendered_content = if listing.callout_lines.is_empty() {
-        escape_html(&listing.content)
+        escape_html(&lines.join("\n"))
     } else {
         let conum_map: std::collections::HashMap<usize, u32> =
             listing.callout_lines.iter().copied().collect();
-        listing
-            .content
-            .split('\n')
+        lines
+            .iter()
             .enumerate()
             .map(|(i, line)| {
+                let line = *line;
                 let escaped = escape_html(line);
-                match conum_map.get(&i) {
+                match conum_map.get(&(i + line_offset)) {
                     Some(n) => {
                         format!("{escaped}<i class=\"conum\" data-value=\"{n}\"></i><b>{n}</b>")
                     }
@@ -388,7 +409,9 @@ fn render_literal(html: &mut String, literal: &crate::prepare::ListingBlock) {
         ));
     }
     html.push_str("<div class=\"content\">\n<pre>");
-    html.push_str(&escape_html(&literal.content));
+    html.push_str(&escape_html(
+        &trimmed_delimited_content_lines(&literal.content).1.join("\n"),
+    ));
     html.push_str("</pre>\n</div>\n</div>\n");
 }
 
@@ -476,7 +499,9 @@ fn render_quote(html: &mut String, block: &crate::prepare::QuoteBlock, ctx: &Ren
     }
     if block.is_verse {
         html.push_str("<pre class=\"content\">");
-        html.push_str(&escape_html(&block.content));
+        html.push_str(&escape_html(
+            &trimmed_delimited_content_lines(&block.content).1.join("\n"),
+        ));
         html.push_str("</pre>\n");
     } else {
         html.push_str("<blockquote>\n");
@@ -1855,6 +1880,26 @@ mod tests {
     }
 
     #[test]
+    fn trims_outer_blank_lines_in_listing_blocks_when_rendering() {
+        let html = render_html(&crate::parser::parse_document(
+            "----\n\nputs 'hello' <1>\n\nputs 'goodbye'\n\n----\n<1> greeting\n",
+        ));
+
+        assert!(html.contains(
+            "<pre>puts &#39;hello&#39;<i class=\"conum\" data-value=\"1\"></i><b>1</b>\n\nputs &#39;goodbye&#39;</pre>"
+        ));
+    }
+
+    #[test]
+    fn trims_outer_blank_lines_in_literal_blocks_when_rendering() {
+        let html = render_html(&crate::parser::parse_document(
+            "....\n\n  first line\n\nlast line\n\n....",
+        ));
+
+        assert!(html.contains("<pre>  first line\n\nlast line</pre>"));
+    }
+
+    #[test]
     fn renders_inline_triple_plus_passthrough_unescaped() {
         let html = render_html(&crate::parser::parse_document(
             "See +++<del>this</del>+++ example.\n",
@@ -2096,5 +2141,14 @@ mod tests {
         assert!(html.contains("<div class=\"attribution\">"));
         assert!(html.contains("Carl Sandburg"));
         assert!(html.contains("<cite>Fog</cite>"));
+    }
+
+    #[test]
+    fn trims_outer_blank_lines_in_verse_blocks_when_rendering() {
+        let html = render_html(&crate::parser::parse_document(
+            "[verse]\n____\n\nline one\n\nline two\n\n____",
+        ));
+
+        assert!(html.contains("<pre class=\"content\">line one\n\nline two</pre>"));
     }
 }

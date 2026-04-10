@@ -1,0 +1,50 @@
+= Delimited Blank Line Trimming Demo
+
+This document exercises render-time trimming of leading and trailing blank lines in delimited blocks.
+
+== Listing Block
+
+----
+
+println!("hello")
+
+println!("goodbye")
+
+----
+
+The listing above should render without the outer blank lines, but it should keep the blank line between the two statements.
+
+== Literal Block
+
+....
+
+  first line
+
+last line
+
+....
+
+The literal block should also trim only the blank lines at the edges.
+
+== Verse Block
+
+[verse, Anonymous]
+____
+
+line one
+
+line two
+
+____
+
+The verse block should keep the stanza break in the middle.
+
+== Passthrough Block
+
+++++
+
+<div class="demo-note">
+  <p>Leading and trailing blank lines should be removed around this raw HTML.</p>
+</div>
+
+++++
