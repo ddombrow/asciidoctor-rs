@@ -1,0 +1,4 @@
+[%header,format=csv,separator=\t]
+|===
+include::copilot-temp-data.tsv[]
+|===

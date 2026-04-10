@@ -110,14 +110,47 @@ sourceEl.addEventListener("input", () => {
   renderSource(sourceEl.value);
 });
 
-function renderSource(source) {
+let renderRequestId = 0;
+
+async function preprocessSource(source) {
+  const path = filePathEl?.value?.trim() ?? "";
+  if (!source.includes("include::") || !path) {
+    return source;
+  }
+
+  const response = await fetch("/api/preprocess", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ source, path })
+  });
+  if (response.status === 404) {
+    const fallback = await fetch(`/api/expand?path=${encodeURIComponent(path)}`);
+    if (!fallback.ok) {
+      throw new Error(`Preprocess failed (${response.status})`);
+    }
+    return await fallback.text();
+  }
+  if (!response.ok) {
+    throw new Error(`Preprocess failed (${response.status})`);
+  }
+  return await response.text();
+}
+
+async function renderSource(source) {
   if (window.__asciidoctorState !== "ready") {
     return;
   }
 
   try {
-    const json = prepare_document_json(source);
-    const document = prepare_document_value(source);
+    const requestId = ++renderRequestId;
+    const expanded = await preprocessSource(source);
+    if (requestId !== renderRequestId) {
+      return;
+    }
+    const json = prepare_document_json(expanded);
+    const document = prepare_document_value(expanded);
 
     renderJson(json);
     renderPreview(document);

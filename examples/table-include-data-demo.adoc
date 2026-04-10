@@ -1,0 +1,17 @@
+= Table Include Data Demo
+
+This document exercises include-driven CSV and TSV table loading.
+
+== CSV Include Table
+
+[%header,format=csv]
+|===
+include::table-include-data-demo.csv[]
+|===
+
+== TSV Include Table
+
+[%header,format=csv,separator=\t]
+|===
+include::table-include-data-demo.tsv[]
+|===

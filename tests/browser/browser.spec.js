@@ -619,6 +619,18 @@ Robyn:Indestructible:Dance
   await expect(frame.locator("table.tableblock").nth(2).locator("tbody tr").nth(1).locator("td").nth(2)).toHaveText("Dance");
 });
 
+test("preview loads example docs with include-driven tables", async ({ page }) => {
+  await page.fill("#file-path", "examples/table-include-data-demo.adoc");
+  await page.click("#load-path");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("table.tableblock")).toHaveCount(2);
+  await expect(frame.locator("table.tableblock thead th").nth(0)).toHaveText("Name");
+  await expect(frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(1)).toHaveText("Maintainer");
+  await expect(frame.locator("table.tableblock").nth(1).locator("tbody tr").nth(0).locator("td").nth(2)).toHaveText("Runtime");
+  await expect(frame.locator("text=include::table-include-data-demo.csv[]")).toHaveCount(0);
+});
+
 test("exports and renders block content inside table cells", async ({ page }) => {
   const source = `= Sample Document
 

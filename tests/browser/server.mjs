@@ -17,40 +17,58 @@ const contentTypes = {
   ".wasm": "application/wasm"
 };
 
+function openingBlockDelimiter(line) {
+  const trimmed = line.trim();
+  if (trimmed === "--") return null;
+  if (trimmed.length < 4) return null;
+  const marker = trimmed[0];
+  if (!"-=*+_./".includes(marker)) return null;
+  return [...trimmed].every((ch) => ch === marker) ? trimmed : null;
+}
+
 // Mirrors the Rust preprocessor: expand include:: directives recursively.
 function expandIncludes(filePath, seen = new Set(), depth = 0) {
-  if (depth > 64) return readFileSync(filePath, "utf8");
-  const canonical = existsSync(filePath) ? realpathSync(filePath) : filePath;
-  if (seen.has(canonical)) return ""; // circular include — skip
-  const content = readFileSync(filePath, "utf8");
-  seen.add(canonical);
-  const dir = dirname(filePath);
+  return expandIncludesInText(readFileSync(filePath, "utf8"), dirname(filePath), seen, depth);
+}
 
-  const DELIMITERS = new Set(["----", "====", "****", "++++", "____", "....", "////"]);
-  const lines = content.split("\n");
+function expandIncludesInText(content, baseDir, seen = new Set(), depth = 0) {
+  if (depth > 64) return content;
   const out = [];
   let openDelim = null;
 
-  for (const line of lines) {
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
     if (openDelim) {
       out.push(line);
       if (line.trim() === openDelim) openDelim = null;
       continue;
     }
-    if (DELIMITERS.has(line.trim())) {
-      openDelim = line.trim();
+    const delimiter = openingBlockDelimiter(line);
+    if (delimiter) {
+      openDelim = delimiter;
       out.push(line);
       continue;
     }
     const m = line.match(/^include::([^\[]+)\[([^\]]*)\]$/);
     if (m) {
-      const includePath = join(dir, m[1]);
+      const includePath = join(baseDir, m[1]);
       if (existsSync(includePath)) {
-        let expanded = expandIncludes(includePath, seen, depth + 1);
+        const canonical = realpathSync(includePath);
+        if (seen.has(canonical)) {
+          continue;
+        }
+        seen.add(canonical);
+        let expanded = expandIncludesInText(
+          readFileSync(includePath, "utf8"),
+          dirname(includePath),
+          seen,
+          depth + 1
+        );
         const leveloffset = parseLevelOffset(m[2]);
         if (leveloffset !== 0) expanded = applyLevelOffset(expanded, leveloffset);
         out.push(expanded);
         if (!expanded.endsWith("\n")) out.push("");
+        seen.delete(canonical);
       }
       // missing file: skip silently
       continue;
@@ -58,7 +76,6 @@ function expandIncludes(filePath, seen = new Set(), depth = 0) {
     out.push(line);
   }
 
-  seen.delete(canonical);
   return out.join("\n");
 }
 
@@ -103,6 +120,35 @@ const server = createServer((request, response) => {
       response.writeHead(500);
       response.end(String(err));
     }
+    return;
+  }
+
+  if (pathname === "/api/preprocess" && request.method === "POST") {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      try {
+        const { source = "", path = "" } = JSON.parse(body || "{}");
+        const filePath = normalize(join(projectRoot, path));
+        if (path && !filePath.startsWith(projectRoot)) {
+          response.writeHead(400);
+          response.end("Invalid path");
+          return;
+        }
+        const baseDir = path ? dirname(filePath) : projectRoot;
+        const expanded = expandIncludesInText(String(source), baseDir);
+        response.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        response.end(expanded);
+      } catch (err) {
+        response.writeHead(500);
+        response.end(String(err));
+      }
+    });
     return;
   }
 
