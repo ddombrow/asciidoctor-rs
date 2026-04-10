@@ -531,6 +531,17 @@ ____`;
   await expect(frame.locator(".verseblock pre.content")).toHaveText("line one\n\nline two");
 });
 
+test("source editor stays fully visible below the path bar", async ({ page }) => {
+  const panelBox = await page.locator(".source-panel").boundingBox();
+  const textareaBox = await page.locator("#source").boundingBox();
+
+  expect(panelBox).not.toBeNull();
+  expect(textareaBox).not.toBeNull();
+  expect(textareaBox.y).toBeGreaterThan(panelBox.y);
+  expect(textareaBox.y + textareaBox.height).toBeLessThanOrEqual(panelBox.y + panelBox.height + 1);
+  expect(textareaBox.height).toBeGreaterThan(300);
+});
+
 test("exports and renders tables", async ({ page }) => {
   const source = `= Sample Document
 

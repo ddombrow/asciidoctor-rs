@@ -105,6 +105,12 @@
         overflow: hidden;
       }
 
+      .source-panel {
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        min-height: 640px;
+      }
+
       .panel-header {
         display: flex;
         justify-content: space-between;
@@ -201,8 +207,9 @@
 
       textarea {
         resize: vertical;
-        min-height: 100%;
+        min-height: 0;
         height: 100%;
+        display: block;
       }
 
       .preview-wrap {
@@ -309,7 +316,7 @@
         </section>
 
         <section class="grid">
-          <article class="panel">
+          <article class="panel source-panel">
             <div class="panel-header">
               <div>
                 <h2>Source</h2>
