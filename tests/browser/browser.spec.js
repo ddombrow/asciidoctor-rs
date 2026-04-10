@@ -582,6 +582,43 @@ test("exports and renders tables", async ({ page }) => {
   await expect(frame.locator("table.tableblock tbody tr").nth(1).locator("td").nth(0)).toHaveText("Adam");
 });
 
+test("exports and renders alternate table delimiters", async ({ page }) => {
+  const source = `= Sample Document
+
+!===
+!Name!Email
+!Peter!peter@example.com
+!===
+
+,===
+Artist,Track,Genre
+Baauer,Harlem Shake,Hip Hop
+,===
+
+:===
+Artist:Track:Genre
+Robyn:Indestructible:Dance
+:===`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const preambleBlocks = document.blocks[0].blocks;
+
+  expect(preambleBlocks.map((block) => block.type)).toEqual(["table", "table", "table"]);
+  expect(preambleBlocks[0].rows[0].cells[1].content).toBe("Email");
+  expect(preambleBlocks[1].rows[1].cells[1].content).toBe("Harlem Shake");
+  expect(preambleBlocks[2].rows[1].cells[2].content).toBe("Dance");
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator("table.tableblock")).toHaveCount(3);
+  await expect(frame.locator("table.tableblock").nth(0).locator("tbody tr").nth(1).locator("td").nth(1)).toHaveText("peter@example.com");
+  await expect(frame.locator("table.tableblock").nth(1).locator("tbody tr").nth(1).locator("td").nth(1)).toHaveText("Harlem Shake");
+  await expect(frame.locator("table.tableblock").nth(2).locator("tbody tr").nth(1).locator("td").nth(2)).toHaveText("Dance");
+});
+
 test("exports and renders block content inside table cells", async ({ page }) => {
   const source = `= Sample Document
 

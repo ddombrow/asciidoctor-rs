@@ -1,0 +1,45 @@
+= Alternate Table Delimiters Demo
+
+This document exercises the alternate table delimiters and shorthand data formats.
+
+== Pipe-Separated Table
+
+|===
+| Name | Role
+
+| Alice
+| Maintainer
+
+| Bob
+| Reviewer
+|===
+
+== Bang-Delimited Nested Table
+
+[cols="1,2a"]
+|===
+| Outer Cell
+| Nested details
+
+[cols="2,1"]
+!===
+! Key ! Value
+! Status ! Active
+!===
+|===
+
+== CSV Shorthand Table
+
+,===
+Artist,Track,Genre
+Baauer,Harlem Shake,Hip Hop
+Robyn,Indestructible,Dance
+,===
+
+== DSV Shorthand Table
+
+:===
+Artist:Track:Genre
+Massive Attack:Teardrop:Trip Hop
+Portishead:Roads:Trip Hop
+:===

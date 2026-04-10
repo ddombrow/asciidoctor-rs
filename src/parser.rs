@@ -62,6 +62,13 @@ struct ParsedTableCell {
     style: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TableFormat {
+    Psv,
+    Csv,
+    Dsv,
+}
+
 pub fn parse_document(input: &str) -> Document {
     if input.is_empty() {
         return Document::default();
@@ -753,15 +760,52 @@ fn parse_table(
     pending_block_prelude: Option<&BlockPrelude>,
 ) -> Option<(TableBlock, usize)> {
     let delimiter = lines.get(index)?.trim();
-    if !is_table_delimiter(delimiter) {
-        return None;
-    }
+    let (delimiter, delimiter_char) = parse_table_delimiter(delimiter)?;
+    let metadata = pending_block_prelude.map(|prelude| &prelude.metadata);
 
     let header_enabled = pending_block_prelude
         .map(|prelude| table_has_header_option(&prelude.metadata))
         .unwrap_or(false);
     let expected_columns =
         pending_block_prelude.and_then(|prelude| table_column_count(&prelude.metadata));
+    let format = table_format(metadata, delimiter_char);
+    let separator = table_separator(metadata, format, delimiter_char)?;
+    let (row_groups, consumed) = match format {
+        TableFormat::Psv => parse_psv_table_rows(lines, index, delimiter, separator, expected_columns)?,
+        TableFormat::Csv | TableFormat::Dsv => {
+            parse_separated_value_table_rows(lines, index, delimiter, separator)?
+        }
+    };
+
+    if consumed < 2 || row_groups.is_empty() || index + consumed > lines.len() {
+        return None;
+    }
+
+    let mut rows = if let Some(column_count) = expected_columns {
+        assemble_table_rows_with_known_columns(&row_groups, column_count)?
+    } else {
+        assemble_table_rows_without_known_columns(&row_groups)?
+    };
+
+    let header = header_enabled.then(|| rows.remove(0));
+    Some((
+        TableBlock {
+            header,
+            rows,
+            reftext: None,
+            metadata: BlockMetadata::default(),
+        },
+        consumed,
+    ))
+}
+
+fn parse_psv_table_rows(
+    lines: &[&str],
+    index: usize,
+    delimiter: &str,
+    separator: char,
+    expected_columns: Option<usize>,
+) -> Option<(Vec<Vec<ParsedTableCell>>, usize)> {
     let mut row_groups: Vec<Vec<ParsedTableCell>> = Vec::new();
     let mut current_group: Vec<ParsedTableCell> = Vec::new();
     let mut current_cell: Option<ParsedTableCell> = None;
@@ -771,7 +815,7 @@ fn parse_table(
     while index + consumed < lines.len() {
         let line = lines[index + consumed];
         let trimmed = line.trim();
-        if is_table_delimiter(trimmed) {
+        if trimmed == delimiter {
             if let Some(cell) = current_cell.take() {
                 current_group.push(cell);
             }
@@ -784,7 +828,7 @@ fn parse_table(
         }
         if trimmed.is_empty() {
             let next_nonempty = next_nonempty_table_line(lines, index + consumed + 1);
-            if next_nonempty.is_some_and(starts_table_cell_line) {
+            if next_nonempty.is_some_and(|line| starts_table_cell_line(line, separator)) {
                 if let Some(cell) = current_cell.take() {
                     current_group.push(cell);
                 }
@@ -801,12 +845,16 @@ fn parse_table(
             continue;
         }
 
-        if starts_table_cell_line(trimmed) {
+        if starts_table_cell_line(trimmed, separator) {
+            let had_cells_in_group = !current_group.is_empty();
             if let Some(cell) = current_cell.take() {
                 current_group.push(cell);
                 maybe_finish_table_row_group(&mut row_groups, &mut current_group, expected_columns);
+                if expected_columns.is_none() && had_cells_in_group && !current_group.is_empty() {
+                    row_groups.push(std::mem::take(&mut current_group));
+                }
             }
-            let cells = parse_table_cells_from_line(line)?;
+            let cells = parse_table_cells_from_line(line, separator)?;
             if cells.is_empty() {
                 return None;
             }
@@ -827,26 +875,44 @@ fn parse_table(
         consumed += 1;
     }
 
-    if !closed || consumed < 2 || row_groups.is_empty() || index + consumed > lines.len() {
-        return None;
+    closed.then_some((row_groups, consumed))
+}
+
+fn parse_separated_value_table_rows(
+    lines: &[&str],
+    index: usize,
+    delimiter: &str,
+    separator: char,
+) -> Option<(Vec<Vec<ParsedTableCell>>, usize)> {
+    let closing_index = lines[index + 1..]
+        .iter()
+        .position(|line| line.trim() == delimiter)
+        .map(|offset| index + 1 + offset)?;
+    let consumed = closing_index - index + 1;
+    let content = lines[index + 1..closing_index].join("\n");
+
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .delimiter(separator as u8)
+        .flexible(true)
+        .from_reader(content.as_bytes());
+    let mut row_groups = Vec::new();
+    for record in reader.records() {
+        let record = record.ok()?;
+        row_groups.push(
+            record
+                .iter()
+                .map(|value| ParsedTableCell {
+                    content: value.to_owned(),
+                    colspan: 1,
+                    rowspan: 1,
+                    style: None,
+                })
+                .collect(),
+        );
     }
 
-    let mut rows = if let Some(column_count) = expected_columns {
-        assemble_table_rows_with_known_columns(&row_groups, column_count)?
-    } else {
-        assemble_table_rows_without_known_columns(&row_groups)?
-    };
-
-    let header = header_enabled.then(|| rows.remove(0));
-    Some((
-        TableBlock {
-            header,
-            rows,
-            reftext: None,
-            metadata: BlockMetadata::default(),
-        },
-        consumed,
-    ))
+    Some((row_groups, consumed))
 }
 
 fn maybe_finish_table_row_group(
@@ -870,13 +936,20 @@ fn maybe_finish_table_row_group(
     }
 }
 
-fn is_table_delimiter(line: &str) -> bool {
-    line.starts_with("|===") && line.chars().skip(1).all(|ch| ch == '=')
+fn parse_table_delimiter(line: &str) -> Option<(&str, char)> {
+    let trimmed = line.trim();
+    let mut chars = trimmed.chars();
+    let marker = chars.next()?;
+    if !matches!(marker, '|' | ',' | ':' | '!') {
+        return None;
+    }
+    let rest = chars.as_str();
+    (rest.len() >= 3 && rest.chars().all(|ch| ch == '=')).then_some((trimmed, marker))
 }
 
-fn parse_table_cells_from_line(line: &str) -> Option<Vec<ParsedTableCell>> {
+fn parse_table_cells_from_line(line: &str, separator: char) -> Option<Vec<ParsedTableCell>> {
     let trimmed = line.trim_start();
-    let segments = split_table_row_cells_after_marker(trimmed);
+    let segments = split_table_row_cells_after_marker(trimmed, separator);
     if segments.len() < 2 {
         return None;
     }
@@ -892,19 +965,19 @@ fn parse_table_cells_from_line(line: &str) -> Option<Vec<ParsedTableCell>> {
     parse_table_cells_from_segments(&segments, 2, &mut cells).then_some(cells)
 }
 
-fn split_table_row_cells_after_marker(line: &str) -> Vec<String> {
+fn split_table_row_cells_after_marker(line: &str, separator: char) -> Vec<String> {
     let mut cells = Vec::new();
     let mut current = String::new();
     let mut chars = line.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        if ch == '\\' && chars.peek() == Some(&'|') {
-            current.push('|');
+        if ch == '\\' && chars.peek() == Some(&separator) {
+            current.push(separator);
             chars.next();
             continue;
         }
 
-        if ch == '|' {
+        if ch == separator {
             cells.push(current.trim().to_owned());
             current.clear();
             continue;
@@ -957,8 +1030,8 @@ fn parse_table_cells_from_segments(
     false
 }
 
-fn starts_table_cell_line(line: &str) -> bool {
-    parse_leading_table_cell_spec(line.trim_start()).is_some()
+fn starts_table_cell_line(line: &str, separator: char) -> bool {
+    parse_leading_table_cell_spec(line.trim_start(), separator).is_some()
 }
 
 fn next_nonempty_table_line<'a>(lines: &'a [&str], mut index: usize) -> Option<&'a str> {
@@ -971,12 +1044,56 @@ fn next_nonempty_table_line<'a>(lines: &'a [&str], mut index: usize) -> Option<&
     None
 }
 
-fn parse_leading_table_cell_spec(line: &str) -> Option<(usize, usize, Option<String>, &str)> {
-    let pipe_index = line.find('|')?;
-    let spec = &line[..pipe_index];
-    let rest = &line[pipe_index + 1..];
+fn parse_leading_table_cell_spec(
+    line: &str,
+    separator: char,
+) -> Option<(usize, usize, Option<String>, &str)> {
+    let separator_index = line.find(separator)?;
+    let spec = &line[..separator_index];
+    let rest = &line[separator_index + separator.len_utf8()..];
     let (colspan, rowspan, style) = parse_table_cell_spec(spec.trim())?;
     Some((colspan, rowspan, style, rest))
+}
+
+fn table_format(metadata: Option<&BlockMetadata>, delimiter_char: char) -> TableFormat {
+    match metadata
+        .and_then(|metadata| metadata.attributes.get("format"))
+        .map(|format| format.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("csv") => TableFormat::Csv,
+        Some("dsv") => TableFormat::Dsv,
+        _ => match delimiter_char {
+            ',' => TableFormat::Csv,
+            ':' => TableFormat::Dsv,
+            _ => TableFormat::Psv,
+        },
+    }
+}
+
+fn table_separator(
+    metadata: Option<&BlockMetadata>,
+    format: TableFormat,
+    delimiter_char: char,
+) -> Option<char> {
+    metadata
+        .and_then(|metadata| metadata.attributes.get("separator"))
+        .and_then(|separator| parse_table_separator_attribute(separator))
+        .or(match format {
+            TableFormat::Csv => Some(','),
+            TableFormat::Dsv => Some(':'),
+            TableFormat::Psv => Some(if delimiter_char == '!' { '!' } else { '|' }),
+        })
+}
+
+fn parse_table_separator_attribute(value: &str) -> Option<char> {
+    if value == r"\t" {
+        return Some('\t');
+    }
+
+    let mut chars = value.chars();
+    let separator = chars.next()?;
+    chars.next().is_none().then_some(separator)
 }
 
 fn parse_table_cell_spec(spec: &str) -> Option<(usize, usize, Option<String>)> {
@@ -3821,6 +3938,61 @@ mod tests {
     }
 
     #[test]
+    fn parses_tables_with_bang_delimiters() {
+        let document = parse_document("!===\n!Name!Email\n!Peter!peter@example.com\n!===");
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells[0].content, "Name");
+        assert_eq!(table.rows[1].cells[1].content, "peter@example.com");
+    }
+
+    #[test]
+    fn parses_tables_with_custom_ascii_doc_separator() {
+        let document = parse_document(
+            "[cols=\"1,1\",separator=!]\n|===\n!Pipe output to vim\na!\n----\nasciidoctor -o - -s test.adoc | view -\n----\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(table.rows[0].cells[0].content, "Pipe output to vim");
+        assert_eq!(table.rows[0].cells[1].style.as_deref(), Some("asciidoc"));
+        let Block::Listing(listing) = &table.rows[0].cells[1].blocks[0] else {
+            panic!("expected listing in AsciiDoc cell");
+        };
+        assert_eq!(listing.lines[0], "asciidoctor -o - -s test.adoc | view -");
+    }
+
+    #[test]
+    fn parses_csv_tables_with_shorthand_delimiter() {
+        let document =
+            parse_document(",===\nArtist,Track,Genre\nBaauer,Harlem Shake,Hip Hop\n,===");
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells.len(), 3);
+        assert_eq!(table.rows[1].cells[1].content, "Harlem Shake");
+    }
+
+    #[test]
+    fn parses_dsv_tables_with_shorthand_delimiter() {
+        let document = parse_document(":===\nArtist:Track:Genre\nRobyn:Indestructible:Dance\n:===");
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].cells.len(), 3);
+        assert_eq!(table.rows[1].cells[2].content, "Dance");
+    }
+
+    #[test]
     fn parses_tables_with_cells_stacked_across_lines() {
         let document = parse_document(
             ".Agents\n[%header,cols=\"30%,70%\"]\n|===\n|Name\n|Email\n|Peter\n|peter@example.com\n|Adam\n|adam@example.com\n|===",
@@ -3955,6 +4127,28 @@ mod tests {
             panic!("expected unordered list");
         };
         assert_eq!(list.items.len(), 2);
+    }
+
+    #[test]
+    fn parses_nested_tables_with_alternate_delimiters() {
+        let document = parse_document(
+            "[cols=\"1,2a\"]\n|===\n|Normal cell\n|Cell with nested table\n[cols=\"2,1\"]\n!===\n!Nested table cell 1 !Nested table cell 2\n!===\n|===",
+        );
+
+        let [Block::Table(table)] = document.blocks.as_slice() else {
+            panic!("expected table");
+        };
+        let nested_table = table.rows[0].cells[1]
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Table(table) => Some(table),
+                _ => None,
+            })
+            .expect("expected nested table");
+        assert_eq!(nested_table.rows.len(), 1);
+        assert_eq!(nested_table.rows[0].cells[0].content, "Nested table cell 1");
+        assert_eq!(nested_table.rows[0].cells[1].content, "Nested table cell 2");
     }
 
     #[test]
