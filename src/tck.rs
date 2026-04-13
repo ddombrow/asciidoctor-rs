@@ -4222,7 +4222,10 @@ mod tests {
         );
         assert!(metadata.options.iter().any(|option| option == "linenums"));
         assert_eq!(
-            metadata.attributes.get("linenums-option").map(String::as_str),
+            metadata
+                .attributes
+                .get("linenums-option")
+                .map(String::as_str),
             Some("")
         );
     }

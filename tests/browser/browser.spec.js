@@ -779,6 +779,7 @@ inside sidebar
 
 test("exports and renders fenced code blocks", async ({ page }) => {
   const source = `= Sample Document
+:source-highlighter: highlight.js
 
 \`\`\`rust,linenums
 fn main() {}
@@ -811,6 +812,23 @@ println!("done");
   await expect(
     frame.locator(".listingblock .content pre.highlight code.language-rust[data-lang='rust']")
   ).toContainText('println!("done");');
+});
+
+test("does not highlight source blocks without source-highlighter", async ({ page }) => {
+  const source = `= Sample Document
+
+[source,rust]
+----
+fn main() {}
+----`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".listingblock .content pre.highlight")).toHaveCount(0);
+  await expect(frame.locator(".listingblock .content code.language-rust")).toHaveCount(0);
+  await expect(frame.locator(".listingblock .content pre")).toContainText("fn main() {}");
 });
 
 test("exports and renders admonition paragraphs", async ({ page }) => {

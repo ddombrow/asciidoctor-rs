@@ -489,7 +489,8 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       .join("\n");
     const lang = block.attributes?.language;
     const isSource = block.style === "source" && lang;
-    const innerHtml = isSource
+    const highlightSource = isSource && usesHighlightJs(documentAttributes);
+    const innerHtml = highlightSource
       ? `<pre class="highlight"><code class="language-${escapeHtml(lang)}" data-lang="${escapeHtml(lang)}">${renderedContent}</code></pre>`
       : `<pre>${renderedContent}</pre>`;
     const wrappedInnerHtml = innerHtml;
@@ -716,6 +717,9 @@ function renderPreview(document) {
   if (!doc) {
     throw new Error("Preview frame is not available");
   }
+  const highlightScript = usesHighlightJs(document.attributes ?? {})
+    ? `<script src="${highlightJsScriptHref}" onload="hljs.highlightAll()"></script>`
+    : "";
 
   doc.open();
   doc.write(`<!doctype html>
@@ -756,10 +760,15 @@ function renderPreview(document) {
       <div class="page-shell">
         ${renderDocument(document)}
       </div>
-      <script src="${highlightJsScriptHref}" onload="hljs.highlightAll()"></script>
+      ${highlightScript}
     </body>
   </html>`);
   doc.close();
+}
+
+function usesHighlightJs(documentAttributes = {}) {
+  const sourceHighlighter = getAttribute(documentAttributes, "source-highlighter");
+  return typeof sourceHighlighter === "string" && sourceHighlighter.toLowerCase() === "highlight.js";
 }
 
 function renderAdmonitionLabel(variant, blockAttributes = {}, documentAttributes = {}) {

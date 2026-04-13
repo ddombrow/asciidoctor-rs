@@ -4933,11 +4933,13 @@ mod tests {
                 .map(String::as_str),
             Some("rust")
         );
-        assert!(listing
-            .metadata
-            .options
-            .iter()
-            .any(|option| option == "linenums"));
+        assert!(
+            listing
+                .metadata
+                .options
+                .iter()
+                .any(|option| option == "linenums")
+        );
         assert_eq!(
             listing
                 .metadata

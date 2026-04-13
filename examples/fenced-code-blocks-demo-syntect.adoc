@@ -1,5 +1,5 @@
 = Fenced Code Blocks Demo
-:source-highlighter: highlight.js
+:source-highlighter: syntect
 
 This file exercises Markdown-style fenced code blocks.
 

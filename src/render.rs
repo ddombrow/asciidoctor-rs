@@ -1,6 +1,13 @@
 use crate::prepare::{
     DocumentBlock, DocumentSection, PreparedBlock, PreparedInline, prepare_document,
 };
+use std::sync::OnceLock;
+use syntect::{
+    easy::HighlightLines,
+    highlighting::{Theme, ThemeSet},
+    html::{IncludeBackground, styled_line_to_highlighted_html},
+    parsing::{SyntaxReference, SyntaxSet},
+};
 
 struct RenderContext<'a> {
     document_attributes: &'a std::collections::BTreeMap<String, String>,
@@ -123,7 +130,7 @@ fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list, ctx),
         PreparedBlock::DescriptionList(list) => render_description_list(html, list, ctx),
         PreparedBlock::Table(table) => render_table(html, table, ctx),
-        PreparedBlock::Listing(listing) => render_listing(html, listing),
+        PreparedBlock::Listing(listing) => render_listing(html, listing, ctx.document_attributes),
         PreparedBlock::Literal(literal) => render_literal(html, literal),
         PreparedBlock::CalloutList(colist) => render_callout_list(html, colist),
         PreparedBlock::Example(example) => render_compound(html, "exampleblock", example, ctx),
@@ -330,7 +337,11 @@ fn render_table_cell_content(
     }
 }
 
-fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
+fn render_listing(
+    html: &mut String,
+    listing: &crate::prepare::ListingBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
     html.push_str("<div class=\"listingblock\"");
     if let Some(id) = &listing.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -346,28 +357,15 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
     let is_source =
         listing.style.as_deref() == Some("source") && lang.is_some_and(|l| !l.is_empty());
     let (line_offset, lines) = trimmed_delimited_content_lines(&listing.content);
-
-    let rendered_content = if listing.callout_lines.is_empty() {
-        escape_html(&lines.join("\n"))
-    } else {
-        let conum_map: std::collections::HashMap<usize, u32> =
-            listing.callout_lines.iter().copied().collect();
-        lines
-            .iter()
-            .enumerate()
-            .map(|(i, line)| {
-                let line = *line;
-                let escaped = escape_html(line);
-                match conum_map.get(&(i + line_offset)) {
-                    Some(n) => {
-                        format!("{escaped}<i class=\"conum\" data-value=\"{n}\"></i><b>{n}</b>")
-                    }
-                    None => escaped,
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let rendered_lines = render_listing_lines(
+        listing,
+        &lines,
+        line_offset,
+        lang,
+        is_source,
+        document_attributes,
+    );
+    let rendered_content = rendered_lines.join("\n");
 
     html.push_str("<div class=\"content\">\n");
     if let Some(start) = listing.line_number {
@@ -404,6 +402,108 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
         html.push_str("</pre>\n");
     }
     html.push_str("</div>\n</div>\n");
+}
+
+fn render_listing_lines(
+    listing: &crate::prepare::ListingBlock,
+    lines: &[&str],
+    line_offset: usize,
+    lang: Option<&str>,
+    is_source: bool,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    let conum_map: std::collections::HashMap<usize, u32> =
+        listing.callout_lines.iter().copied().collect();
+    let highlighted_lines = if is_source {
+        lang.and_then(|language| syntect_highlight_lines(language, lines, document_attributes))
+    } else {
+        None
+    };
+
+    lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let rendered = highlighted_lines
+                .as_ref()
+                .and_then(|rendered| rendered.get(i).cloned())
+                .unwrap_or_else(|| escape_html(line));
+            match conum_map.get(&(i + line_offset)) {
+                Some(n) => {
+                    format!("{rendered}<i class=\"conum\" data-value=\"{n}\"></i><b>{n}</b>")
+                }
+                None => rendered,
+            }
+        })
+        .collect()
+}
+
+fn syntect_highlight_lines(
+    language: &str,
+    lines: &[&str],
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) -> Option<Vec<String>> {
+    if !uses_syntect(document_attributes) || language.eq_ignore_ascii_case("text") {
+        return None;
+    }
+
+    let syntax_set = syntect_syntax_set();
+    let syntax = syntect_syntax_for_language(syntax_set, language)?;
+    let mut highlighter = HighlightLines::new(syntax, syntect_theme());
+
+    let mut rendered = Vec::with_capacity(lines.len());
+    for line in lines {
+        let ranges = highlighter.highlight_line(line, syntax_set).ok()?;
+        let html = styled_line_to_highlighted_html(&ranges, IncludeBackground::No).ok()?;
+        rendered.push(html);
+    }
+    Some(rendered)
+}
+
+fn uses_syntect(document_attributes: &std::collections::BTreeMap<String, String>) -> bool {
+    matches!(
+        document_attributes
+            .get("source-highlighter")
+            .map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if value == "syntect"
+    )
+}
+
+fn syntect_syntax_set() -> &'static SyntaxSet {
+    static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn syntect_theme() -> &'static Theme {
+    static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
+    static THEME_NAME: OnceLock<String> = OnceLock::new();
+
+    let theme_set = THEME_SET.get_or_init(ThemeSet::load_defaults);
+    let theme_name = THEME_NAME.get_or_init(|| {
+        if theme_set.themes.contains_key("InspiredGitHub") {
+            "InspiredGitHub".to_owned()
+        } else {
+            theme_set
+                .themes
+                .keys()
+                .next()
+                .cloned()
+                .expect("syntect should provide at least one default theme")
+        }
+    });
+    theme_set
+        .themes
+        .get(theme_name)
+        .expect("selected syntect theme should exist")
+}
+
+fn syntect_syntax_for_language<'a>(
+    syntax_set: &'a SyntaxSet,
+    language: &str,
+) -> Option<&'a SyntaxReference> {
+    syntax_set
+        .find_syntax_by_token(language)
+        .or_else(|| syntax_set.find_syntax_by_extension(language))
 }
 
 fn render_callout_list(html: &mut String, colist: &crate::prepare::CalloutListBlock) {
@@ -1605,6 +1705,28 @@ mod tests {
         assert!(html.contains("<td class=\"linenos\"><pre>7</pre></td>"));
         assert!(html.contains("<td class=\"linenos\"><pre>8</pre></td>"));
         assert!(html.contains("<td class=\"code\"><pre><code class=\"language-rust\" data-lang=\"rust\">fn main() {}</code></pre></td>"));
+    }
+
+    #[test]
+    fn renders_syntect_highlighted_source_blocks() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n:source-highlighter: syntect\n\n[source,rust]\n----\nfn main() {}\n----",
+        ));
+
+        assert!(html.contains(
+            "<pre class=\"highlight\"><code class=\"language-rust\" data-lang=\"rust\">"
+        ));
+        assert!(html.contains("<span style="));
+        assert!(html.contains("fn "));
+    }
+
+    #[test]
+    fn does_not_highlight_for_synctect_typo() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n:source-highlighter: synctect\n\n[source,rust]\n----\nfn main() {}\n----",
+        ));
+
+        assert!(!html.contains("<span style="));
     }
 
     #[test]
