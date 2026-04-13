@@ -2,12 +2,17 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use encoding_rs::{Encoding, UTF_8};
+
+use crate::normalize::{has_asciidoc_extension, normalize_asciidoc, normalize_include_text};
+
 /// Expand all `include::path[attrs]` directives in `input`.
 /// `base_dir` is the directory of the document being processed (for relative path resolution).
 /// Returns the fully expanded text ready for `parse_document`.
 pub fn preprocess(input: &str, base_dir: &Path) -> String {
     let mut seen = HashSet::new();
-    expand_lines(input, base_dir, &mut seen, 0)
+    let normalized = normalize_asciidoc(input);
+    expand_lines(normalized.as_ref(), base_dir, &mut seen, 0)
 }
 
 fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth: u32) -> String {
@@ -19,7 +24,7 @@ fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth
     let mut out = String::with_capacity(input.len());
     let mut delimited_block_delimiter: Option<String> = None;
 
-    for line in input.lines() {
+    for line in input.split_terminator('\n') {
         // Track delimited block state to skip includes inside verbatim blocks.
         if let Some(open_delim) = delimited_block_delimiter.as_deref() {
             out.push_str(line);
@@ -40,18 +45,27 @@ fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth
         if let Some((path, attrs)) = parse_include_line(line) {
             let resolved = base_dir.join(&path);
             let canonical = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
+            let include_is_asciidoc = has_asciidoc_extension(&resolved);
 
             if seen.contains(&canonical) {
                 // Circular include — skip silently
                 continue;
             }
 
-            match fs::read_to_string(&resolved) {
-                Ok(content) => {
+            match fs::read(&resolved) {
+                Ok(bytes) => {
                     seen.insert(canonical.clone());
                     let child_dir = resolved.parent().unwrap_or(base_dir);
-                    let mut expanded = expand_lines(&content, child_dir, seen, depth + 1);
-                    if let Some(offset) = attrs.leveloffset {
+                    let decoded = decode_include_bytes(&bytes, attrs.encoding.as_deref());
+                    let normalized = normalize_include_text(decoded.as_ref(), include_is_asciidoc);
+                    let mut expanded = if include_is_asciidoc {
+                        expand_lines(normalized.as_ref(), child_dir, seen, depth + 1)
+                    } else {
+                        normalized.into_owned()
+                    };
+                    if include_is_asciidoc
+                        && let Some(offset) = attrs.leveloffset
+                    {
                         expanded = apply_leveloffset(&expanded, offset);
                     }
                     out.push_str(&expanded);
@@ -94,6 +108,7 @@ fn opening_block_delimiter(line: &str) -> Option<String> {
 
 struct IncludeAttrs {
     leveloffset: Option<i32>,
+    encoding: Option<String>,
 }
 
 fn parse_include_line(line: &str) -> Option<(String, IncludeAttrs)> {
@@ -110,6 +125,7 @@ fn parse_include_line(line: &str) -> Option<(String, IncludeAttrs)> {
 
 fn parse_include_attrs(s: &str) -> IncludeAttrs {
     let mut leveloffset = None;
+    let mut encoding = None;
     for part in s.split(',') {
         let part = part.trim();
         if let Some(val) = part.strip_prefix("leveloffset=") {
@@ -121,9 +137,25 @@ fn parse_include_attrs(s: &str) -> IncludeAttrs {
             } else {
                 leveloffset = val.parse::<i32>().ok();
             }
+        } else if let Some(value) = part.strip_prefix("encoding=") {
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if !value.is_empty() {
+                encoding = Some(value.to_owned());
+            }
         }
     }
-    IncludeAttrs { leveloffset }
+    IncludeAttrs {
+        leveloffset,
+        encoding,
+    }
+}
+
+fn decode_include_bytes(bytes: &[u8], encoding: Option<&str>) -> String {
+    let decoder = encoding
+        .and_then(|label| Encoding::for_label(label.as_bytes()))
+        .unwrap_or(UTF_8);
+    let (decoded, _, _) = decoder.decode(bytes);
+    decoded.into_owned()
 }
 
 /// Adjust heading levels in `content` by `offset` (positive = deeper, negative = shallower).
@@ -155,6 +187,7 @@ fn adjust_heading_level(line: &str, offset: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use encoding_rs::WINDOWS_1252;
     use std::fs;
 
     /// Create a unique temp directory for a test, cleaned up on drop via a guard.
@@ -267,5 +300,43 @@ mod tests {
         let out = preprocess(input, &dir);
         cleanup(&dir);
         assert!(out.contains("leaf content"), "got: {out}");
+    }
+
+    #[test]
+    fn normalizes_trailing_spaces_in_top_level_source_before_expanding_includes() {
+        let dir = make_test_dir("top_level_normalize");
+        write(&dir, "child.adoc", "included\n");
+        let input = "before  \r\ninclude::child.adoc[]  \r\nafter\t\r\n";
+        let out = preprocess(input, &dir);
+        cleanup(&dir);
+        assert_eq!(out, "before\nincluded\nafter\n");
+    }
+
+    #[test]
+    fn normalizes_trailing_spaces_in_asciidoc_include_files() {
+        let dir = make_test_dir("adoc_include_normalize");
+        write(&dir, "child.adoc", "alpha  \r\nbeta\t\r\n");
+        let out = preprocess("include::child.adoc[]\n", &dir);
+        cleanup(&dir);
+        assert_eq!(out, "alpha\nbeta\n");
+    }
+
+    #[test]
+    fn preserves_trailing_spaces_in_non_asciidoc_include_files() {
+        let dir = make_test_dir("csv_include_spaces");
+        write(&dir, "data.csv", "left  \r\nright\t\r\n");
+        let out = preprocess("include::data.csv[]\n", &dir);
+        cleanup(&dir);
+        assert_eq!(out, "left  \nright\t\n");
+    }
+
+    #[test]
+    fn decodes_include_files_using_requested_encoding() {
+        let dir = make_test_dir("include_encoding");
+        let (bytes, _, _) = WINDOWS_1252.encode("café\r\n");
+        fs::write(dir.join("child.adoc"), bytes.as_ref()).unwrap();
+        let out = preprocess("include::child.adoc[encoding=windows-1252]\n", &dir);
+        cleanup(&dir);
+        assert_eq!(out, "café\n");
     }
 }

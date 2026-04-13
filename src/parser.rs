@@ -6,6 +6,7 @@ use crate::ast::{
     QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
 };
 use crate::inline::parse_inlines;
+use crate::normalize::normalize_asciidoc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingAnchor {
@@ -74,7 +75,8 @@ pub fn parse_document(input: &str) -> Document {
         return Document::default();
     }
 
-    let lines: Vec<&str> = input.lines().collect();
+    let normalized = normalize_asciidoc(input);
+    let lines: Vec<&str> = normalized.lines().collect();
     let (mut title, mut attributes, index) = parse_document_header(&lines);
     let blocks = parse_blocks_from_lines(&lines[index..], &mut title, true, Some(&mut attributes));
 
@@ -4636,6 +4638,16 @@ mod tests {
             panic!("expected literal block");
         };
         assert_eq!(literal.lines, vec!["  indented preformatted text"]);
+    }
+
+    #[test]
+    fn normalizes_trailing_spaces_before_parsing_blocks() {
+        let document = parse_document("line one  \r\nline two\t\r\n");
+
+        let [Block::Paragraph(paragraph)] = document.blocks.as_slice() else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.lines, vec!["line one", "line two"]);
     }
 
     #[test]

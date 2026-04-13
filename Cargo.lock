@@ -7,6 +7,7 @@ name = "asciidoctor-rs"
 version = "0.1.0"
 dependencies = [
  "csv",
+ "encoding_rs",
  "js-sys",
  "napi",
  "napi-build",
@@ -130,6 +131,15 @@ name = "dtor-proc-macro"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f678cf4a922c215c63e0de95eb1ff08a958a81d47e485cf9da1e27bf6305cfa5"
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "find-msvc-tools"

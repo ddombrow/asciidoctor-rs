@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync, realpathSync } from "node:fs";
-import { join, normalize, resolve, dirname } from "node:path";
+import { join, normalize, resolve, dirname, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
@@ -17,6 +17,50 @@ const contentTypes = {
   ".wasm": "application/wasm"
 };
 
+const ASCIIDOC_EXTENSIONS = new Set([".adoc", ".asciidoc", ".asc", ".ad", ".txt"]);
+
+function hasAsciidocExtension(filePath) {
+  return ASCIIDOC_EXTENSIONS.has(extname(filePath).toLowerCase());
+}
+
+function normalizeLineEndings(text) {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function normalizeAsciidocSource(text) {
+  return normalizeLineEndings(text)
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n");
+}
+
+function normalizeIncludeContent(text, isAsciidoc) {
+  const normalized = normalizeLineEndings(text);
+  if (!isAsciidoc) {
+    return normalized;
+  }
+  return normalized
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n");
+}
+
+function decodeInclude(buffer, encoding) {
+  try {
+    return new TextDecoder(encoding || "utf-8").decode(buffer);
+  } catch {
+    return new TextDecoder("utf-8").decode(buffer);
+  }
+}
+
+function splitTerminated(text) {
+  if (text.length === 0) return [];
+  if (text.endsWith("\n")) {
+    return text.slice(0, -1).split("\n");
+  }
+  return text.split("\n");
+}
+
 function openingBlockDelimiter(line) {
   const trimmed = line.trim();
   if (trimmed === "--") return null;
@@ -28,16 +72,21 @@ function openingBlockDelimiter(line) {
 
 // Mirrors the Rust preprocessor: expand include:: directives recursively.
 function expandIncludes(filePath, seen = new Set(), depth = 0) {
-  return expandIncludesInText(readFileSync(filePath, "utf8"), dirname(filePath), seen, depth);
+  return expandIncludesInText(
+    normalizeAsciidocSource(readFileSync(filePath, "utf8")),
+    dirname(filePath),
+    seen,
+    depth
+  );
 }
 
 function expandIncludesInText(content, baseDir, seen = new Set(), depth = 0) {
   if (depth > 64) return content;
+  const normalizedContent = normalizeAsciidocSource(content);
   const out = [];
   let openDelim = null;
 
-  for (const rawLine of content.split("\n")) {
-    const line = rawLine.replace(/\r$/, "");
+  for (const line of splitTerminated(normalizedContent)) {
     if (openDelim) {
       out.push(line);
       if (line.trim() === openDelim) openDelim = null;
@@ -54,18 +103,20 @@ function expandIncludesInText(content, baseDir, seen = new Set(), depth = 0) {
       const includePath = join(baseDir, m[1]);
       if (existsSync(includePath)) {
         const canonical = realpathSync(includePath);
+        const includeIsAsciidoc = hasAsciidocExtension(includePath);
         if (seen.has(canonical)) {
           continue;
         }
         seen.add(canonical);
-        let expanded = expandIncludesInText(
-          readFileSync(includePath, "utf8"),
-          dirname(includePath),
-          seen,
-          depth + 1
-        );
-        const leveloffset = parseLevelOffset(m[2]);
-        if (leveloffset !== 0) expanded = applyLevelOffset(expanded, leveloffset);
+        const attrs = parseIncludeAttrs(m[2]);
+        const decoded = decodeInclude(readFileSync(includePath), attrs.encoding);
+        const normalized = normalizeIncludeContent(decoded, includeIsAsciidoc);
+        let expanded = includeIsAsciidoc
+          ? expandIncludesInText(normalized, dirname(includePath), seen, depth + 1)
+          : normalized;
+        if (includeIsAsciidoc && attrs.leveloffset !== 0) {
+          expanded = applyLevelOffset(expanded, attrs.leveloffset);
+        }
         out.push(expanded);
         if (!expanded.endsWith("\n")) out.push("");
         seen.delete(canonical);
@@ -79,12 +130,22 @@ function expandIncludesInText(content, baseDir, seen = new Set(), depth = 0) {
   return out.join("\n");
 }
 
-function parseLevelOffset(attrStr) {
+function parseIncludeAttrs(attrStr) {
+  let leveloffset = 0;
+  let encoding = null;
   for (const part of attrStr.split(",")) {
-    const m = part.trim().match(/^leveloffset=([+-]?\d+)$/);
-    if (m) return parseInt(m[1], 10);
+    const trimmed = part.trim();
+    const leveloffsetMatch = trimmed.match(/^leveloffset=([+-]?\d+)$/);
+    if (leveloffsetMatch) {
+      leveloffset = parseInt(leveloffsetMatch[1], 10);
+      continue;
+    }
+    const encodingMatch = trimmed.match(/^encoding=(.+)$/);
+    if (encodingMatch) {
+      encoding = encodingMatch[1].trim().replace(/^['"]|['"]$/g, "");
+    }
   }
-  return 0;
+  return { leveloffset, encoding };
 }
 
 function applyLevelOffset(content, offset) {
@@ -138,7 +199,7 @@ const server = createServer((request, response) => {
           return;
         }
         const baseDir = path ? dirname(filePath) : projectRoot;
-        const expanded = expandIncludesInText(String(source), baseDir);
+        const expanded = expandIncludesInText(normalizeAsciidocSource(String(source)), baseDir);
         response.writeHead(200, {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-store",

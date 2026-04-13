@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
@@ -7,6 +6,7 @@ use serde::ser::{SerializeStruct, Serializer};
 
 use crate::ast::{Inline, InlineForm, InlineVariant};
 use crate::inline::parse_spanned_inlines;
+use crate::normalize::normalize_asciidoc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsgDocument {
@@ -148,6 +148,23 @@ struct PendingBlockAnchor {
     id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedTckTableCell {
+    content: String,
+    colspan: usize,
+    rowspan: usize,
+    style: Option<String>,
+    start_line: usize,
+    end_line: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TckTableFormat {
+    Psv,
+    Csv,
+    Dsv,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TckListMarker<'a> {
     kind: TckListKind,
@@ -165,13 +182,13 @@ pub struct TckRequest {
 }
 
 pub fn render_tck_json(input: &str) -> serde_json::Result<String> {
-    let normalized = normalize_tck_newlines(input);
+    let normalized = normalize_asciidoc(input);
     let document = parse_tck_document(normalized.as_ref());
     serde_json::to_string_pretty(&document)
 }
 
 pub fn render_tck_inline_json(input: &str) -> serde_json::Result<String> {
-    let normalized = normalize_tck_newlines(input);
+    let normalized = normalize_asciidoc(input);
     serde_json::to_string_pretty(&parse_tck_inlines(trim_tck_inline_terminal_newline(
         normalized.as_ref(),
     )))
@@ -191,7 +208,8 @@ pub fn render_tck_json_from_request(request_json: &str) -> Result<String, String
 }
 
 pub fn parse_tck_document(input: &str) -> AsgDocument {
-    let lines: Vec<&str> = input.lines().collect();
+    let normalized = normalize_asciidoc(input);
+    let lines: Vec<&str> = normalized.lines().collect();
     let mut index = 0;
     let mut attributes = BTreeMap::new();
     let mut header = None;
@@ -381,15 +399,8 @@ fn block_start_position(block: &AsgBlock) -> Position {
 }
 
 pub fn parse_tck_inlines(input: &str) -> Vec<AsgInline> {
-    parse_tck_inlines_at(input, 1, 1)
-}
-
-fn normalize_tck_newlines(input: &str) -> Cow<'_, str> {
-    if !input.contains('\r') {
-        return Cow::Borrowed(input);
-    }
-
-    Cow::Owned(input.replace("\r\n", "\n").replace('\r', "\n"))
+    let normalized = normalize_asciidoc(input);
+    parse_tck_inlines_at(normalized.as_ref(), 1, 1)
 }
 
 fn trim_tck_inline_terminal_newline(input: &str) -> &str {
@@ -444,6 +455,36 @@ fn parse_blocks(
             );
             pending_anchor = Some(anchor);
             index += 1;
+            continue;
+        }
+
+        if let Some((mut block, consumed_lines)) = parse_table(lines, index, line_offset) {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            apply_anchor_to_block(&mut block, pending_anchor.take());
+            last_end = Some(block.location[1].clone());
+            blocks.push(block);
+            index += consumed_lines;
+            continue;
+        }
+
+        if let Some((mut block, consumed_lines)) = parse_block_image(lines, index, line_offset) {
+            flush_paragraph(
+                &mut blocks,
+                &mut paragraph_start,
+                &mut paragraph_lines,
+                line_offset,
+                &mut last_end,
+            );
+            apply_anchor_to_block(&mut block, pending_anchor.take());
+            last_end = Some(block.location[1].clone());
+            blocks.push(block);
+            index += consumed_lines;
             continue;
         }
 
@@ -868,6 +909,571 @@ fn parse_delimited_block(
     Some((block, consumed))
 }
 
+fn parse_table(lines: &[&str], index: usize, line_offset: usize) -> Option<(AsgBlock, usize)> {
+    let prelude = parse_block_prelude(lines, index, line_offset);
+    let delimiter_index = index + prelude.consumed_lines;
+    let (delimiter, delimiter_char, canonical_delimiter) =
+        parse_table_delimiter(lines.get(delimiter_index)?)?;
+    let metadata = prelude.metadata.as_ref();
+    let header_enabled = metadata.is_some_and(table_has_header_option);
+    let expected_columns = metadata.and_then(table_column_count);
+    let format = table_format(metadata, delimiter_char);
+    let separator = table_separator(metadata, format, delimiter_char)?;
+    let start_line = line_offset + delimiter_index;
+
+    let (row_groups, consumed) = match format {
+        TckTableFormat::Psv => {
+            parse_psv_table_rows(lines, delimiter_index, start_line, delimiter, separator, expected_columns)?
+        }
+        TckTableFormat::Csv | TckTableFormat::Dsv => {
+            parse_separated_value_table_rows(lines, delimiter_index, start_line, delimiter, separator)?
+        }
+    };
+
+    let closing_index = delimiter_index + consumed - 1;
+    let end_line = line_offset + closing_index;
+    let mut rows = if let Some(column_count) = expected_columns {
+        assemble_tck_table_rows_with_known_columns(&row_groups, column_count)?
+    } else {
+        assemble_tck_table_rows_without_known_columns(&row_groups)?
+    };
+
+    if header_enabled && !rows.is_empty() {
+        rows[0].variant = Some("header");
+    }
+
+    Some((
+        AsgBlock {
+            name: "table",
+            node_type: "block",
+            id: prelude.id,
+            title: prelude.title,
+            metadata: prelude.metadata,
+            level: None,
+            form: Some("delimited"),
+            delimiter: Some(canonical_delimiter),
+            inlines: None,
+            blocks: Some(rows),
+            variant: None,
+            marker: None,
+            items: vec![],
+            location: [
+                Position {
+                    line: start_line,
+                    col: 1,
+                },
+                Position {
+                    line: end_line,
+                    col: lines[closing_index].trim_end().len(),
+                },
+            ],
+        },
+        prelude.consumed_lines + consumed,
+    ))
+}
+
+fn parse_block_image(lines: &[&str], index: usize, line_offset: usize) -> Option<(AsgBlock, usize)> {
+    let prelude = parse_block_prelude(lines, index, line_offset);
+    let image_index = index + prelude.consumed_lines;
+    let line = *lines.get(image_index)?;
+    let image = parse_block_image_line(line)?;
+    let line_no = line_offset + image_index;
+    let start = prelude.start.clone().unwrap_or(Position {
+        line: line_no,
+        col: 1,
+    });
+    let end = Position {
+        line: line_no,
+        col: line.trim_end().len(),
+    };
+
+    let mut attributes = prelude
+        .metadata
+        .as_ref()
+        .map(|metadata| metadata.attributes.clone())
+        .unwrap_or_default();
+    attributes.insert("target".into(), image.target.clone());
+    attributes.insert("alt".into(), image.alt.clone());
+    if let Some(width) = image.width {
+        attributes.insert("width".into(), width);
+    }
+    if let Some(height) = image.height {
+        attributes.insert("height".into(), height);
+    }
+    attributes.extend(image.named_attributes);
+
+    let metadata = Some(AsgBlockMetadata {
+        attributes,
+        options: prelude
+            .metadata
+            .as_ref()
+            .map(|metadata| metadata.options.clone())
+            .unwrap_or_default(),
+        roles: prelude
+            .metadata
+            .as_ref()
+            .map(|metadata| metadata.roles.clone())
+            .unwrap_or_default(),
+        location: [start.clone(), end.clone()],
+    });
+
+    Some((
+        AsgBlock {
+            name: "image",
+            node_type: "block",
+            id: prelude.id,
+            title: prelude.title,
+            metadata,
+            level: None,
+            form: None,
+            delimiter: None,
+            inlines: None,
+            blocks: None,
+            variant: None,
+            marker: None,
+            items: vec![],
+            location: [Position { line: line_no, col: 1 }, end],
+        },
+        prelude.consumed_lines + 1,
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedTckBlockImage {
+    target: String,
+    alt: String,
+    width: Option<String>,
+    height: Option<String>,
+    named_attributes: BTreeMap<String, String>,
+}
+
+fn parse_block_image_line(line: &str) -> Option<ParsedTckBlockImage> {
+    let rest = line.strip_prefix("image::")?;
+    let bracket_start = rest.find('[')?;
+    let bracket_end = rest.rfind(']')?;
+    if bracket_end <= bracket_start {
+        return None;
+    }
+    let target = rest[..bracket_start].trim().to_owned();
+    if target.is_empty() {
+        return None;
+    }
+    let attr_text = &rest[bracket_start + 1..bracket_end];
+    let (alt, width, height, named_attributes) = parse_image_attributes(attr_text, &target);
+
+    Some(ParsedTckBlockImage {
+        target,
+        alt,
+        width,
+        height,
+        named_attributes,
+    })
+}
+
+fn parse_image_attributes(
+    attr_text: &str,
+    target: &str,
+) -> (
+    String,
+    Option<String>,
+    Option<String>,
+    BTreeMap<String, String>,
+) {
+    let mut named_attributes = BTreeMap::new();
+    let mut positional = Vec::new();
+
+    if !attr_text.is_empty() {
+        for part in split_image_attrs(attr_text) {
+            let part = part.trim();
+            if let Some((key, value)) = part.split_once('=') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                named_attributes.insert(key.to_owned(), value.to_owned());
+            } else {
+                positional.push(part.to_owned());
+            }
+        }
+    }
+
+    let alt = positional
+        .first()
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .unwrap_or_else(|| auto_generate_image_alt(target));
+    let width = positional.get(1).filter(|value| !value.is_empty()).cloned();
+    let height = positional.get(2).filter(|value| !value.is_empty()).cloned();
+
+    (alt, width, height, named_attributes)
+}
+
+fn split_image_attrs(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quote = false;
+    let mut quote_char = '"';
+    for ch in text.chars() {
+        if !in_quote && (ch == '"' || ch == '\'') {
+            in_quote = true;
+            quote_char = ch;
+        } else if in_quote && ch == quote_char {
+            in_quote = false;
+        } else if !in_quote && ch == ',' {
+            parts.push(std::mem::take(&mut current));
+            continue;
+        }
+        current.push(ch);
+    }
+    parts.push(current);
+    parts
+}
+
+fn auto_generate_image_alt(target: &str) -> String {
+    let filename = target.rsplit('/').next().unwrap_or(target);
+    let filename = filename.rsplit('\\').next().unwrap_or(filename);
+    let stem = filename
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(filename);
+    stem.replace('-', " ").replace('_', " ")
+}
+
+fn parse_psv_table_rows(
+    lines: &[&str],
+    delimiter_index: usize,
+    start_line: usize,
+    delimiter: &str,
+    separator: char,
+    expected_columns: Option<usize>,
+) -> Option<(Vec<Vec<ParsedTckTableCell>>, usize)> {
+    let mut row_groups: Vec<Vec<ParsedTckTableCell>> = Vec::new();
+    let mut current_group: Vec<ParsedTckTableCell> = Vec::new();
+    let mut current_cell: Option<ParsedTckTableCell> = None;
+    let mut consumed = 1;
+    let mut closed = false;
+
+    while delimiter_index + consumed < lines.len() {
+        let line = lines[delimiter_index + consumed];
+        let trimmed = line.trim();
+        if trimmed == delimiter {
+            if let Some(cell) = current_cell.take() {
+                current_group.push(cell);
+            }
+            if !current_group.is_empty() {
+                row_groups.push(std::mem::take(&mut current_group));
+            }
+            consumed += 1;
+            closed = true;
+            break;
+        }
+        if trimmed.is_empty() {
+            let next_nonempty = next_nonempty_table_line(lines, delimiter_index + consumed + 1);
+            if next_nonempty.is_some_and(|line| starts_table_cell_line(line, separator)) {
+                if let Some(cell) = current_cell.take() {
+                    current_group.push(cell);
+                }
+                if !current_group.is_empty() {
+                    row_groups.push(std::mem::take(&mut current_group));
+                }
+            } else if let Some(cell) = &mut current_cell {
+                if !cell.content.is_empty() {
+                    cell.content.push('\n');
+                }
+                cell.content.push('\n');
+                cell.end_line = start_line + consumed - 1;
+            }
+            consumed += 1;
+            continue;
+        }
+
+        if starts_table_cell_line(trimmed, separator) {
+            let had_cells_in_group = !current_group.is_empty();
+            if let Some(cell) = current_cell.take() {
+                current_group.push(cell);
+                maybe_finish_tck_table_row_group(&mut row_groups, &mut current_group, expected_columns);
+                if expected_columns.is_none() && had_cells_in_group && !current_group.is_empty() {
+                    row_groups.push(std::mem::take(&mut current_group));
+                }
+            }
+            let cells = parse_tck_table_cells_from_line(line, separator, start_line + consumed)?;
+            if cells.is_empty() {
+                return None;
+            }
+            let mut iter = cells.into_iter();
+            let last = iter.next_back()?;
+            for cell in iter {
+                current_group.push(cell);
+                maybe_finish_tck_table_row_group(&mut row_groups, &mut current_group, expected_columns);
+            }
+            current_cell = Some(last);
+        } else {
+            let cell = current_cell.as_mut()?;
+            if !cell.content.is_empty() {
+                cell.content.push('\n');
+            }
+            cell.content.push_str(line);
+            cell.end_line = start_line + consumed - 1;
+        }
+        consumed += 1;
+    }
+
+    closed.then_some((row_groups, consumed))
+}
+
+fn parse_separated_value_table_rows(
+    lines: &[&str],
+    delimiter_index: usize,
+    start_line: usize,
+    delimiter: &str,
+    separator: char,
+) -> Option<(Vec<Vec<ParsedTckTableCell>>, usize)> {
+    let closing_index = lines[delimiter_index + 1..]
+        .iter()
+        .position(|line| line.trim() == delimiter)
+        .map(|offset| delimiter_index + 1 + offset)?;
+    let consumed = closing_index - delimiter_index + 1;
+    let content = lines[delimiter_index + 1..closing_index].join("\n");
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .delimiter(separator as u8)
+        .flexible(true)
+        .from_reader(content.as_bytes());
+    let mut row_groups = Vec::new();
+    let mut line_no = start_line + 1;
+    for record in reader.records() {
+        let record = record.ok()?;
+        row_groups.push(
+            record
+                .iter()
+                .map(|value| ParsedTckTableCell {
+                    content: value.to_owned(),
+                    colspan: 1,
+                    rowspan: 1,
+                    style: None,
+                    start_line: line_no,
+                    end_line: line_no,
+                })
+                .collect(),
+        );
+        line_no += 1;
+    }
+    Some((row_groups, consumed))
+}
+
+fn maybe_finish_tck_table_row_group(
+    row_groups: &mut Vec<Vec<ParsedTckTableCell>>,
+    current_group: &mut Vec<ParsedTckTableCell>,
+    expected_columns: Option<usize>,
+) {
+    let Some(column_count) = expected_columns else {
+        return;
+    };
+    if column_count == 0 || current_group.is_empty() {
+        return;
+    }
+
+    let current_width = current_group
+        .iter()
+        .map(|cell| cell.colspan.max(1))
+        .sum::<usize>();
+    if current_width == column_count {
+        row_groups.push(std::mem::take(current_group));
+    }
+}
+
+fn assemble_tck_table_rows_with_known_columns(
+    row_groups: &[Vec<ParsedTckTableCell>],
+    column_count: usize,
+) -> Option<Vec<AsgBlock>> {
+    if column_count == 0 {
+        return None;
+    }
+
+    if row_groups.len() > 1 {
+        return assemble_explicit_tck_table_rows_with_known_columns(row_groups, column_count);
+    }
+
+    let mut rows = Vec::new();
+    let mut current_row = Vec::new();
+    let mut current_width = 0;
+    for cell in row_groups.iter().flatten() {
+        current_width += cell.colspan.max(1);
+        current_row.push(build_tck_table_cell(cell));
+        if current_width == column_count {
+            rows.push(build_tck_table_row(std::mem::take(&mut current_row)));
+            current_width = 0;
+        }
+    }
+
+    if !current_row.is_empty() {
+        rows.push(build_tck_table_row(current_row));
+    }
+
+    Some(rows)
+}
+
+fn assemble_explicit_tck_table_rows_with_known_columns(
+    row_groups: &[Vec<ParsedTckTableCell>],
+    column_count: usize,
+) -> Option<Vec<AsgBlock>> {
+    let mut rows = Vec::new();
+    let mut active_rowspans = vec![0usize; column_count];
+
+    for group in row_groups {
+        let mut next_rowspans = active_rowspans
+            .iter()
+            .map(|span| span.saturating_sub(1))
+            .collect::<Vec<_>>();
+        let mut col = 0usize;
+
+        for cell in group {
+            while col < column_count && active_rowspans[col] > 0 {
+                col += 1;
+            }
+            if col >= column_count {
+                return None;
+            }
+
+            let colspan = cell.colspan.max(1);
+            let rowspan = cell.rowspan.max(1);
+            if col + colspan > column_count {
+                return None;
+            }
+            if (col..col + colspan).any(|index| active_rowspans[index] > 0) {
+                return None;
+            }
+
+            if rowspan > 1 {
+                for index in col..col + colspan {
+                    next_rowspans[index] = next_rowspans[index].max(rowspan - 1);
+                }
+            }
+            col += colspan;
+        }
+
+        rows.push(build_tck_table_row(
+            group.iter().map(build_tck_table_cell).collect(),
+        ));
+        active_rowspans = next_rowspans;
+    }
+
+    Some(rows)
+}
+
+fn assemble_tck_table_rows_without_known_columns(
+    row_groups: &[Vec<ParsedTckTableCell>],
+) -> Option<Vec<AsgBlock>> {
+    if row_groups.is_empty() {
+        return None;
+    }
+
+    if row_groups
+        .iter()
+        .flatten()
+        .any(|cell| cell.colspan > 1 || cell.rowspan > 1)
+    {
+        let inferred_columns = row_groups
+            .iter()
+            .map(|group| group.iter().map(|cell| cell.colspan.max(1)).sum::<usize>())
+            .max()?;
+        return assemble_explicit_tck_table_rows_with_known_columns(row_groups, inferred_columns);
+    }
+
+    Some(
+        row_groups
+            .iter()
+            .map(|group| build_tck_table_row(group.iter().map(build_tck_table_cell).collect()))
+            .collect(),
+    )
+}
+
+fn build_tck_table_row(cells: Vec<AsgBlock>) -> AsgBlock {
+    let start = cells
+        .first()
+        .map(|cell| cell.location[0].clone())
+        .unwrap_or(Position { line: 1, col: 1 });
+    let end = cells
+        .last()
+        .map(|cell| cell.location[1].clone())
+        .unwrap_or_else(|| start.clone());
+    AsgBlock {
+        name: "tableRow",
+        node_type: "block",
+        id: None,
+        title: None,
+        metadata: None,
+        level: None,
+        form: None,
+        delimiter: None,
+        inlines: None,
+        blocks: Some(cells),
+        variant: None,
+        marker: None,
+        items: vec![],
+        location: [start, end],
+    }
+}
+
+fn build_tck_table_cell(cell: &ParsedTckTableCell) -> AsgBlock {
+    let normalized = normalize_table_cell_content(&cell.content);
+    let lines: Vec<&str> = normalized.lines().collect();
+    let (blocks, end) = if lines.is_empty() {
+        (Vec::new(), None)
+    } else {
+        parse_blocks(&lines, cell.start_line, None, None)
+    };
+
+    let mut attributes = BTreeMap::new();
+    if cell.colspan > 1 {
+        attributes.insert("colspan".into(), cell.colspan.to_string());
+    }
+    if cell.rowspan > 1 {
+        attributes.insert("rowspan".into(), cell.rowspan.to_string());
+    }
+    if let Some(style) = &cell.style {
+        attributes.insert("style".into(), style.clone());
+    }
+
+    AsgBlock {
+        name: "tableCell",
+        node_type: "block",
+        id: None,
+        title: None,
+        metadata: (!attributes.is_empty()).then_some(AsgBlockMetadata {
+            attributes,
+            options: vec![],
+            roles: vec![],
+            location: [
+                Position {
+                    line: cell.start_line,
+                    col: 1,
+                },
+                end.clone().unwrap_or(Position {
+                    line: cell.end_line,
+                    col: cell.content.lines().last().map(str::len).unwrap_or(1),
+                }),
+            ],
+        }),
+        level: None,
+        form: None,
+        delimiter: None,
+        inlines: None,
+        blocks: (!blocks.is_empty()).then_some(blocks),
+        variant: None,
+        marker: None,
+        items: vec![],
+        location: [
+            Position {
+                line: cell.start_line,
+                col: 1,
+            },
+            end.unwrap_or(Position {
+                line: cell.end_line,
+                col: cell.content.lines().last().map(str::len).unwrap_or(1),
+            }),
+        ],
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ParsedBlockPrelude {
     consumed_lines: usize,
@@ -892,7 +1498,9 @@ fn parse_block_prelude(lines: &[&str], index: usize, line_offset: usize) -> Pars
     {
         let next = cursor + 1;
         if lines.get(next).is_some_and(|line| {
-            parse_attribute_list_line(line).is_some() || is_delimited_block_delimiter(line)
+            parse_attribute_list_line(line).is_some()
+                || is_block_delimiter(line)
+                || is_block_image_line(line)
         }) {
             let title_line = line_offset + cursor;
             prelude.title = Some(vec![InlineText {
@@ -1026,6 +1634,14 @@ fn is_delimited_block_delimiter(line: &str) -> bool {
     parse_delimited_block_marker(line).is_some()
 }
 
+fn is_block_delimiter(line: &str) -> bool {
+    is_delimited_block_delimiter(line) || parse_table_delimiter(line).is_some()
+}
+
+fn is_block_image_line(line: &str) -> bool {
+    line.trim_start().starts_with("image::")
+}
+
 fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str, &'static str)> {
     let trimmed = line.trim();
     if trimmed == "--" {
@@ -1053,6 +1669,237 @@ fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str, &'sta
     };
 
     Some((trimmed, name, canonical_delimiter))
+}
+
+fn parse_table_delimiter(line: &str) -> Option<(&str, char, &'static str)> {
+    let trimmed = line.trim();
+    let mut chars = trimmed.chars();
+    let marker = chars.next()?;
+    let canonical = match marker {
+        '|' => "|===",
+        ',' => ",===",
+        ':' => ":===",
+        '!' => "!===",
+        _ => return None,
+    };
+    let rest = chars.as_str();
+    (rest.len() >= 3 && rest.chars().all(|ch| ch == '=')).then_some((trimmed, marker, canonical))
+}
+
+fn table_format(metadata: Option<&AsgBlockMetadata>, delimiter_char: char) -> TckTableFormat {
+    match metadata
+        .and_then(|metadata| metadata.attributes.get("format"))
+        .map(|format| format.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("csv") => TckTableFormat::Csv,
+        Some("dsv") => TckTableFormat::Dsv,
+        _ => match delimiter_char {
+            ',' => TckTableFormat::Csv,
+            ':' => TckTableFormat::Dsv,
+            _ => TckTableFormat::Psv,
+        },
+    }
+}
+
+fn table_separator(
+    metadata: Option<&AsgBlockMetadata>,
+    format: TckTableFormat,
+    delimiter_char: char,
+) -> Option<char> {
+    metadata
+        .and_then(|metadata| metadata.attributes.get("separator"))
+        .and_then(|separator| parse_table_separator_attribute(separator))
+        .or(match format {
+            TckTableFormat::Csv => Some(','),
+            TckTableFormat::Dsv => Some(':'),
+            TckTableFormat::Psv => Some(if delimiter_char == '!' { '!' } else { '|' }),
+        })
+}
+
+fn parse_table_separator_attribute(value: &str) -> Option<char> {
+    if value == r"\t" {
+        return Some('\t');
+    }
+
+    let mut chars = value.chars();
+    let separator = chars.next()?;
+    chars.next().is_none().then_some(separator)
+}
+
+fn starts_table_cell_line(line: &str, separator: char) -> bool {
+    parse_leading_table_cell_spec(line.trim_start(), separator).is_some()
+}
+
+fn next_nonempty_table_line<'a>(lines: &'a [&str], mut index: usize) -> Option<&'a str> {
+    while let Some(line) = lines.get(index) {
+        if !line.trim().is_empty() {
+            return Some(*line);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn parse_tck_table_cells_from_line(
+    line: &str,
+    separator: char,
+    line_no: usize,
+) -> Option<Vec<ParsedTckTableCell>> {
+    let trimmed = line.trim_start();
+    let segments = split_table_row_cells_after_marker(trimmed, separator);
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let (colspan, rowspan, style) = parse_table_cell_spec(segments[0].trim())?;
+    let mut cells = vec![ParsedTckTableCell {
+        content: segments[1].trim().to_owned(),
+        colspan,
+        rowspan,
+        style,
+        start_line: line_no,
+        end_line: line_no,
+    }];
+
+    parse_tck_table_cells_from_segments(&segments, 2, line_no, &mut cells).then_some(cells)
+}
+
+fn split_table_row_cells_after_marker(line: &str, separator: char) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek() == Some(&separator) {
+            current.push(separator);
+            chars.next();
+            continue;
+        }
+
+        if ch == separator {
+            cells.push(current.trim().to_owned());
+            current.clear();
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    cells.push(current.trim().to_owned());
+    cells
+}
+
+fn parse_tck_table_cells_from_segments(
+    segments: &[String],
+    index: usize,
+    line_no: usize,
+    cells: &mut Vec<ParsedTckTableCell>,
+) -> bool {
+    if index >= segments.len() {
+        return true;
+    }
+
+    if index + 1 < segments.len() {
+        let spec = segments[index].trim();
+        if !spec.is_empty()
+            && let Some((colspan, rowspan, style)) = parse_table_cell_spec(spec)
+        {
+            cells.push(ParsedTckTableCell {
+                content: segments[index + 1].trim().to_owned(),
+                colspan,
+                rowspan,
+                style,
+                start_line: line_no,
+                end_line: line_no,
+            });
+            if parse_tck_table_cells_from_segments(segments, index + 2, line_no, cells) {
+                return true;
+            }
+            cells.pop();
+        }
+    }
+
+    cells.push(ParsedTckTableCell {
+        content: segments[index].trim().to_owned(),
+        colspan: 1,
+        rowspan: 1,
+        style: None,
+        start_line: line_no,
+        end_line: line_no,
+    });
+    if parse_tck_table_cells_from_segments(segments, index + 1, line_no, cells) {
+        return true;
+    }
+    cells.pop();
+    false
+}
+
+fn parse_leading_table_cell_spec(
+    line: &str,
+    separator: char,
+) -> Option<(usize, usize, Option<String>, &str)> {
+    let separator_index = line.find(separator)?;
+    let spec = &line[..separator_index];
+    let rest = &line[separator_index + separator.len_utf8()..];
+    let (colspan, rowspan, style) = parse_table_cell_spec(spec.trim())?;
+    Some((colspan, rowspan, style, rest))
+}
+
+fn parse_table_cell_spec(spec: &str) -> Option<(usize, usize, Option<String>)> {
+    if spec.is_empty() {
+        return Some((1, 1, None));
+    }
+
+    let style = match spec {
+        "a" => return Some((1, 1, Some("asciidoc".into()))),
+        "h" => return Some((1, 1, Some("header".into()))),
+        _ => None,
+    };
+
+    if let Some(rowspan) = spec
+        .strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix('+'))
+    {
+        let rowspan = rowspan.parse().ok()?;
+        return Some((1, rowspan, style));
+    }
+
+    if let Some(span_spec) = spec.strip_suffix('+') {
+        if let Some((colspan, rowspan)) = span_spec.split_once('.') {
+            let colspan = colspan.parse().ok()?;
+            let rowspan = rowspan.parse().ok()?;
+            return Some((colspan, rowspan, style));
+        }
+
+        let colspan = span_spec.parse().ok()?;
+        return Some((colspan, 1, style));
+    }
+
+    None
+}
+
+fn table_has_header_option(metadata: &AsgBlockMetadata) -> bool {
+    metadata.options.iter().any(|option| option == "header")
+        || metadata
+            .attributes
+            .get("options")
+            .is_some_and(|options| options.split(',').any(|option| option.trim() == "header"))
+        || metadata.attributes.contains_key("header-option")
+}
+
+fn table_column_count(metadata: &AsgBlockMetadata) -> Option<usize> {
+    let cols = metadata.attributes.get("cols")?;
+    let parts = cols.split(',').map(str::trim).collect::<Vec<_>>();
+    (!parts.is_empty() && parts.iter().any(|part| !part.is_empty())).then_some(parts.len())
+}
+
+fn normalize_table_cell_content(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| if line.trim() == "+" { "" } else { line })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn apply_attribute_list(
@@ -1181,7 +2028,7 @@ fn parse_admonition_paragraph(
         if line.trim().is_empty()
             || parse_heading_line(lines, index + consumed, 1).is_some()
             || parse_list_item_line(line).is_some()
-            || is_delimited_block_delimiter(line)
+            || is_block_delimiter(line)
         {
             break;
         }
@@ -1265,7 +2112,7 @@ fn parse_styled_admonition_paragraph(
         .and_then(|style| admonition_variant_from_style(style))?;
     let paragraph_index = index + prelude.consumed_lines;
     let line = *lines.get(paragraph_index)?;
-    if line.trim().is_empty() || is_delimited_block_delimiter(line) {
+    if line.trim().is_empty() || is_block_delimiter(line) {
         return None;
     }
 
@@ -1277,7 +2124,7 @@ fn parse_styled_admonition_paragraph(
         if line.trim().is_empty()
             || parse_heading_line(lines, cursor, 1).is_some()
             || parse_list_item_line(line).is_some()
-            || is_delimited_block_delimiter(line)
+            || is_block_delimiter(line)
         {
             break;
         }
@@ -2322,6 +3169,22 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_trailing_spaces_in_tck_document_parsing() {
+        let document = parse_tck_document("body  \r\nmore\t\r\n");
+        let block = document.blocks.first().expect("paragraph");
+        let text = block
+            .inlines
+            .as_ref()
+            .and_then(|inlines| inlines.first())
+            .expect("text");
+
+        let AsgInline::Text(text) = text else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "body\nmore");
+    }
+
+    #[test]
     fn omits_empty_document_attributes_when_no_header_is_present() {
         let document = parse_tck_document("body");
         let json = serde_json::to_string_pretty(&document).expect("json");
@@ -2883,6 +3746,138 @@ mod tests {
         let sidebar = document.blocks.get(1).expect("sidebar block");
         assert_eq!(sidebar.name, "sidebar");
         assert_eq!(sidebar.id.as_deref(), Some("aside"));
+    }
+
+    #[test]
+    fn renders_tck_pipe_table() {
+        let document = parse_tck_document("|===\n|A |B\n|1 |2\n|===");
+        let block = document.blocks.first().expect("table block");
+
+        assert_eq!(block.name, "table");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("|==="));
+        let rows = block.blocks.as_ref().expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "tableRow");
+        let first_row_cells = rows[0].blocks.as_ref().expect("cells");
+        assert_eq!(first_row_cells.len(), 2);
+        assert_eq!(first_row_cells[0].name, "tableCell");
+        let cell_blocks = first_row_cells[0].blocks.as_ref().expect("cell blocks");
+        assert_eq!(cell_blocks[0].name, "paragraph");
+    }
+
+    #[test]
+    fn renders_tck_table_with_metadata() {
+        let document = parse_tck_document(".Roster\n[%header,cols=\"1,1\"]\n|===\n|Name |Role\n|Ada |Author\n|===");
+        let block = document.blocks.first().expect("table block");
+
+        assert_eq!(
+            block
+                .title
+                .as_ref()
+                .and_then(|title| title.first())
+                .map(|text| text.value.as_str()),
+            Some("Roster")
+        );
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("title").map(String::as_str),
+            Some("Roster")
+        );
+        assert_eq!(metadata.attributes.get("cols").map(String::as_str), Some("1,1"));
+        let rows = block.blocks.as_ref().expect("rows");
+        assert_eq!(rows[0].variant, Some("header"));
+    }
+
+    #[test]
+    fn renders_tck_bang_table() {
+        let document = parse_tck_document("!===\n!outer !value\n!===");
+        let block = document.blocks.first().expect("table block");
+
+        assert_eq!(block.name, "table");
+        assert_eq!(block.delimiter, Some("!==="));
+        let rows = block.blocks.as_ref().expect("rows");
+        let first_row_cells = rows[0].blocks.as_ref().expect("cells");
+        assert_eq!(first_row_cells.len(), 2);
+    }
+
+    #[test]
+    fn renders_tck_csv_shorthand_table() {
+        let document = parse_tck_document(",===\nAda,Author\nGrace,Reviewer\n,===");
+        let block = document.blocks.first().expect("table block");
+
+        assert_eq!(block.name, "table");
+        assert_eq!(block.delimiter, Some(",==="));
+        let rows = block.blocks.as_ref().expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].blocks.as_ref().expect("cells").len(), 2);
+    }
+
+    #[test]
+    fn renders_tck_dsv_shorthand_table() {
+        let document = parse_tck_document(":===\nleft:right\nup:down\n:===");
+        let block = document.blocks.first().expect("table block");
+
+        assert_eq!(block.name, "table");
+        assert_eq!(block.delimiter, Some(":==="));
+        let rows = block.blocks.as_ref().expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].blocks.as_ref().expect("cells").len(), 2);
+    }
+
+    #[test]
+    fn renders_tck_custom_separator_table() {
+        let document = parse_tck_document("[separator=!,cols=\"1,1\"]\n|===\n!left!right\n!up!down\n|===");
+        let block = document.blocks.first().expect("table block");
+
+        assert_eq!(block.name, "table");
+        assert_eq!(block.delimiter, Some("|==="));
+        let rows = block.blocks.as_ref().expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].blocks.as_ref().expect("cells").len(), 2);
+    }
+
+    #[test]
+    fn renders_tck_block_image() {
+        let document = parse_tck_document("image::images/tiger.png[Tiger, 200, 300]");
+        let block = document.blocks.first().expect("image block");
+
+        assert_eq!(block.name, "image");
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("target").map(String::as_str),
+            Some("images/tiger.png")
+        );
+        assert_eq!(metadata.attributes.get("alt").map(String::as_str), Some("Tiger"));
+        assert_eq!(metadata.attributes.get("width").map(String::as_str), Some("200"));
+        assert_eq!(metadata.attributes.get("height").map(String::as_str), Some("300"));
+    }
+
+    #[test]
+    fn renders_tck_block_image_with_prelude_metadata() {
+        let document = parse_tck_document(".The AsciiDoc Tiger\n[#tiger,.hero]\nimage::tiger.png[]");
+        let block = document.blocks.first().expect("image block");
+
+        assert_eq!(block.name, "image");
+        assert_eq!(block.id.as_deref(), Some("tiger"));
+        assert_eq!(
+            block.title
+                .as_ref()
+                .and_then(|title| title.first())
+                .map(|text| text.value.as_str()),
+            Some("The AsciiDoc Tiger")
+        );
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("title").map(String::as_str),
+            Some("The AsciiDoc Tiger")
+        );
+        assert_eq!(metadata.attributes.get("id").map(String::as_str), Some("tiger"));
+        assert_eq!(
+            metadata.attributes.get("role").map(String::as_str),
+            Some("hero")
+        );
+        assert_eq!(metadata.attributes.get("alt").map(String::as_str), Some("tiger"));
     }
 
     #[test]

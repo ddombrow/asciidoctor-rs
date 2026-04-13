@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod inline;
+pub mod normalize;
 pub mod parser;
 pub mod prepare;
 pub mod preprocessor;
