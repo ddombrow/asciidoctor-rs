@@ -492,11 +492,12 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     const innerHtml = isSource
       ? `<pre class="highlight"><code class="language-${escapeHtml(lang)}" data-lang="${escapeHtml(lang)}">${renderedContent}</code></pre>`
       : `<pre>${renderedContent}</pre>`;
+    const wrappedInnerHtml = innerHtml;
     return `
       <div class="listingblock"${id}>
         ${title}
         <div class="content">
-          ${innerHtml}
+          ${wrappedInnerHtml}
         </div>
       </div>
     `;

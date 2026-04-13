@@ -940,7 +940,19 @@ fn prepare_listing(listing: &AstListing) -> ListingBlock {
         content: listing.lines[trimmed_start..trimmed_end].join("\n"),
         attributes: listing.metadata.attributes.clone(),
         content_model: Some(ContentModel::Simple),
-        line_number: None,
+        line_number: listing
+            .metadata
+            .options
+            .iter()
+            .any(|option| option == "linenums")
+            .then(|| {
+                listing
+                    .metadata
+                    .attributes
+                    .get("start")
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(1)
+            }),
         style: listing.metadata.style.clone(),
         role: listing.metadata.role.clone(),
         level: 0,
@@ -3212,6 +3224,20 @@ mod tests {
             listing.attributes.get("title").map(String::as_str),
             Some("Exhibit A")
         );
+    }
+
+    #[test]
+    fn prepares_numbered_listings_with_start_line() {
+        let document = parse_document("[source,rust,start=7,%linenums]\n----\nfn main() {}\n----");
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+        let PreparedBlock::Listing(listing) = &preamble.blocks[0] else {
+            panic!("expected listing");
+        };
+
+        assert_eq!(listing.line_number, Some(7));
     }
 
     #[test]

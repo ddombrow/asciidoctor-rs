@@ -1404,7 +1404,9 @@ fn parse_delimited_block(
 ) -> Option<(Block, usize)> {
     let prelude = pending_prelude.cloned().unwrap_or_default();
     let delimiter_index = index;
-    let (delimiter, block_kind) = parse_delimited_block_marker(lines.get(delimiter_index)?)?;
+    let delimiter_line = lines.get(delimiter_index)?;
+    let fenced_entries = parse_fenced_code_opening(delimiter_line);
+    let (delimiter, block_kind) = parse_delimited_block_marker(delimiter_line)?;
     if block_kind == "comment" {
         return None;
     }
@@ -1439,22 +1441,15 @@ fn parse_delimited_block(
     let block = match block_kind {
         "passthrough" => Block::Passthrough(inner_lines.join("\n")),
         "listing" => {
-            let mut lines = Vec::new();
-            let mut callouts = Vec::new();
-            let mut auto_counter: u32 = 0;
-            for (idx, &line) in inner_lines.iter().enumerate() {
-                let (content, marker) = strip_callout_marker(line, &mut auto_counter);
-                if let Some(n) = marker {
-                    callouts.push((idx, n));
-                }
-                lines.push(content);
+            let mut metadata = prelude.metadata;
+            if let Some(entries) = fenced_entries.as_ref() {
+                apply_fenced_code_metadata(&mut metadata, entries);
             }
-            Block::Listing(Listing {
-                lines,
-                callouts,
-                reftext: None,
-                metadata: prelude.metadata,
-            })
+            let lines = inner_lines
+                .iter()
+                .map(|line| (*line).to_owned())
+                .collect::<Vec<_>>();
+            Block::Listing(make_listing_from_lines(lines, None, metadata))
         }
         "literal" => Block::Literal(Listing {
             lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
@@ -1723,6 +1718,10 @@ fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str)> {
         return Some((trimmed, "open"));
     }
 
+    if parse_fenced_code_opening(line).is_some() {
+        return Some(("```", "listing"));
+    }
+
     let bytes = trimmed.as_bytes();
     if bytes.len() < 4 {
         return None;
@@ -1745,6 +1744,94 @@ fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str)> {
     };
 
     Some((trimmed, kind))
+}
+
+fn parse_fenced_code_opening(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    let rest = trimmed.strip_prefix("```")?;
+    if rest.starts_with('`') {
+        return None;
+    }
+
+    let attrs = rest.trim();
+    if attrs.is_empty() {
+        Some(Vec::new())
+    } else {
+        Some(split_attribute_list(attrs))
+    }
+}
+
+fn apply_fenced_code_metadata(metadata: &mut BlockMetadata, entries: &[String]) {
+    metadata.style = Some("source".into());
+    metadata.attributes.insert("style".into(), "source".into());
+    metadata
+        .attributes
+        .insert("cloaked-context".into(), "fenced_code".into());
+    if let Some(language) = entries.first().map(String::as_str).map(str::trim)
+        && !language.is_empty()
+    {
+        metadata.attributes.insert("$1".into(), language.to_owned());
+        metadata
+            .attributes
+            .insert("language".into(), language.to_owned());
+    }
+
+    for (index, entry) in entries.iter().enumerate().skip(1) {
+        let slot = index + 1;
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+
+        metadata
+            .attributes
+            .insert(format!("${slot}"), entry.to_owned());
+
+        if let Some((name, value)) = parse_named_attribute(entry) {
+            metadata.attributes.insert(name.clone(), value.clone());
+            if name == "opts" {
+                for option in value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|option| !option.is_empty())
+                {
+                    if !metadata.options.iter().any(|existing| existing == option) {
+                        metadata.options.push(option.to_owned());
+                    }
+                    metadata
+                        .attributes
+                        .entry(format!("{option}-option"))
+                        .or_default();
+                }
+            }
+            continue;
+        }
+
+        if let Some(option_entry) = entry.strip_prefix('%') {
+            for option in option_entry
+                .split('%')
+                .map(str::trim)
+                .filter(|option| !option.is_empty())
+            {
+                if !metadata.options.iter().any(|existing| existing == option) {
+                    metadata.options.push(option.to_owned());
+                }
+                metadata
+                    .attributes
+                    .entry(format!("{option}-option"))
+                    .or_default();
+            }
+            continue;
+        }
+
+        if !metadata.options.iter().any(|existing| existing == entry) {
+            metadata.options.push(entry.to_owned());
+        }
+        metadata
+            .attributes
+            .entry(format!("{entry}-option"))
+            .or_default();
+    }
 }
 
 fn parse_block_title(line: &str) -> Option<String> {
@@ -1892,6 +1979,41 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
         {
             metadata.attributes.insert("language".into(), entry.clone());
         }
+    }
+
+    normalize_source_listing_metadata(metadata);
+}
+
+fn normalize_source_listing_metadata(metadata: &mut BlockMetadata) {
+    if metadata.style.as_deref() != Some("source") {
+        return;
+    }
+
+    if metadata.attributes.contains_key("$3")
+        && !metadata.options.iter().any(|option| option == "linenums")
+    {
+        metadata.options.push("linenums".into());
+    }
+
+    let mut normalized_options = Vec::new();
+    for option in &metadata.options {
+        let option = if option == "numbered" {
+            "linenums"
+        } else {
+            option.as_str()
+        };
+        if !normalized_options.iter().any(|existing| existing == option) {
+            normalized_options.push(option.to_owned());
+        }
+    }
+    metadata.options = normalized_options;
+
+    if metadata.options.iter().any(|option| option == "linenums") {
+        metadata.attributes.remove("numbered-option");
+        metadata
+            .attributes
+            .entry("linenums-option".into())
+            .or_default();
     }
 }
 
@@ -3976,6 +4098,50 @@ mod tests {
     }
 
     #[test]
+    fn parses_fenced_code_blocks_as_source_listings() {
+        let document = parse_document("```rust,linenums\nfn main() {}\n```");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.lines, vec!["fn main() {}"]);
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
+            Some("rust")
+        );
+        assert!(
+            listing
+                .metadata
+                .options
+                .iter()
+                .any(|option| option == "linenums")
+        );
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("cloaked-context")
+                .map(String::as_str),
+            Some("fenced_code")
+        );
+    }
+
+    #[test]
+    fn does_not_recognize_fenced_code_blocks_with_more_than_three_backticks() {
+        let document = parse_document("````rust\nfn main() {}\n````");
+
+        let [Block::Paragraph(paragraph)] = document.blocks.as_slice() else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.plain_text(), "````rust\nfn main() {}\n````");
+    }
+
+    #[test]
     fn parses_tables_with_header_option() {
         let document = parse_document(
             ".Agents\n[%header,cols=\"30%,\"]\n|===\n|Name|Email\n|Peter|peter@example.com\n|Adam|adam@example.com\n|===",
@@ -4748,6 +4914,37 @@ mod tests {
                 .get("language")
                 .map(String::as_str),
             Some("rust")
+        );
+    }
+
+    #[test]
+    fn parses_source_blocks_with_positional_linenums_option() {
+        let document = parse_document("[source,rust,linenums]\n----\nfn main() {}\n----");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing block");
+        };
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
+            Some("rust")
+        );
+        assert!(listing
+            .metadata
+            .options
+            .iter()
+            .any(|option| option == "linenums"));
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("linenums-option")
+                .map(String::as_str),
+            Some("")
         );
     }
 

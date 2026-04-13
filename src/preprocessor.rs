@@ -88,6 +88,12 @@ fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth
 /// Returns the exact delimiter string if `line` opens a tracked delimited block.
 fn opening_block_delimiter(line: &str) -> Option<String> {
     let trimmed = line.trim();
+    if let Some(rest) = trimmed.strip_prefix("```")
+        && !rest.starts_with('`')
+    {
+        return Some("```".to_owned());
+    }
+
     let bytes = trimmed.as_bytes();
     if bytes.len() < 4 {
         return None;
@@ -244,6 +250,16 @@ mod tests {
         let out = preprocess(input, &dir);
         cleanup(&dir);
         assert_eq!(out, "------\ninclude::child.adoc[]\n------\n");
+    }
+
+    #[test]
+    fn does_not_expand_inside_fenced_code_block() {
+        let dir = make_test_dir("fenced_listing");
+        write(&dir, "child.adoc", "should not appear\n");
+        let input = "```rust\ninclude::child.adoc[]\n```\n";
+        let out = preprocess(input, &dir);
+        cleanup(&dir);
+        assert_eq!(out, "```rust\ninclude::child.adoc[]\n```\n");
     }
 
     #[test]

@@ -369,18 +369,41 @@ fn render_listing(html: &mut String, listing: &crate::prepare::ListingBlock) {
             .join("\n")
     };
 
-    if is_source {
+    html.push_str("<div class=\"content\">\n");
+    if let Some(start) = listing.line_number {
+        let numbered_lines = rendered_content.split('\n').collect::<Vec<_>>();
+        html.push_str("<table class=\"linenotable\">\n<tbody>\n");
+        for (offset, line) in numbered_lines.iter().enumerate() {
+            let number = start.saturating_add(offset as u32);
+            html.push_str("<tr>\n<td class=\"linenos\"><pre>");
+            html.push_str(&number.to_string());
+            html.push_str("</pre></td>\n<td class=\"code\">");
+            if is_source {
+                let l = lang.unwrap();
+                html.push_str(&format!(
+                    "<pre><code class=\"language-{l}\" data-lang=\"{l}\">{line}</code></pre>"
+                ));
+            } else {
+                html.push_str("<pre>");
+                html.push_str(line);
+                html.push_str("</pre>");
+            }
+            html.push_str("</td>\n</tr>\n");
+        }
+        html.push_str("</tbody>\n</table>\n");
+    } else if is_source {
         let l = lang.unwrap();
         html.push_str(&format!(
-            "<div class=\"content\">\n<pre class=\"highlight\"><code class=\"language-{l}\" data-lang=\"{l}\">"
+            "<pre class=\"highlight\"><code class=\"language-{l}\" data-lang=\"{l}\">"
         ));
         html.push_str(&rendered_content);
-        html.push_str("</code></pre>\n</div>\n</div>\n");
+        html.push_str("</code></pre>\n");
     } else {
-        html.push_str("<div class=\"content\">\n<pre>");
+        html.push_str("<pre>");
         html.push_str(&rendered_content);
-        html.push_str("</pre>\n</div>\n</div>\n");
+        html.push_str("</pre>\n");
     }
+    html.push_str("</div>\n</div>\n");
 }
 
 fn render_callout_list(html: &mut String, colist: &crate::prepare::CalloutListBlock) {
@@ -1559,6 +1582,29 @@ mod tests {
         assert!(html.contains("<p>inside sidebar</p>"));
         assert!(html.contains("<div class=\"exampleblock\">"));
         assert!(html.contains("<p>inside example</p>"));
+    }
+
+    #[test]
+    fn renders_fenced_code_blocks_with_language_class() {
+        let html = render_html(&crate::parser::parse_document("```rust\nfn main() {}\n```"));
+
+        assert!(html.contains("<div class=\"listingblock\">"));
+        assert!(html.contains("class=\"language-rust\""));
+        assert!(html.contains("data-lang=\"rust\""));
+        assert!(html.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn renders_numbered_listings_with_linenotable_markup() {
+        let html = render_html(&crate::parser::parse_document(
+            "[source,rust,start=7,%linenums]\n----\nfn main() {}\nprintln!(\"done\");\n----",
+        ));
+
+        assert!(html.contains("<table class=\"linenotable\">"));
+        assert!(html.contains("<tbody>"));
+        assert!(html.contains("<td class=\"linenos\"><pre>7</pre></td>"));
+        assert!(html.contains("<td class=\"linenos\"><pre>8</pre></td>"));
+        assert!(html.contains("<td class=\"code\"><pre><code class=\"language-rust\" data-lang=\"rust\">fn main() {}</code></pre></td>"));
     }
 
     #[test]

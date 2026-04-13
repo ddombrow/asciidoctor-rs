@@ -770,8 +770,9 @@ fn parse_delimited_block(
 ) -> Option<(AsgBlock, usize)> {
     let prelude = parse_block_prelude(lines, index, line_offset);
     let delimiter_index = index + prelude.consumed_lines;
-    let (delimiter, name, canonical_delimiter) =
-        parse_delimited_block_marker(lines.get(delimiter_index)?)?;
+    let delimiter_line = lines.get(delimiter_index)?;
+    let fenced_entries = parse_fenced_code_opening(delimiter_line);
+    let (delimiter, name, canonical_delimiter) = parse_delimited_block_marker(delimiter_line)?;
     if name == "comment" {
         return None;
     }
@@ -839,12 +840,22 @@ fn parse_delimited_block(
         ));
     }
 
+    let mut metadata = prelude.metadata.clone();
+    if let Some(entries) = fenced_entries.as_ref() {
+        apply_fenced_code_metadata(
+            &mut metadata,
+            start_line,
+            lines[delimiter_index].trim_end().len(),
+            entries,
+        );
+    }
+
     let mut block = AsgBlock {
         name,
         node_type: "block",
         id: prelude.id.clone(),
         title: prelude.title,
-        metadata: prelude.metadata,
+        metadata,
         level: None,
         form: Some("delimited"),
         delimiter: Some(canonical_delimiter),
@@ -1801,6 +1812,10 @@ fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str, &'sta
         return Some((trimmed, "open", "--"));
     }
 
+    if parse_fenced_code_opening(line).is_some() {
+        return Some(("```", "listing", "```"));
+    }
+
     let bytes = trimmed.as_bytes();
     if bytes.len() < 4 {
         return None;
@@ -1823,6 +1838,104 @@ fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str, &'sta
     };
 
     Some((trimmed, name, canonical_delimiter))
+}
+
+fn parse_fenced_code_opening(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    let rest = trimmed.strip_prefix("```")?;
+    if rest.starts_with('`') {
+        return None;
+    }
+
+    let attrs = rest.trim();
+    if attrs.is_empty() {
+        Some(Vec::new())
+    } else {
+        Some(split_attribute_list(attrs))
+    }
+}
+
+fn apply_fenced_code_metadata(
+    metadata: &mut Option<AsgBlockMetadata>,
+    line: usize,
+    end_col: usize,
+    entries: &[String],
+) {
+    let metadata = metadata.get_or_insert_with(|| AsgBlockMetadata {
+        attributes: BTreeMap::new(),
+        options: Vec::new(),
+        roles: Vec::new(),
+        location: [Position { line, col: 1 }, Position { line, col: end_col }],
+    });
+    metadata.attributes.insert("style".into(), "source".into());
+    metadata
+        .attributes
+        .insert("cloaked-context".into(), "fenced_code".into());
+    if let Some(language) = entries.first().map(String::as_str).map(str::trim)
+        && !language.is_empty()
+    {
+        metadata.attributes.insert("$1".into(), language.to_owned());
+        metadata
+            .attributes
+            .insert("language".into(), language.to_owned());
+    }
+
+    for (index, entry) in entries.iter().enumerate().skip(1) {
+        let slot = index + 1;
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+
+        metadata
+            .attributes
+            .insert(format!("${slot}"), entry.to_owned());
+
+        if let Some((name, value)) = parse_named_attribute(entry) {
+            metadata.attributes.insert(name.clone(), value.clone());
+            if name == "opts" {
+                for option in value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|option| !option.is_empty())
+                {
+                    if !metadata.options.iter().any(|existing| existing == option) {
+                        metadata.options.push(option.to_owned());
+                    }
+                    metadata
+                        .attributes
+                        .entry(format!("{option}-option"))
+                        .or_default();
+                }
+            }
+            continue;
+        }
+
+        if let Some(option_entry) = entry.strip_prefix('%') {
+            for option in option_entry
+                .split('%')
+                .map(str::trim)
+                .filter(|option| !option.is_empty())
+            {
+                if !metadata.options.iter().any(|existing| existing == option) {
+                    metadata.options.push(option.to_owned());
+                }
+                metadata
+                    .attributes
+                    .entry(format!("{option}-option"))
+                    .or_default();
+            }
+            continue;
+        }
+
+        if !metadata.options.iter().any(|existing| existing == entry) {
+            metadata.options.push(entry.to_owned());
+        }
+        metadata
+            .attributes
+            .entry(format!("{entry}-option"))
+            .or_default();
+    }
 }
 
 fn parse_table_delimiter(line: &str) -> Option<(&str, char, &'static str)> {
@@ -2141,6 +2254,39 @@ fn apply_attribute_list(
         {
             attributes.insert("language".into(), entry.clone());
         }
+    }
+
+    normalize_source_listing_metadata(attributes, options);
+}
+
+fn normalize_source_listing_metadata(
+    attributes: &mut BTreeMap<String, String>,
+    options: &mut Vec<String>,
+) {
+    if attributes.get("style").map(String::as_str) != Some("source") {
+        return;
+    }
+
+    if attributes.contains_key("$3") && !options.iter().any(|option| option == "linenums") {
+        options.push("linenums".into());
+    }
+
+    let mut normalized_options = Vec::new();
+    for option in options.iter() {
+        let option = if option == "numbered" {
+            "linenums"
+        } else {
+            option.as_str()
+        };
+        if !normalized_options.iter().any(|existing| existing == option) {
+            normalized_options.push(option.to_owned());
+        }
+    }
+    *options = normalized_options;
+
+    if options.iter().any(|option| option == "linenums") {
+        attributes.remove("numbered-option");
+        attributes.entry("linenums-option".into()).or_default();
     }
 }
 
@@ -3843,6 +3989,38 @@ mod tests {
     }
 
     #[test]
+    fn renders_tck_fenced_code_block() {
+        let document = parse_tck_document("```rust,linenums\nfn main() {}\n```");
+        let block = document.blocks.first().expect("listing block");
+
+        assert_eq!(block.name, "listing");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("```"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            metadata.attributes.get("language").map(String::as_str),
+            Some("rust")
+        );
+        assert!(metadata.options.iter().any(|option| option == "linenums"));
+        let AsgInline::Text(text) = &block.inlines.as_ref().expect("text")[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "fn main() {}");
+    }
+
+    #[test]
+    fn does_not_recognize_tck_fenced_code_with_more_than_three_backticks() {
+        let document = parse_tck_document("````rust\nfn main() {}\n````");
+        let block = document.blocks.first().expect("paragraph");
+
+        assert_eq!(block.name, "paragraph");
+    }
+
+    #[test]
     fn trims_outer_blank_lines_in_tck_delimited_content() {
         let document = parse_tck_document(
             "----\n\ncode\n\n----\n\n++++\n\n<span>ok</span>\n\n++++\n\n[verse]\n____\n\nline\n\n____",
@@ -4024,6 +4202,28 @@ mod tests {
         assert_eq!(
             metadata.attributes.get("language").map(String::as_str),
             Some("rust")
+        );
+    }
+
+    #[test]
+    fn renders_tck_source_blocks_with_positional_linenums_option() {
+        let document = parse_tck_document("[source,rust,linenums]\n----\nfn main() {}\n----");
+        let block = document.blocks.first().expect("listing block");
+
+        assert_eq!(block.name, "listing");
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            metadata.attributes.get("language").map(String::as_str),
+            Some("rust")
+        );
+        assert!(metadata.options.iter().any(|option| option == "linenums"));
+        assert_eq!(
+            metadata.attributes.get("linenums-option").map(String::as_str),
+            Some("")
         );
     }
 

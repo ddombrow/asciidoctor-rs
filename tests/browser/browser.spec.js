@@ -777,6 +777,42 @@ inside sidebar
   await expect(frame.locator(".sidebarblock > .content > .title")).toHaveText("Callout Box");
 });
 
+test("exports and renders fenced code blocks", async ({ page }) => {
+  const source = `= Sample Document
+
+\`\`\`rust,linenums
+fn main() {}
+println!("done");
+\`\`\``;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const listing = document.blocks[0].blocks[0];
+
+  expect(listing).toMatchObject({
+    type: "listing",
+    style: "source"
+  });
+  expect(listing.attributes).toMatchObject({
+    style: "source",
+    language: "rust",
+    "linenums-option": ""
+  });
+  expect(listing.lineNumber).toBe(1);
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".listingblock td.linenos")).toHaveCount(0);
+  await expect(
+    frame.locator(".listingblock .content pre.highlight code.language-rust[data-lang='rust']")
+  ).toContainText("fn main() {}");
+  await expect(
+    frame.locator(".listingblock .content pre.highlight code.language-rust[data-lang='rust']")
+  ).toContainText('println!("done");');
+});
+
 test("exports and renders admonition paragraphs", async ({ page }) => {
   const source = `= Sample Document
 

@@ -63,6 +63,7 @@ function splitTerminated(text) {
 
 function openingBlockDelimiter(line) {
   const trimmed = line.trim();
+  if (trimmed.startsWith("```") && !trimmed.startsWith("````")) return "```";
   if (trimmed === "--") return null;
   if (trimmed.length < 4) return null;
   const marker = trimmed[0];
