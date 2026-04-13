@@ -6,7 +6,7 @@ use serde::ser::{SerializeStruct, Serializer};
 
 use crate::ast::{Inline, InlineForm, InlineVariant};
 use crate::inline::parse_spanned_inlines;
-use crate::normalize::normalize_asciidoc;
+use crate::normalize::{normalize_asciidoc, trim_outer_blank_lines};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsgDocument {
@@ -784,6 +784,7 @@ fn parse_delimited_block(
     let end_line = line_offset + closing_index;
     let inner_lines = &lines[delimiter_index + 1..closing_index];
     let consumed = closing_index - index + 1;
+    let content = inner_lines.join("\n");
 
     if name == "example"
         && let Some(variant) = prelude
@@ -823,6 +824,10 @@ fn parse_delimited_block(
         ));
     }
 
+    if name == "open" {
+        return Some((parse_tck_open_block(prelude, canonical_delimiter, start_line, end_line, lines[closing_index], inner_lines, &content), consumed));
+    }
+
     let mut block = AsgBlock {
         name,
         node_type: "block",
@@ -851,23 +856,10 @@ fn parse_delimited_block(
 
     match name {
         "listing" | "literal" => {
-            let content = inner_lines.join("\n");
-            if !content.is_empty() {
-                let start = Position {
-                    line: start_line + 1,
-                    col: 1,
-                };
-                let end = Position {
-                    line: end_line - 1,
-                    col: inner_lines.last().map(|line| line.len()).unwrap_or(1),
-                };
-                block.inlines = Some(vec![AsgInline::Text(InlineText {
-                    name: "text",
-                    node_type: "string",
-                    value: content,
-                    location: [start, end],
-                })]);
-            }
+            block.inlines = text_inlines_for_delimited_content(&content, inner_lines, start_line, end_line);
+        }
+        "passthrough" => {
+            block.inlines = text_inlines_for_delimited_content(&content, inner_lines, start_line, end_line);
         }
         "example" | "sidebar" | "open" => {
             let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
@@ -881,23 +873,8 @@ fn parse_delimited_block(
                 .is_some_and(|s| s.eq_ignore_ascii_case("verse"));
             if is_verse {
                 block.name = "verse";
-                let content = inner_lines.join("\n");
-                if !content.is_empty() {
-                    let start = Position {
-                        line: start_line + 1,
-                        col: 1,
-                    };
-                    let end = Position {
-                        line: end_line - 1,
-                        col: inner_lines.last().map(|line| line.len()).unwrap_or(1),
-                    };
-                    block.inlines = Some(vec![AsgInline::Text(InlineText {
-                        name: "text",
-                        node_type: "string",
-                        value: content,
-                        location: [start, end],
-                    })]);
-                }
+                block.inlines =
+                    text_inlines_for_delimited_content(&content, inner_lines, start_line, end_line);
             } else {
                 let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
                 block.blocks = Some(children);
@@ -907,6 +884,129 @@ fn parse_delimited_block(
     }
 
     Some((block, consumed))
+}
+
+fn parse_tck_open_block(
+    prelude: ParsedBlockPrelude,
+    canonical_delimiter: &'static str,
+    start_line: usize,
+    end_line: usize,
+    closing_line: &str,
+    inner_lines: &[&str],
+    content: &str,
+) -> AsgBlock {
+    let style = prelude
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.attributes.get("style"))
+        .cloned()
+        .unwrap_or_default();
+    let end = Position {
+        line: end_line,
+        col: closing_line.trim_end().len(),
+    };
+
+    if let Some(variant) = admonition_variant_from_style(&style) {
+        let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
+        return AsgBlock {
+            name: "admonition",
+            node_type: "block",
+            id: prelude.id,
+            title: prelude.title,
+            metadata: prelude.metadata,
+            level: None,
+            form: Some("delimited"),
+            delimiter: Some(canonical_delimiter),
+            inlines: None,
+            blocks: Some(children),
+            variant: Some(variant),
+            marker: None,
+            items: vec![],
+            location: [Position { line: start_line, col: 1 }, end],
+        };
+    }
+
+    let mut block = AsgBlock {
+        name: "open",
+        node_type: "block",
+        id: prelude.id,
+        title: prelude.title,
+        metadata: prelude.metadata,
+        level: None,
+        form: Some("delimited"),
+        delimiter: Some(canonical_delimiter),
+        inlines: None,
+        blocks: None,
+        variant: None,
+        marker: None,
+        items: vec![],
+        location: [Position { line: start_line, col: 1 }, end],
+    };
+
+    let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
+    match style.as_str() {
+        "sidebar" => {
+            block.name = "sidebar";
+            block.blocks = Some(children);
+        }
+        "example" => {
+            block.name = "example";
+            block.blocks = Some(children);
+        }
+        "quote" => {
+            block.name = "quote";
+            block.blocks = Some(children);
+        }
+        "verse" => {
+            block.name = "verse";
+            block.inlines = text_inlines_for_delimited_content(content, inner_lines, start_line, end_line);
+        }
+        _ => {
+            block.blocks = Some(children);
+        }
+    }
+    block
+}
+
+fn text_inlines_for_delimited_content(
+    content: &str,
+    inner_lines: &[&str],
+    start_line: usize,
+    _end_line: usize,
+) -> Option<Vec<AsgInline>> {
+    let (start_offset, end_offset) = trimmed_delimited_content_offsets(inner_lines);
+    if start_offset == end_offset {
+        return None;
+    }
+
+    let trimmed = trim_outer_blank_lines(content);
+    let start = Position {
+        line: start_line + 1 + start_offset,
+        col: 1,
+    };
+    let end = Position {
+        line: start_line + end_offset,
+        col: inner_lines[end_offset - 1].len(),
+    };
+    Some(vec![AsgInline::Text(InlineText {
+        name: "text",
+        node_type: "string",
+        value: trimmed,
+        location: [start, end],
+    })])
+}
+
+fn trimmed_delimited_content_offsets(lines: &[&str]) -> (usize, usize) {
+    let start = lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .unwrap_or(lines.len());
+    let end = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    (start, end)
 }
 
 fn parse_table(lines: &[&str], index: usize, line_offset: usize) -> Option<(AsgBlock, usize)> {
@@ -1662,6 +1762,7 @@ fn parse_delimited_block_marker(line: &str) -> Option<(&str, &'static str, &'sta
         b'-' => ("listing", "----"),
         b'=' => ("example", "===="),
         b'*' => ("sidebar", "****"),
+        b'+' => ("passthrough", "++++"),
         b'_' => ("quote", "____"),
         b'.' => ("literal", "...."),
         b'/' => ("comment", "////"),
@@ -3581,6 +3682,54 @@ mod tests {
     }
 
     #[test]
+    fn trims_outer_blank_lines_in_tck_delimited_content() {
+        let document = parse_tck_document(
+            "----\n\ncode\n\n----\n\n++++\n\n<span>ok</span>\n\n++++\n\n[verse]\n____\n\nline\n\n____",
+        );
+
+        let listing = document.blocks.first().expect("listing block");
+        let AsgInline::Text(text) = &listing.inlines.as_ref().expect("text")[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "code");
+        assert_eq!(text.location[0].line, 3);
+        assert_eq!(text.location[1].line, 3);
+
+        let passthrough = document.blocks.get(1).expect("passthrough block");
+        let AsgInline::Text(text) = &passthrough.inlines.as_ref().expect("text")[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "<span>ok</span>");
+        assert_eq!(text.location[0].line, 9);
+        assert_eq!(text.location[1].line, 9);
+
+        let verse = document.blocks.get(2).expect("verse block");
+        let AsgInline::Text(text) = &verse.inlines.as_ref().expect("text")[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "line");
+        assert_eq!(text.location[0].line, 16);
+        assert_eq!(text.location[1].line, 16);
+    }
+
+    #[test]
+    fn renders_tck_delimited_passthrough_block() {
+        let document = parse_tck_document("++++\n<span>ok</span>\n++++");
+        let block = document.blocks.first().expect("passthrough block");
+
+        assert_eq!(block.name, "passthrough");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("++++"));
+        let Some(inlines) = &block.inlines else {
+            panic!("expected passthrough text");
+        };
+        let AsgInline::Text(text) = &inlines[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "<span>ok</span>");
+    }
+
+    #[test]
     fn renders_tck_delimited_sidebar_block() {
         let document = parse_tck_document("****\n* one\n* two\n****");
         let block = document.blocks.first().expect("sidebar block");
@@ -3713,6 +3862,57 @@ mod tests {
             .and_then(|blocks| blocks.first())
             .expect("inner example");
         assert_eq!(inner.name, "example");
+    }
+
+    #[test]
+    fn renders_tck_styled_open_block_as_sidebar() {
+        let document = parse_tck_document("[sidebar]\n--\ninside\n--");
+        let block = document.blocks.first().expect("sidebar block");
+
+        assert_eq!(block.name, "sidebar");
+        assert_eq!(block.delimiter, Some("--"));
+        assert!(block.blocks.is_some());
+    }
+
+    #[test]
+    fn renders_tck_styled_open_block_as_admonition() {
+        let document = parse_tck_document("[NOTE]\n--\nRemember this.\n--");
+        let block = document.blocks.first().expect("admonition block");
+
+        assert_eq!(block.name, "admonition");
+        assert_eq!(block.variant, Some("note"));
+        assert_eq!(block.delimiter, Some("--"));
+    }
+
+    #[test]
+    fn renders_tck_styled_open_block_as_quote() {
+        let document =
+            parse_tck_document("[quote, Abraham Lincoln]\n--\nFour score.\n--");
+        let block = document.blocks.first().expect("quote block");
+
+        assert_eq!(block.name, "quote");
+        assert_eq!(block.delimiter, Some("--"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("$2").map(String::as_str),
+            Some("Abraham Lincoln")
+        );
+        assert!(block.blocks.is_some());
+    }
+
+    #[test]
+    fn renders_tck_styled_open_block_as_verse() {
+        let document =
+            parse_tck_document("[verse, Carl Sandburg, Fog]\n--\nThe fog comes\n--");
+        let block = document.blocks.first().expect("verse block");
+
+        assert_eq!(block.name, "verse");
+        assert_eq!(block.delimiter, Some("--"));
+        let inlines = block.inlines.as_ref().expect("text");
+        let AsgInline::Text(text) = &inlines[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "The fog comes");
     }
 
     #[test]

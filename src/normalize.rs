@@ -17,6 +17,25 @@ pub fn has_asciidoc_extension(path: &Path) -> bool {
         .is_some_and(|ext| ASCIIDOC_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
+pub fn trim_outer_blank_lines(content: &str) -> String {
+    if content.is_empty() {
+        return String::new();
+    }
+
+    let lines = content.split('\n').collect::<Vec<_>>();
+    let start = lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .unwrap_or(lines.len());
+    let end = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+
+    lines[start..end].join("\n")
+}
+
 fn normalize_text(input: &str, strip_trailing_spaces: bool) -> Cow<'_, str> {
     let newline_normalized = normalize_line_endings(input);
     if !strip_trailing_spaces {
@@ -49,7 +68,9 @@ fn normalize_line_endings(input: &str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_asciidoc_extension, normalize_asciidoc, normalize_include_text};
+    use super::{
+        has_asciidoc_extension, normalize_asciidoc, normalize_include_text, trim_outer_blank_lines,
+    };
     use std::path::Path;
 
     #[test]
@@ -70,5 +91,11 @@ mod tests {
         assert!(has_asciidoc_extension(Path::new("doc.ASC")));
         assert!(has_asciidoc_extension(Path::new("doc.txt")));
         assert!(!has_asciidoc_extension(Path::new("data.csv")));
+    }
+
+    #[test]
+    fn trims_outer_blank_lines() {
+        assert_eq!(trim_outer_blank_lines("\n\nalpha\n\nbeta\n\n"), "alpha\n\nbeta");
+        assert_eq!(trim_outer_blank_lines("\n \n\t\n"), "");
     }
 }

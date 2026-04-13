@@ -9,6 +9,7 @@ use crate::ast::{
     QuoteBlock as AstQuoteBlock, TableBlock as AstTableBlock, TableCell as AstTableCell,
     TableRow as AstTableRow, UnorderedList,
 };
+use crate::normalize::trim_outer_blank_lines;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -740,7 +741,7 @@ fn prepare_blocks(
             }
             Block::Passthrough(content) => {
                 let passthrough = PreparedBlock::Passthrough(PassthroughBlock {
-                    content: content.clone(),
+                    content: trim_outer_blank_lines(content),
                 });
                 if wrap_document_preamble && !seen_section {
                     preamble_blocks.push(passthrough);
@@ -931,10 +932,13 @@ fn prepare_description_list(list: &AstDescriptionList) -> DescriptionListBlock {
 }
 
 fn prepare_listing(listing: &AstListing) -> ListingBlock {
+    let (trimmed_start, trimmed_end) = trimmed_content_bounds(
+        &listing.lines.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
     ListingBlock {
         id: listing.metadata.id.clone(),
         reftext: listing.reftext.clone(),
-        content: listing.lines.join("\n"),
+        content: listing.lines[trimmed_start..trimmed_end].join("\n"),
         attributes: listing.metadata.attributes.clone(),
         content_model: Some(ContentModel::Simple),
         line_number: None,
@@ -942,7 +946,14 @@ fn prepare_listing(listing: &AstListing) -> ListingBlock {
         role: listing.metadata.role.clone(),
         level: 0,
         title: listing.metadata.title.clone(),
-        callout_lines: listing.callouts.clone(),
+        callout_lines: listing
+            .callouts
+            .iter()
+            .filter_map(|(line, number)| {
+                (*line >= trimmed_start && *line < trimmed_end)
+                    .then_some((line - trimmed_start, *number))
+            })
+            .collect(),
     }
 }
 
@@ -1011,7 +1022,7 @@ fn prepare_quote_block(block: &AstQuoteBlock) -> QuoteBlock {
         id: block.metadata.id.clone(),
         reftext: block.reftext.clone(),
         blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
-        content: block.content.clone().unwrap_or_default(),
+        content: trim_outer_blank_lines(block.content.as_deref().unwrap_or_default()),
         attributes: block.metadata.attributes.clone(),
         content_model: if block.is_verse {
             Some(ContentModel::Simple)
@@ -1027,6 +1038,19 @@ fn prepare_quote_block(block: &AstQuoteBlock) -> QuoteBlock {
         citetitle: block.citetitle.clone(),
         is_verse: block.is_verse,
     }
+}
+
+fn trimmed_content_bounds(lines: &[&str]) -> (usize, usize) {
+    let start = lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .unwrap_or(lines.len());
+    let end = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    (start, end)
 }
 
 fn prepare_inlines(inlines: &[Inline]) -> Vec<PreparedInline> {
@@ -3189,6 +3213,38 @@ mod tests {
             listing.attributes.get("title").map(String::as_str),
             Some("Exhibit A")
         );
+    }
+
+    #[test]
+    fn trims_outer_blank_lines_in_prepared_delimited_content() {
+        let document = parse_document(
+            "----\n\ncode\n\n----\n\n....\n\nliteral\n\n....\n\n[verse]\n____\n\nline\n\n____\n\n++++\n\n<span>ok</span>\n\n++++",
+        );
+        let prepared = prepare_document(&document);
+        let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
+            panic!("expected preamble");
+        };
+
+        let PreparedBlock::Listing(listing) = &preamble.blocks[0] else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.content, "code");
+
+        let PreparedBlock::Literal(literal) = &preamble.blocks[1] else {
+            panic!("expected literal");
+        };
+        assert_eq!(literal.content, "literal");
+
+        let PreparedBlock::Quote(verse) = &preamble.blocks[2] else {
+            panic!("expected verse");
+        };
+        assert!(verse.is_verse);
+        assert_eq!(verse.content, "line");
+
+        let PreparedBlock::Passthrough(passthrough) = &preamble.blocks[3] else {
+            panic!("expected passthrough");
+        };
+        assert_eq!(passthrough.content, "<span>ok</span>");
     }
 
     #[test]
