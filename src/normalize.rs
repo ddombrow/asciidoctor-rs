@@ -43,10 +43,7 @@ fn normalize_text(input: &str, strip_trailing_spaces: bool) -> Cow<'_, str> {
     }
 
     let text = newline_normalized.as_ref();
-    if !text
-        .split('\n')
-        .any(|line| line.ends_with([' ', '\t']))
-    {
+    if !text.split('\n').any(|line| line.ends_with([' ', '\t'])) {
         return newline_normalized;
     }
 
@@ -95,7 +92,10 @@ mod tests {
 
     #[test]
     fn trims_outer_blank_lines() {
-        assert_eq!(trim_outer_blank_lines("\n\nalpha\n\nbeta\n\n"), "alpha\n\nbeta");
+        assert_eq!(
+            trim_outer_blank_lines("\n\nalpha\n\nbeta\n\n"),
+            "alpha\n\nbeta"
+        );
         assert_eq!(trim_outer_blank_lines("\n \n\t\n"), "");
     }
 }

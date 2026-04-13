@@ -63,9 +63,7 @@ fn expand_lines(input: &str, base_dir: &Path, seen: &mut HashSet<PathBuf>, depth
                     } else {
                         normalized.into_owned()
                     };
-                    if include_is_asciidoc
-                        && let Some(offset) = attrs.leveloffset
-                    {
+                    if include_is_asciidoc && let Some(offset) = attrs.leveloffset {
                         expanded = apply_leveloffset(&expanded, offset);
                     }
                     out.push_str(&expanded);

@@ -932,9 +932,8 @@ fn prepare_description_list(list: &AstDescriptionList) -> DescriptionListBlock {
 }
 
 fn prepare_listing(listing: &AstListing) -> ListingBlock {
-    let (trimmed_start, trimmed_end) = trimmed_content_bounds(
-        &listing.lines.iter().map(String::as_str).collect::<Vec<_>>(),
-    );
+    let (trimmed_start, trimmed_end) =
+        trimmed_content_bounds(&listing.lines.iter().map(String::as_str).collect::<Vec<_>>());
     ListingBlock {
         id: listing.metadata.id.clone(),
         reftext: listing.reftext.clone(),

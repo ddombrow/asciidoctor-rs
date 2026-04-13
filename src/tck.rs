@@ -571,7 +571,7 @@ fn parse_blocks(
         }
 
         if let Some((mut block, consumed_lines)) =
-            parse_styled_admonition_paragraph(lines, index, line_offset)
+            parse_styled_paragraph_block(lines, index, line_offset)
         {
             flush_paragraph(
                 &mut blocks,
@@ -825,7 +825,18 @@ fn parse_delimited_block(
     }
 
     if name == "open" {
-        return Some((parse_tck_open_block(prelude, canonical_delimiter, start_line, end_line, lines[closing_index], inner_lines, &content), consumed));
+        return Some((
+            parse_tck_open_block(
+                prelude,
+                canonical_delimiter,
+                start_line,
+                end_line,
+                lines[closing_index],
+                inner_lines,
+                &content,
+            ),
+            consumed,
+        ));
     }
 
     let mut block = AsgBlock {
@@ -856,10 +867,12 @@ fn parse_delimited_block(
 
     match name {
         "listing" | "literal" => {
-            block.inlines = text_inlines_for_delimited_content(&content, inner_lines, start_line, end_line);
+            block.inlines =
+                text_inlines_for_delimited_content(&content, inner_lines, start_line, end_line);
         }
         "passthrough" => {
-            block.inlines = text_inlines_for_delimited_content(&content, inner_lines, start_line, end_line);
+            block.inlines =
+                text_inlines_for_delimited_content(&content, inner_lines, start_line, end_line);
         }
         "example" | "sidebar" | "open" => {
             let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
@@ -922,7 +935,13 @@ fn parse_tck_open_block(
             variant: Some(variant),
             marker: None,
             items: vec![],
-            location: [Position { line: start_line, col: 1 }, end],
+            location: [
+                Position {
+                    line: start_line,
+                    col: 1,
+                },
+                end,
+            ],
         };
     }
 
@@ -940,7 +959,13 @@ fn parse_tck_open_block(
         variant: None,
         marker: None,
         items: vec![],
-        location: [Position { line: start_line, col: 1 }, end],
+        location: [
+            Position {
+                line: start_line,
+                col: 1,
+            },
+            end,
+        ],
     };
 
     let (children, _) = parse_blocks(inner_lines, start_line + 1, None, None);
@@ -959,7 +984,8 @@ fn parse_tck_open_block(
         }
         "verse" => {
             block.name = "verse";
-            block.inlines = text_inlines_for_delimited_content(content, inner_lines, start_line, end_line);
+            block.inlines =
+                text_inlines_for_delimited_content(content, inner_lines, start_line, end_line);
         }
         _ => {
             block.blocks = Some(children);
@@ -1022,12 +1048,21 @@ fn parse_table(lines: &[&str], index: usize, line_offset: usize) -> Option<(AsgB
     let start_line = line_offset + delimiter_index;
 
     let (row_groups, consumed) = match format {
-        TckTableFormat::Psv => {
-            parse_psv_table_rows(lines, delimiter_index, start_line, delimiter, separator, expected_columns)?
-        }
-        TckTableFormat::Csv | TckTableFormat::Dsv => {
-            parse_separated_value_table_rows(lines, delimiter_index, start_line, delimiter, separator)?
-        }
+        TckTableFormat::Psv => parse_psv_table_rows(
+            lines,
+            delimiter_index,
+            start_line,
+            delimiter,
+            separator,
+            expected_columns,
+        )?,
+        TckTableFormat::Csv | TckTableFormat::Dsv => parse_separated_value_table_rows(
+            lines,
+            delimiter_index,
+            start_line,
+            delimiter,
+            separator,
+        )?,
     };
 
     let closing_index = delimiter_index + consumed - 1;
@@ -1072,7 +1107,11 @@ fn parse_table(lines: &[&str], index: usize, line_offset: usize) -> Option<(AsgB
     ))
 }
 
-fn parse_block_image(lines: &[&str], index: usize, line_offset: usize) -> Option<(AsgBlock, usize)> {
+fn parse_block_image(
+    lines: &[&str],
+    index: usize,
+    line_offset: usize,
+) -> Option<(AsgBlock, usize)> {
     let prelude = parse_block_prelude(lines, index, line_offset);
     let image_index = index + prelude.consumed_lines;
     let line = *lines.get(image_index)?;
@@ -1132,7 +1171,13 @@ fn parse_block_image(lines: &[&str], index: usize, line_offset: usize) -> Option
             variant: None,
             marker: None,
             items: vec![],
-            location: [Position { line: line_no, col: 1 }, end],
+            location: [
+                Position {
+                    line: line_no,
+                    col: 1,
+                },
+                end,
+            ],
         },
         prelude.consumed_lines + 1,
     ))
@@ -1289,7 +1334,11 @@ fn parse_psv_table_rows(
             let had_cells_in_group = !current_group.is_empty();
             if let Some(cell) = current_cell.take() {
                 current_group.push(cell);
-                maybe_finish_tck_table_row_group(&mut row_groups, &mut current_group, expected_columns);
+                maybe_finish_tck_table_row_group(
+                    &mut row_groups,
+                    &mut current_group,
+                    expected_columns,
+                );
                 if expected_columns.is_none() && had_cells_in_group && !current_group.is_empty() {
                     row_groups.push(std::mem::take(&mut current_group));
                 }
@@ -1302,7 +1351,11 @@ fn parse_psv_table_rows(
             let last = iter.next_back()?;
             for cell in iter {
                 current_group.push(cell);
-                maybe_finish_tck_table_row_group(&mut row_groups, &mut current_group, expected_columns);
+                maybe_finish_tck_table_row_group(
+                    &mut row_groups,
+                    &mut current_group,
+                    expected_columns,
+                );
             }
             current_cell = Some(last);
         } else {
@@ -2197,7 +2250,7 @@ fn parse_admonition_paragraph(
     ))
 }
 
-fn parse_styled_admonition_paragraph(
+fn parse_styled_paragraph_block(
     lines: &[&str],
     index: usize,
     line_offset: usize,
@@ -2210,7 +2263,7 @@ fn parse_styled_admonition_paragraph(
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.attributes.get("style"))
-        .and_then(|style| admonition_variant_from_style(style))?;
+        .cloned()?;
     let paragraph_index = index + prelude.consumed_lines;
     let line = *lines.get(paragraph_index)?;
     if line.trim().is_empty() || is_block_delimiter(line) {
@@ -2264,9 +2317,10 @@ fn parse_styled_admonition_paragraph(
         ],
     };
 
-    Some((
-        AsgBlock {
-            name: "admonition",
+    let style = variant;
+    let block = match style.as_str() {
+        "listing" | "source" => AsgBlock {
+            name: "listing",
             node_type: "block",
             id: prelude.id.clone(),
             title: prelude.title,
@@ -2274,9 +2328,23 @@ fn parse_styled_admonition_paragraph(
             level: None,
             form: Some("paragraph"),
             delimiter: None,
-            inlines: None,
-            blocks: Some(vec![paragraph]),
-            variant: Some(variant),
+            inlines: Some(vec![AsgInline::Text(InlineText {
+                name: "text",
+                node_type: "string",
+                value,
+                location: [
+                    Position {
+                        line: start_line,
+                        col: 1,
+                    },
+                    Position {
+                        line: end_line,
+                        col: end_col,
+                    },
+                ],
+            })]),
+            blocks: None,
+            variant: None,
             marker: None,
             items: vec![],
             location: [
@@ -2290,8 +2358,101 @@ fn parse_styled_admonition_paragraph(
                 },
             ],
         },
-        consumed,
-    ))
+        "quote" => AsgBlock {
+            name: "quote",
+            node_type: "block",
+            id: prelude.id.clone(),
+            title: prelude.title,
+            metadata: prelude.metadata,
+            level: None,
+            form: Some("paragraph"),
+            delimiter: None,
+            inlines: None,
+            blocks: Some(vec![paragraph]),
+            variant: None,
+            marker: None,
+            items: vec![],
+            location: [
+                Position {
+                    line: start_line,
+                    col: 1,
+                },
+                Position {
+                    line: end_line,
+                    col: end_col,
+                },
+            ],
+        },
+        "pass" => AsgBlock {
+            name: "passthrough",
+            node_type: "block",
+            id: prelude.id.clone(),
+            title: prelude.title,
+            metadata: prelude.metadata,
+            level: None,
+            form: Some("paragraph"),
+            delimiter: None,
+            inlines: Some(vec![AsgInline::Text(InlineText {
+                name: "text",
+                node_type: "string",
+                value,
+                location: [
+                    Position {
+                        line: start_line,
+                        col: 1,
+                    },
+                    Position {
+                        line: end_line,
+                        col: end_col,
+                    },
+                ],
+            })]),
+            blocks: None,
+            variant: None,
+            marker: None,
+            items: vec![],
+            location: [
+                Position {
+                    line: start_line,
+                    col: 1,
+                },
+                Position {
+                    line: end_line,
+                    col: end_col,
+                },
+            ],
+        },
+        _ => {
+            let admonition_variant = admonition_variant_from_style(&style)?;
+            AsgBlock {
+                name: "admonition",
+                node_type: "block",
+                id: prelude.id.clone(),
+                title: prelude.title,
+                metadata: prelude.metadata,
+                level: None,
+                form: Some("paragraph"),
+                delimiter: None,
+                inlines: None,
+                blocks: Some(vec![paragraph]),
+                variant: Some(admonition_variant),
+                marker: None,
+                items: vec![],
+                location: [
+                    Position {
+                        line: start_line,
+                        col: 1,
+                    },
+                    Position {
+                        line: end_line,
+                        col: end_col,
+                    },
+                ],
+            }
+        }
+    };
+
+    Some((block, consumed))
 }
 
 fn parse_admonition_prefix(line: &str) -> Option<(&'static str, usize, &str)> {
@@ -3831,6 +3992,80 @@ mod tests {
     }
 
     #[test]
+    fn renders_tck_listing_styled_paragraph() {
+        let document = parse_tck_document("[listing]\nputs 'hello'");
+        let block = document.blocks.first().expect("listing block");
+
+        assert_eq!(block.name, "listing");
+        assert_eq!(block.form, Some("paragraph"));
+        let text = block
+            .inlines
+            .as_ref()
+            .and_then(|inlines| inlines.first())
+            .expect("listing text");
+        let AsgInline::Text(text) = text else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "puts 'hello'");
+    }
+
+    #[test]
+    fn renders_tck_source_styled_paragraph() {
+        let document = parse_tck_document("[source,rust]\nfn main() {}");
+        let block = document.blocks.first().expect("listing block");
+
+        assert_eq!(block.name, "listing");
+        assert_eq!(block.form, Some("paragraph"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            metadata.attributes.get("language").map(String::as_str),
+            Some("rust")
+        );
+    }
+
+    #[test]
+    fn renders_tck_quote_styled_paragraph() {
+        let document = parse_tck_document("[quote, Abraham Lincoln]\nFour score.");
+        let block = document.blocks.first().expect("quote block");
+
+        assert_eq!(block.name, "quote");
+        assert_eq!(block.form, Some("paragraph"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("$2").map(String::as_str),
+            Some("Abraham Lincoln")
+        );
+        let paragraph = block
+            .blocks
+            .as_ref()
+            .and_then(|blocks| blocks.first())
+            .expect("paragraph block");
+        assert_eq!(paragraph.name, "paragraph");
+    }
+
+    #[test]
+    fn renders_tck_pass_styled_paragraph() {
+        let document = parse_tck_document("[pass]\n<span>ok</span>");
+        let block = document.blocks.first().expect("passthrough block");
+
+        assert_eq!(block.name, "passthrough");
+        assert_eq!(block.form, Some("paragraph"));
+        let text = block
+            .inlines
+            .as_ref()
+            .and_then(|inlines| inlines.first())
+            .expect("passthrough text");
+        let AsgInline::Text(text) = text else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "<span>ok</span>");
+    }
+
+    #[test]
     fn renders_tck_styled_delimited_admonition() {
         let document = parse_tck_document("[TIP]\n====\nRemember the milk.\n====");
         let block = document.blocks.first().expect("admonition block");
@@ -3886,8 +4121,7 @@ mod tests {
 
     #[test]
     fn renders_tck_styled_open_block_as_quote() {
-        let document =
-            parse_tck_document("[quote, Abraham Lincoln]\n--\nFour score.\n--");
+        let document = parse_tck_document("[quote, Abraham Lincoln]\n--\nFour score.\n--");
         let block = document.blocks.first().expect("quote block");
 
         assert_eq!(block.name, "quote");
@@ -3902,8 +4136,7 @@ mod tests {
 
     #[test]
     fn renders_tck_styled_open_block_as_verse() {
-        let document =
-            parse_tck_document("[verse, Carl Sandburg, Fog]\n--\nThe fog comes\n--");
+        let document = parse_tck_document("[verse, Carl Sandburg, Fog]\n--\nThe fog comes\n--");
         let block = document.blocks.first().expect("verse block");
 
         assert_eq!(block.name, "verse");
@@ -3968,7 +4201,9 @@ mod tests {
 
     #[test]
     fn renders_tck_table_with_metadata() {
-        let document = parse_tck_document(".Roster\n[%header,cols=\"1,1\"]\n|===\n|Name |Role\n|Ada |Author\n|===");
+        let document = parse_tck_document(
+            ".Roster\n[%header,cols=\"1,1\"]\n|===\n|Name |Role\n|Ada |Author\n|===",
+        );
         let block = document.blocks.first().expect("table block");
 
         assert_eq!(
@@ -3984,7 +4219,10 @@ mod tests {
             metadata.attributes.get("title").map(String::as_str),
             Some("Roster")
         );
-        assert_eq!(metadata.attributes.get("cols").map(String::as_str), Some("1,1"));
+        assert_eq!(
+            metadata.attributes.get("cols").map(String::as_str),
+            Some("1,1")
+        );
         let rows = block.blocks.as_ref().expect("rows");
         assert_eq!(rows[0].variant, Some("header"));
     }
@@ -4027,7 +4265,8 @@ mod tests {
 
     #[test]
     fn renders_tck_custom_separator_table() {
-        let document = parse_tck_document("[separator=!,cols=\"1,1\"]\n|===\n!left!right\n!up!down\n|===");
+        let document =
+            parse_tck_document("[separator=!,cols=\"1,1\"]\n|===\n!left!right\n!up!down\n|===");
         let block = document.blocks.first().expect("table block");
 
         assert_eq!(block.name, "table");
@@ -4048,20 +4287,31 @@ mod tests {
             metadata.attributes.get("target").map(String::as_str),
             Some("images/tiger.png")
         );
-        assert_eq!(metadata.attributes.get("alt").map(String::as_str), Some("Tiger"));
-        assert_eq!(metadata.attributes.get("width").map(String::as_str), Some("200"));
-        assert_eq!(metadata.attributes.get("height").map(String::as_str), Some("300"));
+        assert_eq!(
+            metadata.attributes.get("alt").map(String::as_str),
+            Some("Tiger")
+        );
+        assert_eq!(
+            metadata.attributes.get("width").map(String::as_str),
+            Some("200")
+        );
+        assert_eq!(
+            metadata.attributes.get("height").map(String::as_str),
+            Some("300")
+        );
     }
 
     #[test]
     fn renders_tck_block_image_with_prelude_metadata() {
-        let document = parse_tck_document(".The AsciiDoc Tiger\n[#tiger,.hero]\nimage::tiger.png[]");
+        let document =
+            parse_tck_document(".The AsciiDoc Tiger\n[#tiger,.hero]\nimage::tiger.png[]");
         let block = document.blocks.first().expect("image block");
 
         assert_eq!(block.name, "image");
         assert_eq!(block.id.as_deref(), Some("tiger"));
         assert_eq!(
-            block.title
+            block
+                .title
                 .as_ref()
                 .and_then(|title| title.first())
                 .map(|text| text.value.as_str()),
@@ -4072,12 +4322,18 @@ mod tests {
             metadata.attributes.get("title").map(String::as_str),
             Some("The AsciiDoc Tiger")
         );
-        assert_eq!(metadata.attributes.get("id").map(String::as_str), Some("tiger"));
+        assert_eq!(
+            metadata.attributes.get("id").map(String::as_str),
+            Some("tiger")
+        );
         assert_eq!(
             metadata.attributes.get("role").map(String::as_str),
             Some("hero")
         );
-        assert_eq!(metadata.attributes.get("alt").map(String::as_str), Some("tiger"));
+        assert_eq!(
+            metadata.attributes.get("alt").map(String::as_str),
+            Some("tiger")
+        );
     }
 
     #[test]

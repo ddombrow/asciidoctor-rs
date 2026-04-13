@@ -773,7 +773,9 @@ fn parse_table(
     let format = table_format(metadata, delimiter_char);
     let separator = table_separator(metadata, format, delimiter_char)?;
     let (row_groups, consumed) = match format {
-        TableFormat::Psv => parse_psv_table_rows(lines, index, delimiter, separator, expected_columns)?,
+        TableFormat::Psv => {
+            parse_psv_table_rows(lines, index, delimiter, separator, expected_columns)?
+        }
         TableFormat::Csv | TableFormat::Dsv => {
             parse_separated_value_table_rows(lines, index, delimiter, separator)?
         }
@@ -2346,6 +2348,38 @@ fn make_block_from_paragraph(
         });
     }
 
+    if matches!(metadata.style.as_deref(), Some("listing" | "source")) {
+        if metadata.id.is_none() {
+            metadata.id = id;
+        }
+        return Block::Listing(make_listing_from_lines(lines, reftext, metadata));
+    }
+
+    if metadata.style.as_deref() == Some("quote") {
+        if metadata.id.is_none() {
+            metadata.id = id;
+        }
+        return Block::Quote(QuoteBlock {
+            blocks: vec![Block::Paragraph(Paragraph {
+                inlines: parse_inlines(&lines.join("\n")),
+                lines,
+                id: None,
+                reftext: None,
+                metadata: BlockMetadata::default(),
+            })],
+            content: None,
+            attribution: metadata.attributes.get("$2").cloned(),
+            citetitle: metadata.attributes.get("$3").cloned(),
+            is_verse: false,
+            reftext,
+            metadata,
+        });
+    }
+
+    if metadata.style.as_deref() == Some("pass") {
+        return Block::Passthrough(lines.join("\n"));
+    }
+
     // Indented paragraph (leading space/tab) → literal block
     if lines
         .first()
@@ -2366,6 +2400,31 @@ fn make_block_from_paragraph(
         reftext,
         metadata,
     })
+}
+
+fn make_listing_from_lines(
+    lines: Vec<String>,
+    reftext: Option<String>,
+    metadata: BlockMetadata,
+) -> Listing {
+    let mut stripped_lines = Vec::with_capacity(lines.len());
+    let mut callouts = Vec::new();
+    let mut auto_counter: u32 = 0;
+
+    for (idx, line) in lines.into_iter().enumerate() {
+        let (content, marker) = strip_callout_marker(&line, &mut auto_counter);
+        if let Some(number) = marker {
+            callouts.push((idx, number));
+        }
+        stripped_lines.push(content);
+    }
+
+    Listing {
+        lines: stripped_lines,
+        callouts,
+        reftext,
+        metadata,
+    }
 }
 
 fn make_paragraph(lines: Vec<String>) -> Paragraph {
@@ -4659,6 +4718,63 @@ mod tests {
         };
         assert_eq!(literal.lines, vec!["This becomes preformatted."]);
         assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
+    }
+
+    #[test]
+    fn parses_listing_styled_paragraph() {
+        let document = parse_document("[listing]\nputs 'hello' <1>");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing block");
+        };
+        assert_eq!(listing.lines, vec!["puts 'hello'"]);
+        assert_eq!(listing.callouts, vec![(0, 1)]);
+        assert_eq!(listing.metadata.style.as_deref(), Some("listing"));
+    }
+
+    #[test]
+    fn parses_source_styled_paragraph() {
+        let document = parse_document("[source,rust]\nfn main() {}");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing block");
+        };
+        assert_eq!(listing.lines, vec!["fn main() {}"]);
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
+            Some("rust")
+        );
+    }
+
+    #[test]
+    fn parses_quote_styled_paragraph() {
+        let document = parse_document("[quote, Abraham Lincoln, Gettysburg Address]\nFour score.");
+
+        let [Block::Quote(quote)] = document.blocks.as_slice() else {
+            panic!("expected quote block");
+        };
+        assert_eq!(quote.attribution.as_deref(), Some("Abraham Lincoln"));
+        assert_eq!(quote.citetitle.as_deref(), Some("Gettysburg Address"));
+        assert!(!quote.is_verse);
+        let [Block::Paragraph(paragraph)] = quote.blocks.as_slice() else {
+            panic!("expected paragraph child");
+        };
+        assert_eq!(paragraph.plain_text(), "Four score.");
+    }
+
+    #[test]
+    fn parses_pass_styled_paragraph() {
+        let document = parse_document("[pass]\n<span>ok</span>");
+
+        let [Block::Passthrough(content)] = document.blocks.as_slice() else {
+            panic!("expected passthrough block");
+        };
+        assert_eq!(content, "<span>ok</span>");
     }
 
     #[test]

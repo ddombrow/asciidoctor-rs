@@ -410,7 +410,9 @@ fn render_literal(html: &mut String, literal: &crate::prepare::ListingBlock) {
     }
     html.push_str("<div class=\"content\">\n<pre>");
     html.push_str(&escape_html(
-        &trimmed_delimited_content_lines(&literal.content).1.join("\n"),
+        &trimmed_delimited_content_lines(&literal.content)
+            .1
+            .join("\n"),
     ));
     html.push_str("</pre>\n</div>\n</div>\n");
 }
