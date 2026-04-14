@@ -1,0 +1,32 @@
+= Stem Blocks Demo
+:stem:
+
+This file exercises block stem rendering with the default stem notation and an explicit LaTeX block.
+
+== Default stem block
+
+[stem]
+++++
+sqrt(4) = 2
+++++
+
+== Multi-line stem block
+
+[stem]
+++++
+sum_(n=0)^oo 1 / n!
+++++
+
+== Explicit latexmath block
+
+[latexmath]
+++++
+\alpha + \beta = \gamma
+++++
+
+== Stem block with latexmath default
+
+[stem]
+++++
+\lim_{n \to \infty}\frac{n}{\sqrt[n]{n!}} = e
+++++

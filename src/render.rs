@@ -137,10 +137,7 @@ fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
         PreparedBlock::Open(open) => render_open(html, open, ctx),
         PreparedBlock::Quote(quote) => render_quote(html, quote, ctx),
-        PreparedBlock::Passthrough(p) => {
-            html.push_str(&trimmed_delimited_content_lines(&p.content).1.join("\n"));
-            html.push('\n');
-        }
+        PreparedBlock::Passthrough(p) => render_passthrough(html, p, ctx.document_attributes),
         PreparedBlock::Image(image) => render_image_block(html, image, ctx),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
@@ -404,6 +401,41 @@ fn render_listing(
     html.push_str("</div>\n</div>\n");
 }
 
+fn render_passthrough(
+    html: &mut String,
+    passthrough: &crate::prepare::PassthroughBlock,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) {
+    if let Some(stem_style) = stem_style(passthrough.style.as_deref(), document_attributes) {
+        html.push_str("<div");
+        if let Some(id) = &passthrough.id {
+            html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+        }
+        html.push_str(" class=\"stemblock");
+        if let Some(role) = &passthrough.role {
+            html.push(' ');
+            html.push_str(&escape_html(role));
+        }
+        html.push_str("\">\n");
+        if let Some(title) = &passthrough.title {
+            html.push_str(&format!(
+                "<div class=\"title\">{}</div>\n",
+                escape_html(title)
+            ));
+        }
+        html.push_str("<div class=\"content\">\n");
+        html.push_str(&stem_equation(&passthrough.content, stem_style));
+        html.push_str("\n</div>\n</div>\n");
+    } else {
+        html.push_str(
+            &trimmed_delimited_content_lines(&passthrough.content)
+                .1
+                .join("\n"),
+        );
+        html.push('\n');
+    }
+}
+
 fn render_listing_lines(
     listing: &crate::prepare::ListingBlock,
     lines: &[&str],
@@ -504,6 +536,33 @@ fn syntect_syntax_for_language<'a>(
     syntax_set
         .find_syntax_by_token(language)
         .or_else(|| syntax_set.find_syntax_by_extension(language))
+}
+
+fn stem_style<'a>(
+    style: Option<&'a str>,
+    document_attributes: &'a std::collections::BTreeMap<String, String>,
+) -> Option<&'a str> {
+    match style {
+        Some("asciimath" | "latexmath") => style,
+        Some("stem") => match document_attributes.get("stem").map(String::as_str) {
+            Some("latexmath") => Some("latexmath"),
+            _ => Some("asciimath"),
+        },
+        _ => None,
+    }
+}
+
+fn stem_equation(content: &str, stem_style: &str) -> String {
+    let equation = trimmed_delimited_content_lines(content).1.join("\n");
+    let (open, close) = match stem_style {
+        "latexmath" => (r"\[", r"\]"),
+        _ => (r"\$", r"\$"),
+    };
+    if equation.starts_with(open) && equation.ends_with(close) {
+        equation
+    } else {
+        format!("{open}{equation}{close}")
+    }
 }
 
 fn render_callout_list(html: &mut String, colist: &crate::prepare::CalloutListBlock) {
@@ -2047,6 +2106,35 @@ mod tests {
         ));
         assert!(html.contains("<video src=\"video.mp4\" controls></video>"));
         assert!(!html.contains("&lt;video"));
+    }
+
+    #[test]
+    fn renders_stem_blocks_with_asciimath_delimiters() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n:stem:\n\n[stem]\n++++\nsqrt(4) = 2\n++++",
+        ));
+
+        assert!(html.contains("<div class=\"stemblock\">"));
+        assert!(html.contains("\\$sqrt(4) = 2\\$"));
+    }
+
+    #[test]
+    fn renders_stem_blocks_with_latexmath_delimiters() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n:stem: latexmath\n\n[stem]\n++++\n\\alpha + \\beta\n++++",
+        ));
+
+        assert!(html.contains("\\[\\alpha + \\beta\\]"));
+    }
+
+    #[test]
+    fn renders_explicit_latexmath_blocks() {
+        let html = render_html(&crate::parser::parse_document(
+            "[latexmath]\n++++\n\\alpha + \\beta\n++++",
+        ));
+
+        assert!(html.contains("<div class=\"stemblock\">"));
+        assert!(html.contains("\\[\\alpha + \\beta\\]"));
     }
 
     #[test]

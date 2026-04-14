@@ -4269,6 +4269,29 @@ mod tests {
     }
 
     #[test]
+    fn renders_tck_stem_delimited_passthrough_block() {
+        let document = parse_tck_document("[stem]\n++++\nsqrt(4) = 2\n++++");
+        let block = document.blocks.first().expect("passthrough block");
+
+        assert_eq!(block.name, "passthrough");
+        assert_eq!(block.form, Some("delimited"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("stem")
+        );
+        let text = block
+            .inlines
+            .as_ref()
+            .and_then(|inlines| inlines.first())
+            .expect("passthrough text");
+        let AsgInline::Text(text) = text else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "sqrt(4) = 2");
+    }
+
+    #[test]
     fn renders_tck_styled_delimited_admonition() {
         let document = parse_tck_document("[TIP]\n====\nRemember the milk.\n====");
         let block = document.blocks.first().expect("admonition block");

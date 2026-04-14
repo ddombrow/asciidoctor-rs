@@ -19,6 +19,8 @@ const highlightJsStylesheetHref =
   "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css";
 const highlightJsScriptHref =
   "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js";
+const mathJaxScriptHref =
+  "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-MML-AM_CHTML";
 
 const sample = `= Sample Document
 
@@ -111,6 +113,7 @@ sourceEl.addEventListener("input", () => {
 });
 
 let renderRequestId = 0;
+let previewMathJaxRenderId = 0;
 
 async function preprocessSource(source) {
   const path = filePathEl?.value?.trim() ?? "";
@@ -585,6 +588,24 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   }
 
   if (block.type === "passthrough") {
+    const style = block.style;
+    if (style === "stem" || style === "asciimath" || style === "latexmath") {
+      const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
+      const title = block.title
+        ? `<div class="title">${escapeHtml(block.title)}</div>`
+        : "";
+      const stemNotation = resolveStemNotation(style, documentAttributes);
+      const equation = trimDelimitedBlockLines(block.content ?? "").lines.join("\n");
+      const wrapped = wrapStemEquation(equation, stemNotation);
+      return `
+        <div class="stemblock"${id}>
+          ${title}
+          <div class="content">
+            ${wrapped}
+          </div>
+        </div>
+      `;
+    }
     return trimDelimitedBlockLines(block.content ?? "").lines.join("\n");
   }
 
@@ -717,8 +738,28 @@ function renderPreview(document) {
   if (!doc) {
     throw new Error("Preview frame is not available");
   }
+  previewMathJaxRenderId += 1;
   const highlightScript = usesHighlightJs(document.attributes ?? {})
     ? `<script src="${highlightJsScriptHref}" onload="hljs.highlightAll()"></script>`
+    : "";
+  const mathJaxScripts = usesStem(document.attributes ?? {})
+    ? `<script type="text/x-mathjax-config">
+MathJax.Hub.Config({
+  messageStyle: "none",
+  tex2jax: {
+    inlineMath: [['\\\\(', '\\\\)']],
+    displayMath: [['\\\\[', '\\\\]']],
+    ignoreClass: "nostem|nolatexmath"
+  },
+  asciimath2jax: {
+    delimiters: [['\\\\$', '\\\\$']],
+    ignoreClass: "nostem|noasciimath"
+  },
+  TeX: { equationNumbers: { autoNumber: "none" } }
+});
+</script>
+<script src="${mathJaxScriptHref}"></script>
+`
     : "";
 
   doc.open();
@@ -754,6 +795,15 @@ function renderPreview(document) {
         .page-shell > #content {
           padding-bottom: 2rem;
         }
+
+        .stemblock .mathjax-fallback {
+          display: block;
+          text-align: center;
+        }
+
+        .MathJax_Preview {
+          display: none !important;
+        }
       </style>
     </head>
     <body class="article">
@@ -761,14 +811,94 @@ function renderPreview(document) {
         ${renderDocument(document)}
       </div>
       ${highlightScript}
+      ${mathJaxScripts}
     </body>
   </html>`);
   doc.close();
+  if (usesStem(document.attributes ?? {})) {
+    queuePreviewMathJaxTypeset(previewMathJaxRenderId);
+  }
+}
+
+function queuePreviewMathJaxTypeset(renderId, attempt = 0) {
+  if (renderId !== previewMathJaxRenderId) {
+    return;
+  }
+
+  const previewWindow = previewFrameEl.contentWindow;
+  const previewDoc = previewWindow?.document;
+  const hub = previewWindow?.MathJax?.Hub;
+  if (
+    previewDoc?.querySelector(".MathJax_CHTML, .mjx-chtml, .MathJax_Error")
+  ) {
+    return;
+  }
+
+  if (!previewWindow || !previewDoc || !hub) {
+    if (attempt < 50) {
+      setTimeout(() => queuePreviewMathJaxTypeset(renderId, attempt + 1), 100);
+    }
+    return;
+  }
+
+  if (!previewWindow.__mathJaxPreviewConfigured) {
+    previewWindow.__mathJaxPreviewConfigured = true;
+    hub.Configured();
+    setTimeout(() => queuePreviewMathJaxTypeset(renderId, attempt + 1), 2000);
+    return;
+  }
+
+  hub.Queue(
+    ["Typeset", hub, previewDoc.body],
+    () => {
+      if (renderId !== previewMathJaxRenderId) {
+        return;
+      }
+      replaceMathJaxErrorsWithMathMl(previewDoc);
+    }
+  );
+}
+
+function replaceMathJaxErrorsWithMathMl(doc) {
+  for (const errorNode of doc.querySelectorAll(".MathJax_Error")) {
+    const math = errorNode.querySelector(".MJX_Assistive_MathML math");
+    if (!math) {
+      continue;
+    }
+
+    const container = doc.createElement(errorNode.closest(".stemblock") ? "div" : "span");
+    container.className = "mathjax-fallback";
+    container.appendChild(math.cloneNode(true));
+    errorNode.replaceWith(container);
+  }
 }
 
 function usesHighlightJs(documentAttributes = {}) {
   const sourceHighlighter = getAttribute(documentAttributes, "source-highlighter");
   return typeof sourceHighlighter === "string" && sourceHighlighter.toLowerCase() === "highlight.js";
+}
+
+function usesStem(documentAttributes = {}) {
+  const stem = getAttribute(documentAttributes, "stem");
+  return typeof stem === "string";
+}
+
+function resolveStemNotation(style, documentAttributes = {}) {
+  if (style === "latexmath" || style === "asciimath") {
+    return style;
+  }
+  const documentStem = getAttribute(documentAttributes, "stem");
+  return documentStem === "latexmath" ? "latexmath" : "asciimath";
+}
+
+function wrapStemEquation(equation, notation) {
+  const trimmed = String(equation ?? "");
+  const [open, close] = notation === "latexmath"
+    ? ["\\[", "\\]"]
+    : ["\\$", "\\$"];
+  return trimmed.startsWith(open) && trimmed.endsWith(close)
+    ? trimmed
+    : `${open}${trimmed}${close}`;
 }
 
 function renderAdmonitionLabel(variant, blockAttributes = {}, documentAttributes = {}) {

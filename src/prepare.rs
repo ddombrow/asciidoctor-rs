@@ -312,7 +312,18 @@ pub struct PassthroughInline {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PassthroughBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reftext: Option<String>,
     pub content: String,
+    pub attributes: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -739,9 +750,15 @@ fn prepare_blocks(
                 }
                 index += 1;
             }
-            Block::Passthrough(content) => {
+            Block::Passthrough(block) => {
                 let passthrough = PreparedBlock::Passthrough(PassthroughBlock {
-                    content: trim_outer_blank_lines(content),
+                    id: block.metadata.id.clone(),
+                    reftext: block.reftext.clone(),
+                    content: trim_outer_blank_lines(&block.content),
+                    attributes: block.metadata.attributes.clone(),
+                    style: block.metadata.style.clone(),
+                    role: block.metadata.role.clone(),
+                    title: block.metadata.title.clone(),
                 });
                 if wrap_document_preamble && !seen_section {
                     preamble_blocks.push(passthrough);
@@ -3243,7 +3260,7 @@ mod tests {
     #[test]
     fn trims_outer_blank_lines_in_prepared_delimited_content() {
         let document = parse_document(
-            "----\n\ncode\n\n----\n\n....\n\nliteral\n\n....\n\n[verse]\n____\n\nline\n\n____\n\n++++\n\n<span>ok</span>\n\n++++",
+            "----\n\ncode\n\n----\n\n....\n\nliteral\n\n....\n\n[verse]\n____\n\nline\n\n____\n\n[stem]\n++++\n\nsqrt(4) = 2\n\n++++",
         );
         let prepared = prepare_document(&document);
         let PreparedBlock::Preamble(preamble) = &prepared.blocks[0] else {
@@ -3269,7 +3286,8 @@ mod tests {
         let PreparedBlock::Passthrough(passthrough) = &preamble.blocks[3] else {
             panic!("expected passthrough");
         };
-        assert_eq!(passthrough.content, "<span>ok</span>");
+        assert_eq!(passthrough.content, "sqrt(4) = 2");
+        assert_eq!(passthrough.style.as_deref(), Some("stem"));
     }
 
     #[test]

@@ -23,7 +23,7 @@ pub enum Block {
     Sidebar(CompoundBlock),
     Open(CompoundBlock),
     Quote(QuoteBlock),
-    Passthrough(String),
+    Passthrough(PassthroughBlock),
     Image(ImageBlock),
     Toc,
 }
@@ -125,6 +125,13 @@ pub struct TableCell {
     pub colspan: usize,
     pub rowspan: usize,
     pub style: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassthroughBlock {
+    pub content: String,
+    pub reftext: Option<String>,
+    pub metadata: BlockMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

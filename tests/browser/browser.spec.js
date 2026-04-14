@@ -831,6 +831,84 @@ fn main() {}
   await expect(frame.locator(".listingblock .content pre")).toContainText("fn main() {}");
 });
 
+test("exports and renders stem blocks", async ({ page }) => {
+  const source = `= Sample Document
+:stem:
+
+[stem]
+++++
+sqrt(4) = 2
+++++`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const stem = document.blocks[0].blocks[0];
+
+  expect(stem).toMatchObject({
+    type: "passthrough",
+    style: "stem",
+    content: "sqrt(4) = 2"
+  });
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".stemblock")).toHaveCount(1);
+  await expect(frame.locator("script[src*='MathJax.js']")).toHaveCount(1);
+  await page.waitForFunction(() => {
+    const iframe = document.querySelector("#preview-frame");
+    const doc = iframe?.contentDocument;
+    if (!doc) {
+      return false;
+    }
+    return (
+      !!doc.querySelector(".stemblock .MathJax_CHTML, .stemblock .mjx-chtml, .stemblock .mathjax-fallback math") &&
+      !doc.querySelector(".stemblock .MathJax_Error")
+    );
+  });
+
+  const previewDisplays = await page.locator("#preview-frame").evaluate((iframe) => {
+    const doc = iframe.contentDocument;
+    const win = iframe.contentWindow;
+    return [...(doc?.querySelectorAll(".stemblock .MathJax_Preview") ?? [])].map(
+      (node) => win?.getComputedStyle(node).display
+    );
+  });
+
+  expect(previewDisplays.every((display) => display === "none")).toBe(true);
+});
+
+test("renders latexmath blocks without duplicate preview text", async ({ page }) => {
+  const source = `= Sample Document
+:stem:
+
+[latexmath]
+++++
+\\alpha + \\beta = \\gamma
+++++`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+  await page.waitForTimeout(5000);
+
+  const previewState = await page.locator("#preview-frame").evaluate((iframe) => {
+    const doc = iframe.contentDocument;
+    const win = iframe.contentWindow;
+    const previews = [...(doc?.querySelectorAll(".stemblock .MathJax_Preview") ?? [])].map((node) => ({
+      text: node.textContent,
+      display: win?.getComputedStyle(node).display
+    }));
+    return {
+      previews,
+      scriptLoaded: !!doc?.querySelector("script[src*='MathJax.js']")
+    };
+  });
+
+  expect(previewState.previews.every((preview) => preview.display === "none")).toBe(true);
+  expect(previewState.scriptLoaded).toBe(true);
+});
+
 test("exports and renders admonition paragraphs", async ({ page }) => {
   const source = `= Sample Document
 

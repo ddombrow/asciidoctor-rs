@@ -1329,7 +1329,7 @@ fn block_plain_text(block: &Block) -> String {
                 blocks_plain_text(&quote.blocks)
             }
         }
-        Block::Passthrough(content) => content.clone(),
+        Block::Passthrough(passthrough) => passthrough.content.clone(),
         Block::Image(image) => image.alt.clone(),
         Block::Heading(heading) => heading.title.clone(),
         Block::Toc => String::new(),
@@ -1439,7 +1439,11 @@ fn parse_delimited_block(
     }
 
     let block = match block_kind {
-        "passthrough" => Block::Passthrough(inner_lines.join("\n")),
+        "passthrough" => Block::Passthrough(crate::ast::PassthroughBlock {
+            content: inner_lines.join("\n"),
+            reftext: None,
+            metadata: prelude.metadata,
+        }),
         "listing" => {
             let mut metadata = prelude.metadata;
             if let Some(entries) = fenced_entries.as_ref() {
@@ -2499,7 +2503,11 @@ fn make_block_from_paragraph(
     }
 
     if metadata.style.as_deref() == Some("pass") {
-        return Block::Passthrough(lines.join("\n"));
+        return Block::Passthrough(crate::ast::PassthroughBlock {
+            content: lines.join("\n"),
+            reftext,
+            metadata,
+        });
     }
 
     // Indented paragraph (leading space/tab) → literal block
@@ -4970,10 +4978,22 @@ mod tests {
     fn parses_pass_styled_paragraph() {
         let document = parse_document("[pass]\n<span>ok</span>");
 
-        let [Block::Passthrough(content)] = document.blocks.as_slice() else {
+        let [Block::Passthrough(passthrough)] = document.blocks.as_slice() else {
             panic!("expected passthrough block");
         };
-        assert_eq!(content, "<span>ok</span>");
+        assert_eq!(passthrough.content, "<span>ok</span>");
+        assert_eq!(passthrough.metadata.style.as_deref(), Some("pass"));
+    }
+
+    #[test]
+    fn parses_stem_delimited_passthrough_block() {
+        let document = parse_document("[stem]\n++++\nsqrt(4) = 2\n++++");
+
+        let [Block::Passthrough(passthrough)] = document.blocks.as_slice() else {
+            panic!("expected passthrough block");
+        };
+        assert_eq!(passthrough.content, "sqrt(4) = 2");
+        assert_eq!(passthrough.metadata.style.as_deref(), Some("stem"));
     }
 
     #[test]
