@@ -12,7 +12,7 @@ use syntect::{
 struct RenderContext<'a> {
     document_attributes: &'a std::collections::BTreeMap<String, String>,
     sections: &'a [DocumentSection],
-    caption_counters: RefCell<BTreeMap<String, u32>>,
+    caption_counters: RefCell<BTreeMap<String, CounterState>>,
 }
 
 #[derive(Clone, Copy)]
@@ -21,6 +21,12 @@ enum CaptionKind {
     Listing,
     Table,
     Image,
+}
+
+#[derive(Clone)]
+enum CounterState {
+    Numeric(u32),
+    Alpha { index: u32, uppercase: bool },
 }
 
 pub fn render_html(document: &crate::ast::Document) -> String {
@@ -134,14 +140,14 @@ fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_
             }
             html.push_str("</div>\n</div>\n");
         }
-        PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph),
+        PreparedBlock::Paragraph(paragraph) => render_paragraph(html, paragraph, ctx),
         PreparedBlock::Admonition(admonition) => render_admonition(html, admonition, ctx),
         PreparedBlock::UnorderedList(list) => render_unordered_list(html, list, ctx),
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list, ctx),
         PreparedBlock::DescriptionList(list) => render_description_list(html, list, ctx),
         PreparedBlock::Table(table) => render_table(html, table, ctx),
         PreparedBlock::Listing(listing) => render_listing(html, listing, ctx),
-        PreparedBlock::Literal(literal) => render_literal(html, literal),
+        PreparedBlock::Literal(literal) => render_literal(html, literal, ctx),
         PreparedBlock::CalloutList(colist) => render_callout_list(html, colist),
         PreparedBlock::Example(example) => render_compound(
             html,
@@ -153,7 +159,7 @@ fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
         PreparedBlock::Open(open) => render_open(html, open, ctx),
         PreparedBlock::Quote(quote) => render_quote(html, quote, ctx),
-        PreparedBlock::Passthrough(p) => render_passthrough(html, p, ctx.document_attributes),
+        PreparedBlock::Passthrough(p) => render_passthrough(html, p, ctx.document_attributes, ctx),
         PreparedBlock::Image(image) => render_image_block(html, image, ctx),
         PreparedBlock::Section(section) => {
             let level = usize::from(section.level) + 1;
@@ -188,7 +194,7 @@ fn render_unordered_list(
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &list.title {
+    if let Some(title) = expanded_block_title(list.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
             escape_html(&title)
@@ -215,7 +221,7 @@ fn render_ordered_list(
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &list.title {
+    if let Some(title) = expanded_block_title(list.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
             escape_html(&title)
@@ -242,7 +248,7 @@ fn render_description_list(
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &list.title {
+    if let Some(title) = expanded_block_title(list.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
             escape_html(&title)
@@ -431,6 +437,7 @@ fn render_passthrough(
     html: &mut String,
     passthrough: &crate::prepare::PassthroughBlock,
     document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     if let Some(stem_style) = stem_style(passthrough.style.as_deref(), document_attributes) {
         html.push_str("<div");
@@ -443,10 +450,10 @@ fn render_passthrough(
             html.push_str(&escape_html(role));
         }
         html.push_str("\">\n");
-        if let Some(title) = &passthrough.title {
+        if let Some(title) = expanded_block_title(passthrough.title.as_deref(), ctx) {
             html.push_str(&format!(
                 "<div class=\"title\">{}</div>\n",
-                escape_html(title)
+                escape_html(&title)
             ));
         }
         html.push_str("<div class=\"content\">\n");
@@ -604,13 +611,17 @@ fn render_callout_list(html: &mut String, colist: &crate::prepare::CalloutListBl
     html.push_str("</tbody>\n</table>\n</div>\n");
 }
 
-fn render_literal(html: &mut String, literal: &crate::prepare::ListingBlock) {
+fn render_literal(
+    html: &mut String,
+    literal: &crate::prepare::ListingBlock,
+    ctx: &RenderContext<'_>,
+) {
     html.push_str("<div class=\"literalblock\"");
     if let Some(id) = &literal.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &literal.title {
+    if let Some(title) = expanded_block_title(literal.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
             escape_html(&title)
@@ -639,7 +650,7 @@ fn render_compound(
     html.push_str(">\n");
     let title = match caption_kind {
         Some(kind) => captioned_block_title(block.title.as_deref(), &block.attributes, ctx, kind),
-        None => block.title.clone(),
+        None => expanded_block_title(block.title.as_deref(), ctx),
     };
     if let Some(title) = title {
         html.push_str(&format!(
@@ -664,7 +675,7 @@ fn render_sidebar(
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n<div class=\"content\">\n");
-    if let Some(title) = &block.title {
+    if let Some(title) = expanded_block_title(block.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
             escape_html(&title)
@@ -682,7 +693,7 @@ fn render_open(html: &mut String, block: &crate::prepare::CompoundBlock, ctx: &R
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &block.title {
+    if let Some(title) = expanded_block_title(block.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
             escape_html(&title)
@@ -706,7 +717,7 @@ fn render_quote(html: &mut String, block: &crate::prepare::QuoteBlock, ctx: &Ren
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &block.title {
+    if let Some(title) = expanded_block_title(block.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
             escape_html(&title)
@@ -739,16 +750,20 @@ fn render_quote(html: &mut String, block: &crate::prepare::QuoteBlock, ctx: &Ren
     html.push_str("</div>\n");
 }
 
-fn render_paragraph(html: &mut String, paragraph: &crate::prepare::ParagraphBlock) {
+fn render_paragraph(
+    html: &mut String,
+    paragraph: &crate::prepare::ParagraphBlock,
+    ctx: &RenderContext<'_>,
+) {
     html.push_str("<div class=\"paragraph\"");
     if let Some(id) = &paragraph.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &paragraph.title {
+    if let Some(title) = expanded_block_title(paragraph.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     html.push_str("<p>");
@@ -801,10 +816,10 @@ fn render_admonition(
         ));
     }
     html.push_str("</td>\n<td class=\"content\">\n");
-    if let Some(title) = &admonition.title {
+    if let Some(title) = expanded_block_title(admonition.title.as_deref(), ctx) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     for block in &admonition.blocks {
@@ -994,19 +1009,29 @@ fn captioned_block_title(
     ctx: &RenderContext<'_>,
     kind: CaptionKind,
 ) -> Option<String> {
-    let title = title?;
+    let title = expand_counter_macros(title?, ctx);
     if let Some(caption) = block_attributes
         .get("caption")
         .filter(|caption| !caption.is_empty())
     {
-        return Some(format!("{caption}{title}"));
+        return Some(format!("{}{title}", expand_counter_macros(caption, ctx)));
     }
 
     let Some(label) = caption_label(kind, ctx.document_attributes) else {
         return Some(title.to_owned());
     };
-    let number = next_caption_number(ctx, counter_attribute_name(kind));
+    let number = next_counter_value(
+        ctx,
+        counter_attribute_name(kind),
+        ctx.document_attributes
+            .get(counter_attribute_name(kind))
+            .map(String::as_str),
+    );
     Some(format!("{label} {number}. {title}"))
+}
+
+fn expanded_block_title(title: Option<&str>, ctx: &RenderContext<'_>) -> Option<String> {
+    title.map(|title| expand_counter_macros(title, ctx))
 }
 
 fn caption_label(
@@ -1047,22 +1072,107 @@ fn counter_attribute_name(kind: CaptionKind) -> &'static str {
     }
 }
 
-fn next_caption_number(ctx: &RenderContext<'_>, counter_attribute: &str) -> u32 {
+fn expand_counter_macros(input: &str, ctx: &RenderContext<'_>) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+
+    while let Some(start) = input[cursor..].find("{counter:") {
+        let start = cursor + start;
+        output.push_str(&input[cursor..start]);
+
+        let macro_start = start + "{counter:".len();
+        let Some(end) = input[macro_start..].find('}') else {
+            output.push_str(&input[start..]);
+            return output;
+        };
+        let end = macro_start + end;
+        let body = &input[macro_start..end];
+        let mut parts = body.splitn(2, ':');
+        let name = parts.next().unwrap_or("").trim();
+        if name.is_empty() {
+            output.push_str(&input[start..=end]);
+            cursor = end + 1;
+            continue;
+        }
+
+        let seed = parts.next().map(str::trim).filter(|seed| !seed.is_empty());
+        output.push_str(&next_counter_value(ctx, name, seed));
+        cursor = end + 1;
+    }
+
+    output.push_str(&input[cursor..]);
+    output
+}
+
+fn next_counter_value(ctx: &RenderContext<'_>, counter_name: &str, seed: Option<&str>) -> String {
     let mut counters = ctx.caption_counters.borrow_mut();
-    if let Some(counter) = counters.get_mut(counter_attribute) {
-        let current = *counter;
-        *counter = counter.saturating_add(1);
+    if let Some(counter) = counters.get_mut(counter_name) {
+        let current = counter.display();
+        counter.increment();
         return current;
     }
 
-    let start = ctx
-        .document_attributes
-        .get(counter_attribute)
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(1);
-    counters.insert(counter_attribute.to_owned(), start.saturating_add(1));
-    start
+    let mut counter = seed
+        .and_then(parse_counter_seed)
+        .unwrap_or(CounterState::Numeric(1));
+    let current = counter.display();
+    counter.increment();
+    counters.insert(counter_name.to_owned(), counter);
+    current
+}
+
+fn parse_counter_seed(seed: &str) -> Option<CounterState> {
+    if let Ok(value) = seed.parse::<u32>() {
+        return (value > 0).then_some(CounterState::Numeric(value));
+    }
+
+    let uppercase = seed.chars().all(|ch| ch.is_ascii_uppercase());
+    let lowercase = seed.chars().all(|ch| ch.is_ascii_lowercase());
+    if !(uppercase || lowercase) {
+        return None;
+    }
+
+    alphabetic_to_index(seed).map(|index| CounterState::Alpha { index, uppercase })
+}
+
+fn alphabetic_to_index(seed: &str) -> Option<u32> {
+    let mut value = 0u32;
+    for ch in seed.chars() {
+        let digit = match ch {
+            'A'..='Z' => ch as u32 - 'A' as u32 + 1,
+            'a'..='z' => ch as u32 - 'a' as u32 + 1,
+            _ => return None,
+        };
+        value = value.checked_mul(26)?.checked_add(digit)?;
+    }
+    Some(value)
+}
+
+fn index_to_alphabetic(mut index: u32, uppercase: bool) -> String {
+    let base = if uppercase { b'A' } else { b'a' };
+    let mut chars = Vec::new();
+    while index > 0 {
+        index -= 1;
+        chars.push((base + (index % 26) as u8) as char);
+        index /= 26;
+    }
+    chars.into_iter().rev().collect()
+}
+
+impl CounterState {
+    fn display(&self) -> String {
+        match self {
+            Self::Numeric(value) => value.to_string(),
+            Self::Alpha { index, uppercase } => index_to_alphabetic(*index, *uppercase),
+        }
+    }
+
+    fn increment(&mut self) {
+        match self {
+            Self::Numeric(value) => *value = value.saturating_add(1),
+            Self::Alpha { index, .. } => *index = index.saturating_add(1),
+        }
+    }
 }
 
 fn resolve_image_src(
@@ -1886,6 +1996,26 @@ mod tests {
 
         assert!(html.contains("<div class=\"title\">Example A: Block Title</div>"));
         assert!(!html.contains("Example 1. Block Title"));
+    }
+
+    #[test]
+    fn block_caption_override_expands_custom_counters() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n\n.First\n[caption=\"Example {counter:my-example-number:A}: \"]\n====\nOne\n====\n\n.Second\n[caption=\"Example {counter:my-example-number}: \"]\n====\nTwo\n====",
+        ));
+
+        assert!(html.contains("<div class=\"title\">Example A: First</div>"));
+        assert!(html.contains("<div class=\"title\">Example B: Second</div>"));
+    }
+
+    #[test]
+    fn plain_block_titles_expand_custom_counters() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n\n.Step {counter:task-number:1}\nterm:: first\n\n.Step {counter:task-number}\nnext:: second",
+        ));
+
+        assert!(html.contains("<div class=\"title\">Step 1</div>"));
+        assert!(html.contains("<div class=\"title\">Step 2</div>"));
     }
 
     #[test]

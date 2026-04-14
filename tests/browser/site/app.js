@@ -284,18 +284,23 @@ function createCaptionRenderState() {
 
 function renderCaptionedTitle(title, blockAttributes = {}, documentAttributes = {}, renderState, kind) {
   if (!title) return "";
+  const expandedTitle = renderPlainTitle(title, renderState);
   const customCaption = blockAttributes.caption;
   if (customCaption) {
-    return `${customCaption}${title}`;
+    return `${expandCounterMacros(customCaption, renderState)}${expandedTitle}`;
   }
 
   const label = captionLabel(kind, documentAttributes);
   if (!label) {
-    return title;
+    return expandedTitle;
   }
 
-  const number = nextCaptionNumber(kind, documentAttributes, renderState);
-  return `${label} ${number}. ${title}`;
+  const number = nextCounterValue(counterAttributeName(kind), documentAttributes[counterAttributeName(kind)], renderState);
+  return `${label} ${number}. ${expandedTitle}`;
+}
+
+function renderPlainTitle(title, renderState = createCaptionRenderState()) {
+  return title ? expandCounterMacros(title, renderState) : "";
 }
 
 function captionLabel(kind, documentAttributes = {}) {
@@ -325,18 +330,84 @@ function counterAttributeName(kind) {
   return "figure-number";
 }
 
-function nextCaptionNumber(kind, documentAttributes = {}, renderState = createCaptionRenderState()) {
-  const key = counterAttributeName(kind);
+function expandCounterMacros(input, renderState = createCaptionRenderState()) {
+  return String(input).replace(/\{counter:([^}:]+)(?::([^}]+))?\}/g, (_match, name, seed) => {
+    const counterName = String(name).trim();
+    const counterSeed = seed === undefined ? undefined : String(seed).trim();
+    if (!counterName) {
+      return _match;
+    }
+    return nextCounterValue(counterName, counterSeed, renderState);
+  });
+}
+
+function nextCounterValue(key, seed, renderState = createCaptionRenderState()) {
   const current = renderState.counters.get(key);
   if (current !== undefined) {
-    renderState.counters.set(key, current + 1);
-    return current;
+    const value = formatCounterState(current);
+    renderState.counters.set(key, incrementCounterState(current));
+    return value;
   }
 
-  const parsed = Number.parseInt(documentAttributes[key] ?? "1", 10);
-  const start = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-  renderState.counters.set(key, start + 1);
-  return start;
+  const state = parseCounterSeed(seed);
+  const value = formatCounterState(state);
+  renderState.counters.set(key, incrementCounterState(state));
+  return value;
+}
+
+function parseCounterSeed(seed) {
+  const value = seed === undefined || seed === null || seed === "" ? "1" : String(seed);
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isFinite(parsed) && parsed > 0 && String(parsed) === value) {
+    return { kind: "numeric", value: parsed };
+  }
+
+  const uppercase = /^[A-Z]+$/.test(value);
+  const lowercase = /^[a-z]+$/.test(value);
+  if (uppercase || lowercase) {
+    return {
+      kind: "alpha",
+      value: alphabeticToIndex(value),
+      uppercase
+    };
+  }
+
+  return { kind: "numeric", value: 1 };
+}
+
+function formatCounterState(state) {
+  if (state.kind === "numeric") {
+    return String(state.value);
+  }
+  return indexToAlphabetic(state.value, state.uppercase);
+}
+
+function incrementCounterState(state) {
+  if (state.kind === "numeric") {
+    return { kind: "numeric", value: state.value + 1 };
+  }
+  return { kind: "alpha", value: state.value + 1, uppercase: state.uppercase };
+}
+
+function alphabeticToIndex(value) {
+  let index = 0;
+  for (const ch of value) {
+    const base = ch >= "a" && ch <= "z" ? "a".charCodeAt(0) : "A".charCodeAt(0);
+    index = index * 26 + (ch.charCodeAt(0) - base + 1);
+  }
+  return index;
+}
+
+function indexToAlphabetic(value, uppercase) {
+  let index = value;
+  let output = "";
+  const base = uppercase ? "A".charCodeAt(0) : "a".charCodeAt(0);
+  while (index > 0) {
+    index -= 1;
+    output = String.fromCharCode(base + (index % 26)) + output;
+    index = Math.floor(index / 26);
+  }
+  return output;
 }
 
 function trimDelimitedBlockLines(content) {
@@ -367,7 +438,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
 
   if (block.type === "paragraph") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
     return `
       <div class="paragraph"${id}>
         ${title}
@@ -378,7 +449,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
 
   if (block.type === "admonition") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
     const label = renderAdmonitionLabel(block.variant ?? "", block.attributes ?? {}, documentAttributes);
     const icon = renderAdmonitionIcon(block.variant ?? "", block.attributes ?? {}, documentAttributes, label);
     return `
@@ -418,7 +489,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
 
   if (block.type === "unordered_list") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
     const items = (block.items ?? [])
       .map(
         (item) => `
@@ -440,7 +511,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
 
   if (block.type === "ordered_list") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
     const items = (block.items ?? [])
       .map(
         (item) => `
@@ -462,7 +533,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
 
   if (block.type === "description_list") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
     const items = (block.items ?? [])
       .map((item) => {
         const terms = (item.terms ?? [])
@@ -523,7 +594,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   if (block.type === "literal") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title
-      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>`
       : "";
     const content = trimDelimitedBlockLines(block.content ?? "").lines.join("\n");
     return `
@@ -597,7 +668,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   if (block.type === "sidebar") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title
-      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>`
       : "";
     return `
       <div class="sidebarblock"${id}>
@@ -611,7 +682,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
 
   if (block.type === "quote") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
     const attribution = block.attribution || block.citetitle
       ? `<div class="attribution">\n&#8212; ${escapeHtml(block.attribution ?? "")}${block.citetitle ? `<br>\n<cite>${escapeHtml(block.citetitle)}</cite>` : ""}\n</div>`
       : "";
@@ -638,7 +709,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
 
   if (block.type === "open") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
     return `
       <div class="openblock"${id}>
         ${title}
@@ -654,7 +725,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
     if (style === "stem" || style === "asciimath" || style === "latexmath") {
       const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
       const title = block.title
-        ? `<div class="title">${escapeHtml(block.title)}</div>`
+        ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>`
         : "";
       const stemNotation = resolveStemNotation(style, documentAttributes);
       const equation = trimDelimitedBlockLines(block.content ?? "").lines.join("\n");

@@ -1,0 +1,85 @@
+= Titles and Counters Demo
+:listing-caption: Listing
+:listing-number: 7
+:table-number: 3
+:figure-number: 4
+
+This example combines stacked block attribute lists, captioned titles, custom
+caption overrides, and plain block title counters in one document.
+
+== Stacked block preludes
+
+.Delimited source with stacked attribute lists
+[source]
+[rust,linenums]
+----
+fn main() {
+    println!("stacked attrs still work");
+}
+----
+
+.Paragraph source with stacked attribute lists
+[source]
+[javascript]
+console.log("paragraph-style source keeps the merged metadata");
+
+== Captioned titles
+
+.Example blocks are captioned by default
+====
+Example titles get the built-in Example counter.
+====
+
+.Listings pick up the configured caption label and counter start
+[source,rust]
+----
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+----
+
+.Tables use their own counter sequence
+|===
+|Name |Role
+
+|Grace Hopper
+|Compiler pioneer
+
+|Ada Lovelace
+|Algorithm author
+|===
+
+.Figures use their own counter sequence too
+image::data:image/svg+xml,%3Csvg%20xmlns%3D%22http://www.w3.org/2000/svg%22%20width%3D%2264%22%20height%3D%2264%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%23059669%22/%3E%3Cpath%20d%3D%22M20%2034l8%208%2016-20%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%226%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E[Inline SVG checkmark, 64, 64]
+
+== Custom caption overrides
+
+.Custom caption starts an alphabetic counter
+[caption="Example {counter:demo-example:A}: "]
+====
+This block overrides the generated caption prefix with a custom sequence.
+====
+
+.The same custom caption counter increments on the next block
+[caption="Example {counter:demo-example}: "]
+====
+The named counter continues from A to B.
+====
+
+== Plain block title counters
+
+.Step {counter:task-number:1}
+prepare:: Confirm the first plain block title starts at 1.
+
+.Step {counter:task-number}
+verify:: Confirm the next title increments to 2.
+
+.Milestone {counter:milestone-number:3}
+****
+This sidebar title shows that plain title counters work outside captioned blocks
+too.
+****
+
+Run with `cargo run -- examples\titles-and-counters-demo.adoc`
+or `cargo run -- --format json examples\titles-and-counters-demo.adoc`
+to inspect both the rendered HTML and the prepared metadata.

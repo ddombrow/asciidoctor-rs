@@ -55,10 +55,16 @@ image::data:image/svg+xml,%3Csvg%20xmlns%3D%22http://www.w3.org/2000/svg%22%20wi
 
 == Custom caption override
 
-.Block with custom caption prefix
-[caption="Example A: "]
+.Block with custom caption counter
+[caption="Example {counter:my-example-number:A}: "]
 ====
-This title uses the block's caption attribute instead of the generated counter.
+This title uses the block's caption attribute with a custom counter sequence.
+====
+
+.Second block with the same custom counter
+[caption="Example {counter:my-example-number}: "]
+====
+The same named counter increments from A to B across later blocks.
 ====
 
 Run with `cargo run -- examples\captioned-titles-demo.adoc`

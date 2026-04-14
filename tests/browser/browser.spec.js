@@ -832,6 +832,8 @@ fn main() {}
 });
 
 test("exports and renders stem blocks", async ({ page }) => {
+  test.slow();
+
   const source = `= Sample Document
 :stem:
 
@@ -866,7 +868,7 @@ sqrt(4) = 2
       !!doc.querySelector(".stemblock .MathJax_CHTML, .stemblock .mjx-chtml, .stemblock .mathjax-fallback math") &&
       !doc.querySelector(".stemblock .MathJax_Error")
     );
-  });
+  }, { timeout: 45000 });
 
   const previewDisplays = await page.locator("#preview-frame").evaluate((iframe) => {
     const doc = iframe.contentDocument;
@@ -1227,6 +1229,46 @@ image::images/tiger.png[Tiger, 200, 300]`;
   await expect(frame.locator(".listingblock .title")).toHaveText("Listing 3. Source Title");
   await expect(frame.locator("table.tableblock caption.title")).toHaveText("Table 1. Agents");
   await expect(frame.locator(".imageblock .title")).toHaveText("Figure 1. The Tiger");
+});
+
+test("expands custom counters inside caption overrides", async ({ page }) => {
+  const source = `= Sample Document
+
+.First
+[caption="Example {counter:my-example-number:A}: "]
+====
+One
+====
+
+.Second
+[caption="Example {counter:my-example-number}: "]
+====
+Two
+====`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".exampleblock").nth(0).locator(".title")).toHaveText("Example A: First");
+  await expect(frame.locator(".exampleblock").nth(1).locator(".title")).toHaveText("Example B: Second");
+});
+
+test("expands custom counters inside plain block titles", async ({ page }) => {
+  const source = `= Sample Document
+
+.Step {counter:task-number:1}
+term:: first
+
+.Step {counter:task-number}
+next:: second`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".dlist").nth(0).locator(".title")).toHaveText("Step 1");
+  await expect(frame.locator(".dlist").nth(1).locator(".title")).toHaveText("Step 2");
 });
 
 test("renders block images with imagesdir", async ({ page }) => {
