@@ -1506,60 +1506,85 @@ fn parse_delimited_block(
         }
         "open" => {
             // Styled open block: redirect to the appropriate block type.
-            let style = prelude.metadata.style.as_deref().unwrap_or("");
-            if let Some(variant) = admonition_variant_from_style(style) {
-                let mut nested_title = None;
-                Block::Admonition(AdmonitionBlock {
-                    variant,
-                    blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
-                    id: prelude.metadata.id.clone(),
-                    reftext: None,
-                    metadata: prelude.metadata,
-                })
-            } else {
-                let mut nested_title = None;
-                let blocks = parse_blocks_from_lines(inner_lines, &mut nested_title, false, None);
-                match style {
-                    "sidebar" => Block::Sidebar(CompoundBlock {
-                        blocks,
-                        reftext: None,
-                        metadata: prelude.metadata,
-                    }),
-                    "example" => Block::Example(CompoundBlock {
-                        blocks,
-                        reftext: None,
-                        metadata: prelude.metadata,
-                    }),
-                    "quote" => Block::Quote(QuoteBlock {
-                        blocks,
-                        content: None,
-                        attribution: prelude.metadata.attributes.get("$2").cloned(),
-                        citetitle: prelude.metadata.attributes.get("$3").cloned(),
-                        is_verse: false,
-                        reftext: None,
-                        metadata: prelude.metadata,
-                    }),
-                    "verse" => Block::Quote(QuoteBlock {
-                        blocks: vec![],
-                        content: Some(inner_lines.join("\n")),
-                        attribution: prelude.metadata.attributes.get("$2").cloned(),
-                        citetitle: prelude.metadata.attributes.get("$3").cloned(),
-                        is_verse: true,
-                        reftext: None,
-                        metadata: prelude.metadata,
-                    }),
-                    _ => Block::Open(CompoundBlock {
-                        blocks,
-                        reftext: None,
-                        metadata: prelude.metadata,
-                    }),
-                }
-            }
+            masquerade_open_block(prelude.metadata, inner_lines)
         }
         _ => return None,
     };
 
     Some((block, consumed))
+}
+
+fn masquerade_open_block(metadata: BlockMetadata, inner_lines: &[&str]) -> Block {
+    let style = metadata.style.as_deref().unwrap_or("");
+    if let Some(variant) = admonition_variant_from_style(style) {
+        let mut nested_title = None;
+        return Block::Admonition(AdmonitionBlock {
+            variant,
+            blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+            id: metadata.id.clone(),
+            reftext: None,
+            metadata,
+        });
+    }
+
+    match style {
+        "literal" => Block::Literal(Listing {
+            lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+            callouts: vec![],
+            reftext: None,
+            metadata,
+        }),
+        "listing" | "source" => Block::Listing(make_listing_from_lines(
+            inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+            None,
+            metadata,
+        )),
+        "sidebar" => {
+            let mut nested_title = None;
+            Block::Sidebar(CompoundBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                reftext: None,
+                metadata,
+            })
+        }
+        "example" => {
+            let mut nested_title = None;
+            Block::Example(CompoundBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                reftext: None,
+                metadata,
+            })
+        }
+        "quote" => {
+            let mut nested_title = None;
+            Block::Quote(QuoteBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                content: None,
+                attribution: metadata.attributes.get("$2").cloned(),
+                citetitle: metadata.attributes.get("$3").cloned(),
+                is_verse: false,
+                reftext: None,
+                metadata,
+            })
+        }
+        "verse" => Block::Quote(QuoteBlock {
+            blocks: vec![],
+            content: Some(inner_lines.join("\n")),
+            attribution: metadata.attributes.get("$2").cloned(),
+            citetitle: metadata.attributes.get("$3").cloned(),
+            is_verse: true,
+            reftext: None,
+            metadata,
+        }),
+        _ => {
+            let mut nested_title = None;
+            Block::Open(CompoundBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                reftext: None,
+                metadata,
+            })
+        }
+    }
 }
 
 fn parse_admonition_paragraph(
@@ -5037,5 +5062,56 @@ mod tests {
         };
         assert_eq!(admonition.variant, AdmonitionVariant::Note);
         assert_eq!(admonition.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_source_styled_open_block_as_listing() {
+        let document = parse_document("[source,rust]\n--\nfn main() {} <1>\n--");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(
+            listing.metadata.attributes.get("language").map(String::as_str),
+            Some("rust")
+        );
+        assert_eq!(listing.lines, vec!["fn main() {}"]);
+        assert_eq!(listing.callouts, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn parses_listing_styled_open_block_as_listing() {
+        let document = parse_document("[listing]\n--\nputs 'hello' <1>\n--");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.style.as_deref(), Some("listing"));
+        assert_eq!(listing.lines, vec!["puts 'hello'"]);
+        assert_eq!(listing.callouts, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn parses_literal_styled_open_block_as_literal() {
+        let document = parse_document("[literal]\n--\n  preserved text\n--");
+
+        let [Block::Literal(literal)] = document.blocks.as_slice() else {
+            panic!("expected literal");
+        };
+        assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
+        assert_eq!(literal.lines, vec!["  preserved text"]);
+        assert!(literal.callouts.is_empty());
+    }
+
+    #[test]
+    fn leaves_unknown_styled_open_block_as_open() {
+        let document = parse_document("[custom]\n--\ninside\n--");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.metadata.style.as_deref(), Some("custom"));
+        assert_eq!(open.blocks.len(), 1);
     }
 }
