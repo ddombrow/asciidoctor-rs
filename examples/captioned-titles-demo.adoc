@@ -1,0 +1,66 @@
+= Captioned Titles Demo
+:listing-caption: Listing
+:listing-number: 3
+:table-number: 5
+:figure-number: 2
+
+This example exercises captioned block titles for examples, listings, tables,
+and block images.
+
+== Default example captions
+
+.First example block
+====
+Example blocks get captioned titles by default.
+====
+
+.Second example block
+====
+The example counter increments automatically.
+====
+
+== Listing captions
+
+.Rust listing with a custom starting number
+[source,rust]
+----
+fn main() {
+    println!("captioned listing");
+}
+----
+
+.Plain listing after the first source block
+----
+line one
+line two
+----
+
+== Table captions
+
+.People
+|===
+|Name |Language
+
+|Grace Hopper
+|COBOL
+
+|Ada Lovelace
+|Analytical Engine notes
+|===
+
+== Figure captions
+
+.Inline SVG figure
+image::data:image/svg+xml,%3Csvg%20xmlns%3D%22http://www.w3.org/2000/svg%22%20width%3D%2264%22%20height%3D%2264%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%232563eb%22/%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2219%22%20r%3D%225%22%20fill%3D%22white%22/%3E%3Crect%20x%3D%2228%22%20y%3D%2228%22%20width%3D%228%22%20height%3D%2218%22%20rx%3D%224%22%20fill%3D%22white%22/%3E%3C/svg%3E[Inline SVG, 64, 64]
+
+== Custom caption override
+
+.Block with custom caption prefix
+[caption="Example A: "]
+====
+This title uses the block's caption attribute instead of the generated counter.
+====
+
+Run with `cargo run -- examples\captioned-titles-demo.adoc`
+or `cargo run -- --format json examples\captioned-titles-demo.adoc`
+to inspect the rendered captions and underlying block metadata.

@@ -575,7 +575,7 @@ test("exports and renders tables", async ({ page }) => {
   await page.click("#render");
 
   const frame = page.frameLocator("#preview-frame");
-  await expect(frame.locator("table.tableblock caption.title")).toHaveText("Agents");
+  await expect(frame.locator("table.tableblock caption.title")).toHaveText("Table 1. Agents");
   await expect(frame.locator("table.tableblock thead th").nth(0)).toHaveText("Name");
   await expect(frame.locator("table.tableblock thead th").nth(1)).toHaveText("Email");
   await expect(frame.locator("table.tableblock tbody tr").nth(0).locator("td").nth(1)).toHaveText("peter@example.com");
@@ -1191,7 +1191,42 @@ image::images/tiger.png[Tiger, 200, 300]`;
   await expect(img).toHaveAttribute("alt", "Tiger");
   await expect(img).toHaveAttribute("width", "200");
   await expect(img).toHaveAttribute("height", "300");
-  await expect(frame.locator(".imageblock .title")).toHaveText("The Tiger");
+  await expect(frame.locator(".imageblock .title")).toHaveText("Figure 1. The Tiger");
+});
+
+test("renders captioned block titles", async ({ page }) => {
+  const source = `= Sample Document
+:listing-caption: Listing
+:listing-number: 3
+
+.First Example
+====
+Block content
+====
+
+.Source Title
+[source,rust]
+----
+fn main() {}
+----
+
+.Agents
+|===
+|Name
+|Ada
+|===
+
+.The Tiger
+image::images/tiger.png[Tiger, 200, 300]`;
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".exampleblock .title")).toHaveText("Example 1. First Example");
+  await expect(frame.locator(".listingblock .title")).toHaveText("Listing 3. Source Title");
+  await expect(frame.locator("table.tableblock caption.title")).toHaveText("Table 1. Agents");
+  await expect(frame.locator(".imageblock .title")).toHaveText("Figure 1. The Tiger");
 });
 
 test("renders block images with imagesdir", async ({ page }) => {

@@ -206,11 +206,12 @@ function renderDocument(document) {
   const title = document.title ? `<h1>${escapeHtml(document.title)}</h1>` : "";
   const attributes = document.attributes ?? {};
   const sections = document.sections ?? [];
+  const renderState = createCaptionRenderState(attributes);
   const tocPlacement = attributes.toc;
   const autoToc = tocPlacement !== undefined && tocPlacement !== "macro"
     ? renderToc(sections, attributes)
     : "";
-  const blocks = renderBlocks(document.blocks ?? [], 0, attributes, sections);
+  const blocks = renderBlocks(document.blocks ?? [], 0, attributes, sections, renderState);
   const footnotes = renderFootnotes(document.footnotes ?? []);
 
   return `
@@ -273,8 +274,69 @@ function renderHeadMetadata(document) {
   return [...authorTags, ...revisionTags].join("\n");
 }
 
-function renderBlocks(blocks, sectionLevel = 0, documentAttributes = {}, sections = []) {
-  return blocks.map((block) => renderBlock(block, sectionLevel, documentAttributes, sections)).join("");
+function renderBlocks(blocks, sectionLevel = 0, documentAttributes = {}, sections = [], renderState = createCaptionRenderState(documentAttributes)) {
+  return blocks.map((block) => renderBlock(block, sectionLevel, documentAttributes, sections, renderState)).join("");
+}
+
+function createCaptionRenderState() {
+  return { counters: new Map() };
+}
+
+function renderCaptionedTitle(title, blockAttributes = {}, documentAttributes = {}, renderState, kind) {
+  if (!title) return "";
+  const customCaption = blockAttributes.caption;
+  if (customCaption) {
+    return `${customCaption}${title}`;
+  }
+
+  const label = captionLabel(kind, documentAttributes);
+  if (!label) {
+    return title;
+  }
+
+  const number = nextCaptionNumber(kind, documentAttributes, renderState);
+  return `${label} ${number}. ${title}`;
+}
+
+function captionLabel(kind, documentAttributes = {}) {
+  const key = captionAttributeName(kind);
+  const caption = documentAttributes[key];
+  if (caption) {
+    return String(caption).trimEnd();
+  }
+
+  if (kind === "example") return "Example";
+  if (kind === "table") return "Table";
+  if (kind === "image") return "Figure";
+  return "";
+}
+
+function captionAttributeName(kind) {
+  if (kind === "example") return "example-caption";
+  if (kind === "listing") return "listing-caption";
+  if (kind === "table") return "table-caption";
+  return "figure-caption";
+}
+
+function counterAttributeName(kind) {
+  if (kind === "example") return "example-number";
+  if (kind === "listing") return "listing-number";
+  if (kind === "table") return "table-number";
+  return "figure-number";
+}
+
+function nextCaptionNumber(kind, documentAttributes = {}, renderState = createCaptionRenderState()) {
+  const key = counterAttributeName(kind);
+  const current = renderState.counters.get(key);
+  if (current !== undefined) {
+    renderState.counters.set(key, current + 1);
+    return current;
+  }
+
+  const parsed = Number.parseInt(documentAttributes[key] ?? "1", 10);
+  const start = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  renderState.counters.set(key, start + 1);
+  return start;
 }
 
 function trimDelimitedBlockLines(content) {
@@ -292,12 +354,12 @@ function trimDelimitedBlockLines(content) {
   return { lineOffset: start, lines: lines.slice(start, end) };
 }
 
-function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sections = []) {
+function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sections = [], renderState = createCaptionRenderState(documentAttributes)) {
   if (block.type === "preamble") {
     return `
       <div id="preamble">
         <div class="sectionbody">
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
         </div>
       </div>
     `;
@@ -328,7 +390,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
             </td>
             <td class="content">
               ${title}
-              ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+              ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
             </td>
           </tr>
         </table>
@@ -348,7 +410,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       <div class="${sectionClass}"${id}>
         <h${level}>${number}${escapeHtml(block.title ?? "")}</h${level}>
         <div class="sectionbody">
-          ${renderBlocks(block.blocks ?? [], block.level ?? parentSectionLevel + 1, documentAttributes, sections)}
+          ${renderBlocks(block.blocks ?? [], block.level ?? parentSectionLevel + 1, documentAttributes, sections, renderState)}
         </div>
       </div>
     `;
@@ -361,7 +423,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       .map(
         (item) => `
           <li>
-            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
           </li>
         `
       )
@@ -383,7 +445,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       .map(
         (item) => `
           <li>
-            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+            ${renderBlocks(item.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
           </li>
         `
       )
@@ -406,7 +468,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
         const terms = (item.terms ?? [])
           .map((term) => `<dt class="hdlist1">${renderInlines(term.inlines ?? [])}</dt>`)
           .join("");
-        const description = item.description ? `\n<dd>\n${renderBlocks(item.description.blocks ?? [], parentSectionLevel, documentAttributes, sections)}\n</dd>` : "";
+        const description = item.description ? `\n<dd>\n${renderBlocks(item.description.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}\n</dd>` : "";
         return `${terms}${description}`;
       })
       .join("");
@@ -423,14 +485,14 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   if (block.type === "table") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title
-      ? `<caption class="title">${escapeHtml(block.title)}</caption>`
+      ? `<caption class="title">${escapeHtml(renderCaptionedTitle(block.title, block.attributes ?? {}, documentAttributes, renderState, "table"))}</caption>`
       : "";
     const header = block.header
       ? `
         <thead>
           <tr>
             ${(block.header.cells ?? [])
-              .map((cell) => renderTableCell(cell, true, documentAttributes))
+              .map((cell) => renderTableCell(cell, true, documentAttributes, renderState))
               .join("")}
           </tr>
         </thead>
@@ -441,7 +503,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
         (row) => `
           <tr>
             ${(row.cells ?? [])
-              .map((cell) => renderTableCell(cell, false, documentAttributes))
+              .map((cell) => renderTableCell(cell, false, documentAttributes, renderState))
               .join("")}
           </tr>
         `
@@ -477,7 +539,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   if (block.type === "listing") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title
-      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      ? `<div class="title">${escapeHtml(renderCaptionedTitle(block.title, block.attributes ?? {}, documentAttributes, renderState, "listing"))}</div>`
       : "";
     const calloutMap = Object.fromEntries(
       (block.calloutLines ?? []).map(([i, n]) => [i, n])
@@ -520,13 +582,13 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   if (block.type === "example") {
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title
-      ? `<div class="title">${escapeHtml(block.title)}</div>`
+      ? `<div class="title">${escapeHtml(renderCaptionedTitle(block.title, block.attributes ?? {}, documentAttributes, renderState, "example"))}</div>`
       : "";
     return `
       <div class="exampleblock"${id}>
         ${title}
         <div class="content">
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
         </div>
       </div>
     `;
@@ -541,7 +603,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       <div class="sidebarblock"${id}>
         <div class="content">
           ${title}
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
         </div>
       </div>
     `;
@@ -567,7 +629,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       <div class="quoteblock"${id}>
         ${title}
         <blockquote>
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
         </blockquote>
         ${attribution}
       </div>
@@ -581,7 +643,7 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       <div class="openblock"${id}>
         ${title}
         <div class="content">
-          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections)}
+          ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
         </div>
       </div>
     `;
@@ -624,7 +686,9 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
       const href = block.link === "self" ? src : block.link;
       content = `<a class="image" href="${escapeHtml(href)}">${imgTag}</a>`;
     }
-    const title = block.title ? `<div class="title">${escapeHtml(block.title)}</div>` : "";
+    const title = block.title
+      ? `<div class="title">${escapeHtml(renderCaptionedTitle(block.title, block.attributes ?? {}, documentAttributes, renderState, "image"))}</div>`
+      : "";
     return `
       <div class="${classes.join(" ")}"${id}>
         <div class="content">
@@ -934,14 +998,14 @@ function renderAdmonitionIcon(variant, blockAttributes = {}, documentAttributes 
   return `<img src="${escapeHtml(iconTarget)}" alt="${escapeHtml(label)}" />`;
 }
 
-function renderTableCell(cell, header = false, documentAttributes = {}) {
+function renderTableCell(cell, header = false, documentAttributes = {}, renderState = createCaptionRenderState(documentAttributes)) {
   const tag = header || cell.style === "header" ? "th" : "td";
   const colspan = cell.colspan > 1 ? ` colspan="${escapeHtml(String(cell.colspan))}"` : "";
   const rowspan = cell.rowspan > 1 ? ` rowspan="${escapeHtml(String(cell.rowspan))}"` : "";
-  return `<${tag} class="tableblock halign-left valign-top"${colspan}${rowspan}>${renderTableCellContent(cell, tag === "th", documentAttributes)}</${tag}>`;
+  return `<${tag} class="tableblock halign-left valign-top"${colspan}${rowspan}>${renderTableCellContent(cell, tag === "th", documentAttributes, renderState)}</${tag}>`;
 }
 
-function renderTableCellContent(cell, header = false, documentAttributes = {}) {
+function renderTableCellContent(cell, header = false, documentAttributes = {}, renderState = createCaptionRenderState(documentAttributes)) {
   const blocks = cell.blocks ?? [];
   if (blocks.length === 1 && blocks[0].type === "paragraph") {
     const inlines = blocks[0].inlines ?? cell.inlines ?? [];
@@ -951,7 +1015,7 @@ function renderTableCellContent(cell, header = false, documentAttributes = {}) {
     return `<p class="tableblock">${renderInlines(inlines)}</p>`;
   }
 
-  return renderBlocks(blocks, 0, documentAttributes);
+  return renderBlocks(blocks, 0, documentAttributes, [], renderState);
 }
 
 function resolveAdmonitionFontIconClass(variant, blockAttributes = {}, documentAttributes = {}) {

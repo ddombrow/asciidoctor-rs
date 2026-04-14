@@ -1,7 +1,7 @@
 use crate::prepare::{
     DocumentBlock, DocumentSection, PreparedBlock, PreparedInline, prepare_document,
 };
-use std::sync::OnceLock;
+use std::{cell::RefCell, collections::BTreeMap, sync::OnceLock};
 use syntect::{
     easy::HighlightLines,
     highlighting::{Theme, ThemeSet},
@@ -12,6 +12,15 @@ use syntect::{
 struct RenderContext<'a> {
     document_attributes: &'a std::collections::BTreeMap<String, String>,
     sections: &'a [DocumentSection],
+    caption_counters: RefCell<BTreeMap<String, u32>>,
+}
+
+#[derive(Clone, Copy)]
+enum CaptionKind {
+    Example,
+    Listing,
+    Table,
+    Image,
 }
 
 pub fn render_html(document: &crate::ast::Document) -> String {
@@ -23,6 +32,7 @@ pub fn render_prepared_html(document: &DocumentBlock) -> String {
     let ctx = RenderContext {
         document_attributes: &document.attributes,
         sections: &document.sections,
+        caption_counters: RefCell::new(BTreeMap::new()),
     };
 
     html.push_str("<div id=\"header\">\n");
@@ -130,10 +140,16 @@ fn render_block(html: &mut String, block: &PreparedBlock, ctx: &RenderContext<'_
         PreparedBlock::OrderedList(list) => render_ordered_list(html, list, ctx),
         PreparedBlock::DescriptionList(list) => render_description_list(html, list, ctx),
         PreparedBlock::Table(table) => render_table(html, table, ctx),
-        PreparedBlock::Listing(listing) => render_listing(html, listing, ctx.document_attributes),
+        PreparedBlock::Listing(listing) => render_listing(html, listing, ctx),
         PreparedBlock::Literal(literal) => render_literal(html, literal),
         PreparedBlock::CalloutList(colist) => render_callout_list(html, colist),
-        PreparedBlock::Example(example) => render_compound(html, "exampleblock", example, ctx),
+        PreparedBlock::Example(example) => render_compound(
+            html,
+            "exampleblock",
+            example,
+            ctx,
+            Some(CaptionKind::Example),
+        ),
         PreparedBlock::Sidebar(sidebar) => render_sidebar(html, sidebar, ctx),
         PreparedBlock::Open(open) => render_open(html, open, ctx),
         PreparedBlock::Quote(quote) => render_quote(html, quote, ctx),
@@ -175,7 +191,7 @@ fn render_unordered_list(
     if let Some(title) = &list.title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     html.push_str("<ul>\n");
@@ -202,7 +218,7 @@ fn render_ordered_list(
     if let Some(title) = &list.title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     html.push_str("<ol class=\"arabic\">\n");
@@ -229,7 +245,7 @@ fn render_description_list(
     if let Some(title) = &list.title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     html.push_str("<dl>\n");
@@ -256,10 +272,15 @@ fn render_table(html: &mut String, table: &crate::prepare::TableBlock, ctx: &Ren
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &table.title {
+    if let Some(title) = captioned_block_title(
+        table.title.as_deref(),
+        &table.attributes,
+        ctx,
+        CaptionKind::Table,
+    ) {
         html.push_str(&format!(
             "<caption class=\"title\">{}</caption>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     if let Some(header) = &table.header {
@@ -337,17 +358,22 @@ fn render_table_cell_content(
 fn render_listing(
     html: &mut String,
     listing: &crate::prepare::ListingBlock,
-    document_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
 ) {
     html.push_str("<div class=\"listingblock\"");
     if let Some(id) = &listing.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &listing.title {
+    if let Some(title) = captioned_block_title(
+        listing.title.as_deref(),
+        &listing.attributes,
+        ctx,
+        CaptionKind::Listing,
+    ) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     let lang = listing.attributes.get("language").map(String::as_str);
@@ -360,7 +386,7 @@ fn render_listing(
         line_offset,
         lang,
         is_source,
-        document_attributes,
+        ctx.document_attributes,
     );
     let rendered_content = rendered_lines.join("\n");
 
@@ -587,7 +613,7 @@ fn render_literal(html: &mut String, literal: &crate::prepare::ListingBlock) {
     if let Some(title) = &literal.title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     html.push_str("<div class=\"content\">\n<pre>");
@@ -604,16 +630,21 @@ fn render_compound(
     class_name: &str,
     block: &crate::prepare::CompoundBlock,
     ctx: &RenderContext<'_>,
+    caption_kind: Option<CaptionKind>,
 ) {
     html.push_str(&format!("<div class=\"{class_name}\""));
     if let Some(id) = &block.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
     html.push_str(">\n");
-    if let Some(title) = &block.title {
+    let title = match caption_kind {
+        Some(kind) => captioned_block_title(block.title.as_deref(), &block.attributes, ctx, kind),
+        None => block.title.clone(),
+    };
+    if let Some(title) = title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     html.push_str("<div class=\"content\">\n");
@@ -636,7 +667,7 @@ fn render_sidebar(
     if let Some(title) = &block.title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     for child in &block.blocks {
@@ -654,7 +685,7 @@ fn render_open(html: &mut String, block: &crate::prepare::CompoundBlock, ctx: &R
     if let Some(title) = &block.title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     html.push_str("<div class=\"content\">\n");
@@ -678,7 +709,7 @@ fn render_quote(html: &mut String, block: &crate::prepare::QuoteBlock, ctx: &Ren
     if let Some(title) = &block.title {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
     if block.is_verse {
@@ -942,14 +973,96 @@ fn render_image_block(
 
     html.push_str("\n</div>\n");
 
-    if let Some(title) = &image.title {
+    if let Some(title) = captioned_block_title(
+        image.title.as_deref(),
+        &image.attributes,
+        ctx,
+        CaptionKind::Image,
+    ) {
         html.push_str(&format!(
             "<div class=\"title\">{}</div>\n",
-            escape_html(title)
+            escape_html(&title)
         ));
     }
 
     html.push_str("</div>\n");
+}
+
+fn captioned_block_title(
+    title: Option<&str>,
+    block_attributes: &std::collections::BTreeMap<String, String>,
+    ctx: &RenderContext<'_>,
+    kind: CaptionKind,
+) -> Option<String> {
+    let title = title?;
+    if let Some(caption) = block_attributes
+        .get("caption")
+        .filter(|caption| !caption.is_empty())
+    {
+        return Some(format!("{caption}{title}"));
+    }
+
+    let Some(label) = caption_label(kind, ctx.document_attributes) else {
+        return Some(title.to_owned());
+    };
+    let number = next_caption_number(ctx, counter_attribute_name(kind));
+    Some(format!("{label} {number}. {title}"))
+}
+
+fn caption_label(
+    kind: CaptionKind,
+    document_attributes: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let key = caption_attribute_name(kind);
+    if let Some(caption) = document_attributes
+        .get(key)
+        .filter(|caption| !caption.is_empty())
+    {
+        return Some(caption.trim_end().to_owned());
+    }
+
+    match kind {
+        CaptionKind::Example => Some("Example".into()),
+        CaptionKind::Table => Some("Table".into()),
+        CaptionKind::Image => Some("Figure".into()),
+        CaptionKind::Listing => None,
+    }
+}
+
+fn caption_attribute_name(kind: CaptionKind) -> &'static str {
+    match kind {
+        CaptionKind::Example => "example-caption",
+        CaptionKind::Listing => "listing-caption",
+        CaptionKind::Table => "table-caption",
+        CaptionKind::Image => "figure-caption",
+    }
+}
+
+fn counter_attribute_name(kind: CaptionKind) -> &'static str {
+    match kind {
+        CaptionKind::Example => "example-number",
+        CaptionKind::Listing => "listing-number",
+        CaptionKind::Table => "table-number",
+        CaptionKind::Image => "figure-number",
+    }
+}
+
+fn next_caption_number(ctx: &RenderContext<'_>, counter_attribute: &str) -> u32 {
+    let mut counters = ctx.caption_counters.borrow_mut();
+    if let Some(counter) = counters.get_mut(counter_attribute) {
+        let current = *counter;
+        *counter = counter.saturating_add(1);
+        return current;
+    }
+
+    let start = ctx
+        .document_attributes
+        .get(counter_attribute)
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+    counters.insert(counter_attribute.to_owned(), start.saturating_add(1));
+    start
 }
 
 fn resolve_image_src(
@@ -1744,6 +1857,38 @@ mod tests {
     }
 
     #[test]
+    fn renders_default_captioned_titles_for_examples_tables_and_images() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n\n.First Example\n====\ncontent\n====\n\n.Second Example\n====\nmore\n====\n\n.Agents\n|===\n|Name\n|Ada\n|===\n\n.The Tiger\nimage::images/tiger.png[Tiger]",
+        ));
+
+        assert!(html.contains("<div class=\"title\">Example 1. First Example</div>"));
+        assert!(html.contains("<div class=\"title\">Example 2. Second Example</div>"));
+        assert!(html.contains("<caption class=\"title\">Table 1. Agents</caption>"));
+        assert!(html.contains("<div class=\"title\">Figure 1. The Tiger</div>"));
+    }
+
+    #[test]
+    fn renders_listing_captions_when_enabled_and_respects_counter_start() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n:listing-caption: Listing\n:listing-number: 3\n\n.First\n[source,rust]\n----\nfn main() {}\n----\n\n.Second\n----\nputs 'hi'\n----",
+        ));
+
+        assert!(html.contains("<div class=\"title\">Listing 3. First</div>"));
+        assert!(html.contains("<div class=\"title\">Listing 4. Second</div>"));
+    }
+
+    #[test]
+    fn block_caption_overrides_generated_captioned_title() {
+        let html = render_html(&crate::parser::parse_document(
+            "= Demo\n\n.Block Title\n[caption=\"Example A: \"]\n====\nBlock content\n====",
+        ));
+
+        assert!(html.contains("<div class=\"title\">Example A: Block Title</div>"));
+        assert!(!html.contains("Example 1. Block Title"));
+    }
+
+    #[test]
     fn renders_fenced_code_blocks_with_language_class() {
         let html = render_html(&crate::parser::parse_document("```rust\nfn main() {}\n```"));
 
@@ -1816,7 +1961,7 @@ mod tests {
         ));
 
         assert!(html.contains("<table class=\"tableblock frame-all grid-all stretch\">"));
-        assert!(html.contains("<caption class=\"title\">Agents</caption>"));
+        assert!(html.contains("<caption class=\"title\">Table 1. Agents</caption>"));
         assert!(html.contains("<thead>"));
         assert!(html.contains("<th class=\"tableblock halign-left valign-top\">Name</th>"));
         assert!(html.contains(
@@ -2211,7 +2356,7 @@ mod tests {
         let html = render_html(&crate::parser::parse_document(
             ".The AsciiDoc Tiger\nimage::tiger.png[Tiger]",
         ));
-        assert!(html.contains("<div class=\"title\">The AsciiDoc Tiger</div>"));
+        assert!(html.contains("<div class=\"title\">Figure 1. The AsciiDoc Tiger</div>"));
     }
 
     #[test]
