@@ -1,0 +1,35 @@
+= Stacked Block Attribute Lists Demo
+
+This example exercises block preludes where a title is followed by multiple
+attribute list lines before the block content.
+
+== Delimited source block
+
+.Delimited source with stacked attribute lists
+[source]
+[rust,linenums]
+----
+fn main() {
+    println!("stacked attrs on a delimited block");
+}
+----
+
+== Paragraph-style source block
+
+.Paragraph source with stacked attribute lists
+[source]
+[javascript]
+console.log("stacked attrs on a paragraph-style block");
+
+== Quote with stacked positional attributes
+
+.Quoted with attribution and citetitle on a second attribute list
+[quote]
+[Grace Hopper, Computer Programming Lore]
+____
+The most dangerous phrase in the language is, "We've always done it this way."
+____
+
+Run with `cargo run -- examples\stacked-block-attribute-lists-demo.adoc`
+or `cargo run -- --format json examples\stacked-block-attribute-lists-demo.adoc`
+to inspect the merged block metadata.

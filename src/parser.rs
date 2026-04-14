@@ -1639,7 +1639,7 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
         }
     }
 
-    if let Some(attr_line) = lines
+    while let Some(attr_line) = lines
         .get(cursor)
         .and_then(|line| parse_attribute_list_line(line))
     {
@@ -1647,7 +1647,9 @@ fn try_parse_block_prelude(lines: &[&str], index: usize) -> Option<BlockPrelude>
         if lines.get(next).is_some_and(|line| !line.trim().is_empty()) {
             apply_attribute_list_to_metadata(&mut prelude.metadata, &attr_line);
             cursor += 1;
+            continue;
         }
+        break;
     }
 
     prelude.consumed_lines = cursor - index;
@@ -1908,8 +1910,9 @@ fn split_attribute_list(input: &str) -> Vec<String> {
 }
 
 fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[String]) {
+    let base_slot = next_attribute_slot(metadata);
     for (index, entry) in entries.iter().enumerate() {
-        let slot = index + 1;
+        let slot = base_slot + index;
         if entry.is_empty() {
             continue;
         }
@@ -2011,6 +2014,16 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
     }
 
     normalize_source_listing_metadata(metadata);
+}
+
+fn next_attribute_slot(metadata: &BlockMetadata) -> usize {
+    metadata
+        .attributes
+        .keys()
+        .filter_map(|key| key.strip_prefix('$')?.parse::<usize>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1
 }
 
 fn normalize_source_listing_metadata(metadata: &mut BlockMetadata) {
@@ -4609,6 +4622,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_delimited_listing_block_title_with_stacked_attribute_lists() {
+        let document =
+            parse_document(".Exhibit A\n[source]\n[rust,linenums]\n----\nfn main() {}\n----");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.title.as_deref(), Some("Exhibit A"));
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(
+            listing.metadata.attributes.get("$1").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            listing.metadata.attributes.get("$2").map(String::as_str),
+            Some("rust")
+        );
+        assert_eq!(
+            listing.metadata.attributes.get("$3").map(String::as_str),
+            Some("linenums")
+        );
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
+            Some("rust")
+        );
+        assert!(
+            listing
+                .metadata
+                .options
+                .iter()
+                .any(|option| option == "linenums")
+        );
+    }
+
+    #[test]
     fn parses_delimited_sidebar_block_attributes() {
         let document = parse_document("[foo=bar,%open,.callout]\n****\ninside\n****");
 
@@ -4630,6 +4682,33 @@ mod tests {
         assert_eq!(sidebar.metadata.role.as_deref(), Some("callout"));
         assert_eq!(sidebar.metadata.options, vec!["open"]);
         assert_eq!(sidebar.metadata.roles, vec!["callout"]);
+    }
+
+    #[test]
+    fn parses_non_delimited_block_with_stacked_attribute_lists() {
+        let document = parse_document(".Exhibit A\n[source]\n[rust]\nfn main() {}");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.title.as_deref(), Some("Exhibit A"));
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(
+            listing.metadata.attributes.get("$1").map(String::as_str),
+            Some("source")
+        );
+        assert_eq!(
+            listing.metadata.attributes.get("$2").map(String::as_str),
+            Some("rust")
+        );
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
+            Some("rust")
+        );
     }
 
     #[test]
@@ -5073,7 +5152,11 @@ mod tests {
         };
         assert_eq!(listing.metadata.style.as_deref(), Some("source"));
         assert_eq!(
-            listing.metadata.attributes.get("language").map(String::as_str),
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
             Some("rust")
         );
         assert_eq!(listing.lines, vec!["fn main() {}"]);
