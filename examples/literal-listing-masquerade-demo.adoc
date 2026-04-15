@@ -1,0 +1,32 @@
+= Literal and Listing Masquerade Demo
+
+This example exercises delimiter-based block masquerading between literal and
+listing contexts.
+
+== Listing masquerading on literal delimiters
+
+.A literal-delimited block masquerading as a listing block
+[listing]
+....
+puts 'hello from a listing block' <1>
+....
+
+== Source masquerading on literal delimiters
+
+.A literal-delimited block masquerading as a source listing
+[source,rust]
+....
+fn main() {} <1>
+....
+
+== Literal masquerading on listing delimiters
+
+.A listing-delimited block masquerading as a literal block
+[literal]
+----
+puts 'this stays literal <1>'
+----
+
+Run with `cargo run -- examples/literal-listing-masquerade-demo.adoc`
+or `cargo run -- --format json examples/literal-listing-masquerade-demo.adoc`
+to inspect the chosen block kinds and metadata.

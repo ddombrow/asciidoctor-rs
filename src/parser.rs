@@ -1438,7 +1438,13 @@ fn parse_delimited_block(
         ));
     }
 
-    let block = match block_kind {
+    let effective_block_kind = match (block_kind, prelude.metadata.style.as_deref()) {
+        ("listing", Some("literal")) => "literal",
+        ("literal", Some("listing" | "source")) => "listing",
+        _ => block_kind,
+    };
+
+    let block = match effective_block_kind {
         "passthrough" => Block::Passthrough(crate::ast::PassthroughBlock {
             content: inner_lines.join("\n"),
             reftext: None,
@@ -5241,6 +5247,50 @@ mod tests {
         };
         assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
         assert_eq!(literal.lines, vec!["  preserved text"]);
+        assert!(literal.callouts.is_empty());
+    }
+
+    #[test]
+    fn parses_listing_styled_literal_block_as_listing() {
+        let document = parse_document("[listing]\n....\nputs 'hello' <1>\n....");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.style.as_deref(), Some("listing"));
+        assert_eq!(listing.lines, vec!["puts 'hello'"]);
+        assert_eq!(listing.callouts, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn parses_source_styled_literal_block_as_listing() {
+        let document = parse_document("[source,rust]\n....\nfn main() {} <1>\n....");
+
+        let [Block::Listing(listing)] = document.blocks.as_slice() else {
+            panic!("expected listing");
+        };
+        assert_eq!(listing.metadata.style.as_deref(), Some("source"));
+        assert_eq!(listing.lines, vec!["fn main() {}"]);
+        assert_eq!(listing.callouts, vec![(0, 1)]);
+        assert_eq!(
+            listing
+                .metadata
+                .attributes
+                .get("language")
+                .map(String::as_str),
+            Some("rust")
+        );
+    }
+
+    #[test]
+    fn parses_literal_styled_listing_block_as_literal() {
+        let document = parse_document("[literal]\n----\nputs 'hello' <1>\n----");
+
+        let [Block::Literal(literal)] = document.blocks.as_slice() else {
+            panic!("expected literal");
+        };
+        assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
+        assert_eq!(literal.lines, vec!["puts 'hello' <1>"]);
         assert!(literal.callouts.is_empty());
     }
 
