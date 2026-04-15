@@ -1,0 +1,27 @@
+= Block ID Demo
+
+This example exercises block IDs assigned from attribute lists, including the
+combined `style#id` shorthand for styled blocks.
+
+See <<delimited-example>>, <<roads>>, and <<roads-attributed>> below.
+
+== Hash ID on its own
+
+[#delimited-example]
+====
+This delimited example block uses a standalone hash ID entry.
+====
+
+== Combined style and ID shorthand
+
+[quote#roads]
+Roads? Where we're going, we don't need roads.
+
+== Combined style, ID, and positional attributes
+
+[quote#roads-attributed,Dr. Emmett Brown,Back to the Future]
+Roads? Where we're going, we don't need roads.
+
+Run with `cargo run -- examples\block-id-demo.adoc`
+or `cargo run -- --format json examples\block-id-demo.adoc`
+to inspect the assigned block IDs and the resolved cross references.

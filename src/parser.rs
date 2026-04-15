@@ -1946,6 +1946,22 @@ fn apply_attribute_list_to_metadata(metadata: &mut BlockMetadata, entries: &[Str
             continue;
         }
 
+        if metadata.style.is_none()
+            && let Some((style, id)) = parse_style_id_shorthand(entry)
+        {
+            metadata
+                .attributes
+                .insert(format!("${slot}"), entry.clone());
+            metadata.style = Some(style.to_owned());
+            metadata
+                .attributes
+                .entry("style".into())
+                .or_insert_with(|| style.to_owned());
+            metadata.id = Some(id.to_owned());
+            metadata.attributes.insert("id".into(), id.to_owned());
+            continue;
+        }
+
         if let Some(role_entry) = entry.strip_prefix('.') {
             let roles = role_entry
                 .split('.')
@@ -2024,6 +2040,15 @@ fn next_attribute_slot(metadata: &BlockMetadata) -> usize {
         .max()
         .unwrap_or(0)
         + 1
+}
+
+fn parse_style_id_shorthand(entry: &str) -> Option<(&str, &str)> {
+    let (style, id) = entry.split_once('#')?;
+    if style.is_empty() || id.is_empty() || !is_valid_anchor_id(id) {
+        return None;
+    }
+
+    Some((style, id))
 }
 
 fn normalize_source_listing_metadata(metadata: &mut BlockMetadata) {
@@ -4937,6 +4962,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_quote_block_with_combined_style_id_and_positional_attributes() {
+        let document = parse_document(
+            "[quote#roads, Dr. Emmett Brown, Back to the Future]\n____\nRoads? Where we're going, we don't need roads.\n____",
+        );
+
+        let [Block::Quote(quote)] = document.blocks.as_slice() else {
+            panic!("expected quote block");
+        };
+        assert_eq!(quote.metadata.style.as_deref(), Some("quote"));
+        assert_eq!(quote.metadata.id.as_deref(), Some("roads"));
+        assert_eq!(quote.attribution.as_deref(), Some("Dr. Emmett Brown"));
+        assert_eq!(quote.citetitle.as_deref(), Some("Back to the Future"));
+    }
+
+    #[test]
     fn parses_quote_block_without_attribution() {
         let document = parse_document("____\nSome quoted text.\n____");
 
@@ -5076,6 +5116,23 @@ mod tests {
             panic!("expected paragraph child");
         };
         assert_eq!(paragraph.plain_text(), "Four score.");
+    }
+
+    #[test]
+    fn parses_quote_styled_paragraph_with_combined_style_and_id() {
+        let document = parse_document("[quote#roads]\nRoads? Where we're going, we don't need roads.");
+
+        let [Block::Quote(quote)] = document.blocks.as_slice() else {
+            panic!("expected quote block");
+        };
+        assert_eq!(quote.metadata.style.as_deref(), Some("quote"));
+        assert_eq!(quote.metadata.id.as_deref(), Some("roads"));
+        assert!(quote.attribution.is_none());
+        assert!(quote.citetitle.is_none());
+        let [Block::Paragraph(paragraph)] = quote.blocks.as_slice() else {
+            panic!("expected paragraph child");
+        };
+        assert_eq!(paragraph.plain_text(), "Roads? Where we're going, we don't need roads.");
     }
 
     #[test]
