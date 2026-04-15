@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Document {
     pub title: Option<Heading>,
@@ -88,7 +90,16 @@ pub struct CalloutItem {
 pub struct CompoundBlock {
     pub blocks: Vec<Block>,
     pub reftext: Option<String>,
+    pub context: Option<OpenBlockContext>,
     pub metadata: BlockMetadata,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenBlockContext {
+    Abstract,
+    Comment,
+    PartIntro,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

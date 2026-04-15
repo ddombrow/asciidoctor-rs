@@ -708,13 +708,13 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   }
 
   if (block.type === "open") {
-    if (block.style === "comment") {
+    if (block.context === "comment") {
       return "";
     }
 
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
-    if (block.style === "abstract") {
+    if (block.context === "abstract") {
       return `
         <div class="quoteblock abstract"${id}>
           ${title}
@@ -724,7 +724,11 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
         </div>
       `;
     }
-    const styleClass = block.style && block.style !== "open" ? ` ${escapeHtml(block.style)}` : "";
+    const styleClass = block.context === "part_intro"
+      ? " partintro"
+      : block.style && block.style !== "open"
+        ? ` ${escapeHtml(block.style)}`
+        : "";
     return `
       <div class="openblock${styleClass}"${id}>
         ${title}

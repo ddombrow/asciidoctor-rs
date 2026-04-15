@@ -430,6 +430,8 @@ pub struct CompoundBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reftext: Option<String>,
     pub blocks: Vec<PreparedBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<crate::ast::OpenBlockContext>,
     pub attributes: BTreeMap<String, String>,
     pub content_model: Option<ContentModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1035,6 +1037,7 @@ fn prepare_compound_block(block: &AstCompoundBlock) -> CompoundBlock {
         id: block.metadata.id.clone(),
         reftext: block.reftext.clone(),
         blocks: prepare_blocks(&block.blocks, false, &mut Vec::new()),
+        context: block.context,
         attributes: block.metadata.attributes.clone(),
         content_model: Some(ContentModel::Compound),
         line_number: None,
@@ -1164,6 +1167,7 @@ fn prepare_preamble(blocks: Vec<PreparedBlock>) -> CompoundBlock {
         id: None,
         reftext: None,
         blocks,
+        context: None,
         attributes: BTreeMap::new(),
         content_model: Some(ContentModel::Compound),
         line_number: None,
@@ -3069,6 +3073,7 @@ mod tests {
                         metadata: BlockMetadata::default(),
                     })],
                     reftext: None,
+                    context: None,
                     metadata: Default::default(),
                 }),
                 Block::Example(AstCompoundBlock {
@@ -3080,6 +3085,7 @@ mod tests {
                         metadata: BlockMetadata::default(),
                     })],
                     reftext: None,
+                    context: None,
                     metadata: Default::default(),
                 }),
             ],

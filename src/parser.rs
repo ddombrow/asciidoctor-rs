@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{
     AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CalloutItem, CalloutList,
-    CompoundBlock, Document, Heading, ImageBlock, ListItem, Listing, OrderedList, Paragraph,
-    QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
+    CompoundBlock, Document, Heading, ImageBlock, ListItem, Listing, OpenBlockContext,
+    OrderedList, Paragraph, QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
 };
 use crate::inline::parse_inlines;
 use crate::normalize::normalize_asciidoc;
@@ -1397,6 +1397,11 @@ fn apply_anchor_to_admonition(
     admonition
 }
 
+fn clear_resolved_style(metadata: &mut BlockMetadata) {
+    metadata.style = None;
+    metadata.attributes.remove("style");
+}
+
 fn parse_delimited_block(
     lines: &[&str],
     index: usize,
@@ -1452,6 +1457,9 @@ fn parse_delimited_block(
         }),
         "listing" => {
             let mut metadata = prelude.metadata;
+            if metadata.style.as_deref() == Some("listing") {
+                clear_resolved_style(&mut metadata);
+            }
             if let Some(entries) = fenced_entries.as_ref() {
                 apply_fenced_code_metadata(&mut metadata, entries);
             }
@@ -1461,32 +1469,46 @@ fn parse_delimited_block(
                 .collect::<Vec<_>>();
             Block::Listing(make_listing_from_lines(lines, None, metadata))
         }
-        "literal" => Block::Literal(Listing {
-            lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
-            callouts: vec![],
-            reftext: None,
-            metadata: prelude.metadata,
-        }),
+        "literal" => {
+            let mut metadata = prelude.metadata;
+            if metadata.style.as_deref() == Some("literal") {
+                clear_resolved_style(&mut metadata);
+            }
+            Block::Literal(Listing {
+                lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+                callouts: vec![],
+                reftext: None,
+                metadata,
+            })
+        }
         "example" => {
+            let mut metadata = prelude.metadata;
+            clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Example(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 reftext: None,
-                metadata: prelude.metadata,
+                context: None,
+                metadata,
             })
         }
         "sidebar" => {
+            let mut metadata = prelude.metadata;
+            clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Sidebar(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 reftext: None,
-                metadata: prelude.metadata,
+                context: None,
+                metadata,
             })
         }
         "quote" => {
             let is_verse = prelude.metadata.style.as_deref() == Some("verse");
-            let attribution = prelude.metadata.attributes.get("$2").cloned();
-            let citetitle = prelude.metadata.attributes.get("$3").cloned();
+            let mut metadata = prelude.metadata;
+            clear_resolved_style(&mut metadata);
+            let attribution = metadata.attributes.get("$2").cloned();
+            let citetitle = metadata.attributes.get("$3").cloned();
             if is_verse {
                 Block::Quote(QuoteBlock {
                     blocks: vec![],
@@ -1495,7 +1517,7 @@ fn parse_delimited_block(
                     citetitle,
                     is_verse: true,
                     reftext: None,
-                    metadata: prelude.metadata,
+                    metadata,
                 })
             } else {
                 let mut nested_title = None;
@@ -1506,7 +1528,7 @@ fn parse_delimited_block(
                     citetitle,
                     is_verse: false,
                     reftext: None,
-                    metadata: prelude.metadata,
+                    metadata,
                 })
             }
         }
@@ -1520,9 +1542,9 @@ fn parse_delimited_block(
     Some((block, consumed))
 }
 
-fn masquerade_open_block(metadata: BlockMetadata, inner_lines: &[&str]) -> Block {
-    let style = metadata.style.as_deref().unwrap_or("");
-    if let Some(variant) = admonition_variant_from_style(style) {
+fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> Block {
+    let style = metadata.style.clone().unwrap_or_default();
+    if let Some(variant) = admonition_variant_from_style(&style) {
         let mut nested_title = None;
         return Block::Admonition(AdmonitionBlock {
             variant,
@@ -1533,35 +1555,51 @@ fn masquerade_open_block(metadata: BlockMetadata, inner_lines: &[&str]) -> Block
         });
     }
 
-    match style {
+    match style.as_str() {
         "literal" => Block::Literal(Listing {
-            lines: inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+            lines: {
+                clear_resolved_style(&mut metadata);
+                inner_lines.iter().map(|line| (*line).to_owned()).collect()
+            },
             callouts: vec![],
             reftext: None,
             metadata,
         }),
-        "listing" | "source" => Block::Listing(make_listing_from_lines(
+        "listing" => {
+            clear_resolved_style(&mut metadata);
+            Block::Listing(make_listing_from_lines(
+                inner_lines.iter().map(|line| (*line).to_owned()).collect(),
+                None,
+                metadata,
+            ))
+        }
+        "source" => Block::Listing(make_listing_from_lines(
             inner_lines.iter().map(|line| (*line).to_owned()).collect(),
             None,
             metadata,
         )),
         "sidebar" => {
+            clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Sidebar(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 reftext: None,
+                context: None,
                 metadata,
             })
         }
         "example" => {
+            clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Example(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 reftext: None,
+                context: None,
                 metadata,
             })
         }
         "quote" => {
+            clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Quote(QuoteBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
@@ -1573,19 +1611,54 @@ fn masquerade_open_block(metadata: BlockMetadata, inner_lines: &[&str]) -> Block
                 metadata,
             })
         }
-        "verse" => Block::Quote(QuoteBlock {
-            blocks: vec![],
-            content: Some(inner_lines.join("\n")),
-            attribution: metadata.attributes.get("$2").cloned(),
-            citetitle: metadata.attributes.get("$3").cloned(),
-            is_verse: true,
-            reftext: None,
-            metadata,
-        }),
-        "pass" | "stem" | "latexmath" | "asciimath" => {
+        "verse" => {
+            clear_resolved_style(&mut metadata);
+            Block::Quote(QuoteBlock {
+                blocks: vec![],
+                content: Some(inner_lines.join("\n")),
+                attribution: metadata.attributes.get("$2").cloned(),
+                citetitle: metadata.attributes.get("$3").cloned(),
+                is_verse: true,
+                reftext: None,
+                metadata,
+            })
+        }
+        "pass" => {
+            clear_resolved_style(&mut metadata);
             Block::Passthrough(crate::ast::PassthroughBlock {
                 content: inner_lines.join("\n"),
                 reftext: None,
+                metadata,
+            })
+        }
+        "stem" | "latexmath" | "asciimath" => Block::Passthrough(crate::ast::PassthroughBlock {
+            content: inner_lines.join("\n"),
+            reftext: None,
+            metadata,
+        }),
+        "abstract" | "comment" | "partintro" => {
+            let context = match style.as_str() {
+                "abstract" => OpenBlockContext::Abstract,
+                "comment" => OpenBlockContext::Comment,
+                "partintro" => OpenBlockContext::PartIntro,
+                _ => unreachable!(),
+            };
+            clear_resolved_style(&mut metadata);
+            let mut nested_title = None;
+            Block::Open(CompoundBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                reftext: None,
+                context: Some(context),
+                metadata,
+            })
+        }
+        "open" => {
+            clear_resolved_style(&mut metadata);
+            let mut nested_title = None;
+            Block::Open(CompoundBlock {
+                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                reftext: None,
+                context: None,
                 metadata,
             })
         }
@@ -1594,6 +1667,7 @@ fn masquerade_open_block(metadata: BlockMetadata, inner_lines: &[&str]) -> Block
             Block::Open(CompoundBlock {
                 blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
                 reftext: None,
+                context: None,
                 metadata,
             })
         }
@@ -2517,8 +2591,7 @@ fn make_block_from_paragraph(
 ) -> Block {
     let explicit_normal = metadata.style.as_deref() == Some("normal");
     if explicit_normal {
-        metadata.style = None;
-        metadata.attributes.remove("style");
+        clear_resolved_style(&mut metadata);
     }
 
     if let Some(variant) = metadata
@@ -2548,6 +2621,7 @@ fn make_block_from_paragraph(
         if metadata.id.is_none() {
             metadata.id = id;
         }
+        clear_resolved_style(&mut metadata);
         return Block::Literal(Listing {
             lines,
             callouts: vec![],
@@ -2561,7 +2635,9 @@ fn make_block_from_paragraph(
         if metadata.id.is_none() {
             metadata.id = id;
         }
-        let block = if metadata.style.as_deref() == Some("example") {
+        let style = metadata.style.clone();
+        let block = if style.as_deref() == Some("example") {
+            clear_resolved_style(&mut metadata);
             Block::Example(CompoundBlock {
                 blocks: vec![Block::Paragraph(Paragraph {
                     inlines: parse_inlines(&lines.join("\n")),
@@ -2571,9 +2647,11 @@ fn make_block_from_paragraph(
                     metadata: BlockMetadata::default(),
                 })],
                 reftext,
+                context: None,
                 metadata,
             })
-        } else if metadata.style.as_deref() == Some("sidebar") {
+        } else if style.as_deref() == Some("sidebar") {
+            clear_resolved_style(&mut metadata);
             Block::Sidebar(CompoundBlock {
                 blocks: vec![Block::Paragraph(Paragraph {
                     inlines: parse_inlines(&lines.join("\n")),
@@ -2583,9 +2661,17 @@ fn make_block_from_paragraph(
                     metadata: BlockMetadata::default(),
                 })],
                 reftext,
+                context: None,
                 metadata,
             })
         } else {
+            let context = match style.as_deref() {
+                Some("abstract") => Some(OpenBlockContext::Abstract),
+                Some("comment") => Some(OpenBlockContext::Comment),
+                Some("partintro") => Some(OpenBlockContext::PartIntro),
+                _ => None,
+            };
+            clear_resolved_style(&mut metadata);
             Block::Open(CompoundBlock {
                 blocks: vec![Block::Paragraph(Paragraph {
                     inlines: parse_inlines(&lines.join("\n")),
@@ -2595,6 +2681,7 @@ fn make_block_from_paragraph(
                     metadata: BlockMetadata::default(),
                 })],
                 reftext,
+                context,
                 metadata,
             })
         };
@@ -2605,6 +2692,9 @@ fn make_block_from_paragraph(
         if metadata.id.is_none() {
             metadata.id = id;
         }
+        if metadata.style.as_deref() == Some("listing") {
+            clear_resolved_style(&mut metadata);
+        }
         return Block::Listing(make_listing_from_lines(lines, reftext, metadata));
     }
 
@@ -2612,6 +2702,7 @@ fn make_block_from_paragraph(
         if metadata.id.is_none() {
             metadata.id = id;
         }
+        clear_resolved_style(&mut metadata);
         return Block::Quote(QuoteBlock {
             blocks: vec![Block::Paragraph(Paragraph {
                 inlines: parse_inlines(&lines.join("\n")),
@@ -2633,6 +2724,7 @@ fn make_block_from_paragraph(
         if metadata.id.is_none() {
             metadata.id = id;
         }
+        clear_resolved_style(&mut metadata);
         return Block::Quote(QuoteBlock {
             blocks: vec![],
             content: Some(lines.join("\n")),
@@ -2645,6 +2737,7 @@ fn make_block_from_paragraph(
     }
 
     if metadata.style.as_deref() == Some("pass") {
+        clear_resolved_style(&mut metadata);
         return Block::Passthrough(crate::ast::PassthroughBlock {
             content: lines.join("\n"),
             reftext,
@@ -3269,8 +3362,8 @@ fn is_valid_anchor_id(id: &str) -> bool {
 mod tests {
     use crate::ast::{
         AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Heading, Inline,
-        InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OrderedList, Paragraph,
-        UnorderedList,
+        InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OpenBlockContext,
+        OrderedList, Paragraph, UnorderedList,
     };
     use crate::parser::parse_document;
 
@@ -4600,6 +4693,7 @@ mod tests {
                     metadata: BlockMetadata::default(),
                 })],
                 reftext: None,
+                context: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -4631,6 +4725,7 @@ mod tests {
                     metadata: BlockMetadata::default(),
                 })],
                 reftext: None,
+                context: None,
                 metadata: BlockMetadata::default(),
             })]
         );
@@ -5050,7 +5145,7 @@ mod tests {
         let [Block::Quote(quote)] = document.blocks.as_slice() else {
             panic!("expected quote block");
         };
-        assert_eq!(quote.metadata.style.as_deref(), Some("quote"));
+        assert_eq!(quote.metadata.style, None);
         assert_eq!(quote.metadata.id.as_deref(), Some("roads"));
         assert_eq!(quote.attribution.as_deref(), Some("Dr. Emmett Brown"));
         assert_eq!(quote.citetitle.as_deref(), Some("Back to the Future"));
@@ -5115,7 +5210,7 @@ mod tests {
             panic!("expected literal block");
         };
         assert_eq!(literal.lines, vec!["This becomes preformatted."]);
-        assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
+        assert_eq!(literal.metadata.style, None);
     }
 
     #[test]
@@ -5127,7 +5222,7 @@ mod tests {
         };
         assert_eq!(listing.lines, vec!["puts 'hello'"]);
         assert_eq!(listing.callouts, vec![(0, 1)]);
-        assert_eq!(listing.metadata.style.as_deref(), Some("listing"));
+        assert_eq!(listing.metadata.style, None);
     }
 
     #[test]
@@ -5205,7 +5300,7 @@ mod tests {
         let [Block::Quote(quote)] = document.blocks.as_slice() else {
             panic!("expected quote block");
         };
-        assert_eq!(quote.metadata.style.as_deref(), Some("quote"));
+        assert_eq!(quote.metadata.style, None);
         assert_eq!(quote.metadata.id.as_deref(), Some("roads"));
         assert!(quote.attribution.is_none());
         assert!(quote.citetitle.is_none());
@@ -5222,7 +5317,7 @@ mod tests {
         let [Block::Sidebar(sidebar)] = document.blocks.as_slice() else {
             panic!("expected sidebar block");
         };
-        assert_eq!(sidebar.metadata.style.as_deref(), Some("sidebar"));
+        assert_eq!(sidebar.metadata.style, None);
         let [Block::Paragraph(paragraph)] = sidebar.blocks.as_slice() else {
             panic!("expected paragraph child");
         };
@@ -5236,7 +5331,7 @@ mod tests {
         let [Block::Example(example)] = document.blocks.as_slice() else {
             panic!("expected example block");
         };
-        assert_eq!(example.metadata.style.as_deref(), Some("example"));
+        assert_eq!(example.metadata.style, None);
         let [Block::Paragraph(paragraph)] = example.blocks.as_slice() else {
             panic!("expected paragraph child");
         };
@@ -5251,6 +5346,7 @@ mod tests {
             panic!("expected verse block");
         };
         assert!(quote.is_verse);
+        assert_eq!(quote.metadata.style, None);
         assert_eq!(
             quote.content.as_deref(),
             Some("The fog comes\non little cat feet.")
@@ -5266,7 +5362,8 @@ mod tests {
         let [Block::Open(open)] = document.blocks.as_slice() else {
             panic!("expected open block");
         };
-        assert_eq!(open.metadata.style.as_deref(), Some("abstract"));
+        assert_eq!(open.metadata.style, None);
+        assert_eq!(open.context, Some(OpenBlockContext::Abstract));
         let [Block::Paragraph(paragraph)] = open.blocks.as_slice() else {
             panic!("expected paragraph child");
         };
@@ -5280,7 +5377,8 @@ mod tests {
         let [Block::Open(open)] = document.blocks.as_slice() else {
             panic!("expected open block");
         };
-        assert_eq!(open.metadata.style.as_deref(), Some("partintro"));
+        assert_eq!(open.metadata.style, None);
+        assert_eq!(open.context, Some(OpenBlockContext::PartIntro));
         let [Block::Paragraph(paragraph)] = open.blocks.as_slice() else {
             panic!("expected paragraph child");
         };
@@ -5294,7 +5392,8 @@ mod tests {
         let [Block::Open(open)] = document.blocks.as_slice() else {
             panic!("expected open block");
         };
-        assert_eq!(open.metadata.style.as_deref(), Some("comment"));
+        assert_eq!(open.metadata.style, None);
+        assert_eq!(open.context, Some(OpenBlockContext::Comment));
         let [Block::Paragraph(paragraph)] = open.blocks.as_slice() else {
             panic!("expected paragraph child");
         };
@@ -5320,7 +5419,7 @@ mod tests {
             panic!("expected passthrough block");
         };
         assert_eq!(passthrough.content, "<span>ok</span>");
-        assert_eq!(passthrough.metadata.style.as_deref(), Some("pass"));
+        assert_eq!(passthrough.metadata.style, None);
     }
 
     #[test]
@@ -5404,7 +5503,7 @@ mod tests {
         let [Block::Listing(listing)] = document.blocks.as_slice() else {
             panic!("expected listing");
         };
-        assert_eq!(listing.metadata.style.as_deref(), Some("listing"));
+        assert_eq!(listing.metadata.style, None);
         assert_eq!(listing.lines, vec!["puts 'hello'"]);
         assert_eq!(listing.callouts, vec![(0, 1)]);
     }
@@ -5416,7 +5515,7 @@ mod tests {
         let [Block::Literal(literal)] = document.blocks.as_slice() else {
             panic!("expected literal");
         };
-        assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
+        assert_eq!(literal.metadata.style, None);
         assert_eq!(literal.lines, vec!["  preserved text"]);
         assert!(literal.callouts.is_empty());
     }
@@ -5428,7 +5527,8 @@ mod tests {
         let [Block::Open(open)] = document.blocks.as_slice() else {
             panic!("expected open block");
         };
-        assert_eq!(open.metadata.style.as_deref(), Some("abstract"));
+        assert_eq!(open.metadata.style, None);
+        assert_eq!(open.context, Some(OpenBlockContext::Abstract));
         assert_eq!(open.blocks.len(), 1);
     }
 
@@ -5439,7 +5539,8 @@ mod tests {
         let [Block::Open(open)] = document.blocks.as_slice() else {
             panic!("expected open block");
         };
-        assert_eq!(open.metadata.style.as_deref(), Some("partintro"));
+        assert_eq!(open.metadata.style, None);
+        assert_eq!(open.context, Some(OpenBlockContext::PartIntro));
         assert_eq!(open.blocks.len(), 1);
     }
 
@@ -5450,7 +5551,8 @@ mod tests {
         let [Block::Open(open)] = document.blocks.as_slice() else {
             panic!("expected open block");
         };
-        assert_eq!(open.metadata.style.as_deref(), Some("comment"));
+        assert_eq!(open.metadata.style, None);
+        assert_eq!(open.context, Some(OpenBlockContext::Comment));
         assert_eq!(open.blocks.len(), 1);
     }
 
@@ -5462,7 +5564,7 @@ mod tests {
             panic!("expected passthrough block");
         };
         assert_eq!(passthrough.content, "<span>ok</span>");
-        assert_eq!(passthrough.metadata.style.as_deref(), Some("pass"));
+        assert_eq!(passthrough.metadata.style, None);
     }
 
     #[test]
@@ -5505,7 +5607,7 @@ mod tests {
         let [Block::Listing(listing)] = document.blocks.as_slice() else {
             panic!("expected listing");
         };
-        assert_eq!(listing.metadata.style.as_deref(), Some("listing"));
+        assert_eq!(listing.metadata.style, None);
         assert_eq!(listing.lines, vec!["puts 'hello'"]);
         assert_eq!(listing.callouts, vec![(0, 1)]);
     }
@@ -5537,7 +5639,7 @@ mod tests {
         let [Block::Literal(literal)] = document.blocks.as_slice() else {
             panic!("expected literal");
         };
-        assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
+        assert_eq!(literal.metadata.style, None);
         assert_eq!(literal.lines, vec!["puts 'hello' <1>"]);
         assert!(literal.callouts.is_empty());
     }

@@ -529,9 +529,12 @@ Hidden.`;
     "open"
   ]);
   expect(blocks[2].isVerse).toBe(true);
-  expect(blocks[3].style).toBe("abstract");
-  expect(blocks[4].style).toBe("partintro");
-  expect(blocks[5].style).toBe("comment");
+  expect(blocks[3].style).toBeUndefined();
+  expect(blocks[3].context).toBe("abstract");
+  expect(blocks[4].style).toBeUndefined();
+  expect(blocks[4].context).toBe("part_intro");
+  expect(blocks[5].style).toBeUndefined();
+  expect(blocks[5].context).toBe("comment");
 
   await page.fill("#source", source);
   await page.click("#render");
@@ -598,10 +601,13 @@ sum_(n=0)^oo 1 / n!
     "passthrough",
     "passthrough"
   ]);
-  expect(blocks[0].style).toBe("abstract");
-  expect(blocks[1].style).toBe("partintro");
-  expect(blocks[2].style).toBe("comment");
-  expect(blocks[3].style).toBe("pass");
+  expect(blocks[0].style).toBeUndefined();
+  expect(blocks[0].context).toBe("abstract");
+  expect(blocks[1].style).toBeUndefined();
+  expect(blocks[1].context).toBe("part_intro");
+  expect(blocks[2].style).toBeUndefined();
+  expect(blocks[2].context).toBe("comment");
+  expect(blocks[3].style).toBeUndefined();
   expect(blocks[4].style).toBe("stem");
   expect(blocks[5].style).toBe("latexmath");
   expect(blocks[6].style).toBe("asciimath");

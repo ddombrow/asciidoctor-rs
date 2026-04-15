@@ -688,11 +688,11 @@ fn render_sidebar(
 }
 
 fn render_open(html: &mut String, block: &crate::prepare::CompoundBlock, ctx: &RenderContext<'_>) {
-    if block.style.as_deref() == Some("comment") {
+    if block.context == Some(crate::ast::OpenBlockContext::Comment) {
         return;
     }
 
-    if block.style.as_deref() == Some("abstract") {
+    if block.context == Some(crate::ast::OpenBlockContext::Abstract) {
         html.push_str("<div class=\"quoteblock abstract\"");
         if let Some(id) = &block.id {
             html.push_str(&format!(" id=\"{}\"", escape_html(id)));
@@ -713,7 +713,11 @@ fn render_open(html: &mut String, block: &crate::prepare::CompoundBlock, ctx: &R
     }
 
     html.push_str("<div class=\"openblock");
-    if let Some(style) = block.style.as_deref()
+    if let Some(context) = block.context {
+        if context == crate::ast::OpenBlockContext::PartIntro {
+            html.push_str(" partintro");
+        }
+    } else if let Some(style) = block.style.as_deref()
         && style != "open"
     {
         html.push(' ');
@@ -1971,6 +1975,7 @@ mod tests {
                         metadata: BlockMetadata::default(),
                     })],
                     reftext: None,
+                    context: None,
                     metadata: BlockMetadata::default(),
                 }),
                 Block::Example(CompoundBlock {
@@ -1982,6 +1987,7 @@ mod tests {
                         metadata: BlockMetadata::default(),
                     })],
                     reftext: None,
+                    context: None,
                     metadata: BlockMetadata::default(),
                 }),
             ],

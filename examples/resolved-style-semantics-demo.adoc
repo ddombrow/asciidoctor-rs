@@ -1,0 +1,107 @@
+= Resolved Style Semantics Demo
+:stem:
+
+This example is meant to be inspected with `--format json`.
+
+The first group changes block context, so the resolved `style` should generally be
+unset in the prepared output.
+
+== Context changes with style unset
+
+=== Listing on literal delimiters
+
+[listing]
+....
+puts 'listing context, no resolved listing style'
+....
+
+=== Literal on listing delimiters
+
+[literal]
+----
+puts 'literal context, no resolved literal style'
+----
+
+=== Quote paragraph
+
+[quote, Ada Lovelace]
+That brain of mine is something more than merely mortal; as time will show.
+
+=== Verse paragraph
+
+[verse, Carl Sandburg, Fog]
+The fog comes
+on little cat feet.
+
+=== Sidebar paragraph
+
+[sidebar]
+This becomes a sidebar block without keeping a resolved sidebar style.
+
+=== Example paragraph
+
+[example]
+This becomes an example block without keeping a resolved example style.
+
+=== Pass open block
+
+[pass]
+--
+<span class="resolved-style-pass">raw passthrough, no resolved pass style</span>
+--
+
+=== Abstract open block
+
+[abstract]
+--
+This keeps open-block context as `abstract`, not a resolved style.
+--
+
+=== Part introduction open block
+
+[partintro]
+--
+This keeps open-block context as `part_intro`, not a resolved style.
+--
+
+=== Comment open block
+
+[comment]
+--
+You should not see this block in rendered output.
+--
+
+This paragraph should appear immediately after the hidden comment block.
+
+== Specialization styles that remain
+
+=== Source listing
+
+[source,rust]
+....
+fn main() {}
+....
+
+=== Stem open block
+
+[stem]
+--
+sqrt(4) = 2
+--
+
+=== Explicit latexmath open block
+
+[latexmath]
+--
+\alpha + \beta = \gamma
+--
+
+=== Explicit asciimath open block
+
+[asciimath]
+--
+sum_(n=0)^oo 1 / n!
+--
+
+Run with `cargo run -- --format json examples/resolved-style-semantics-demo.adoc`
+to inspect which blocks expose `style`, `context`, or neither.
