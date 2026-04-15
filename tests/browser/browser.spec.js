@@ -494,6 +494,145 @@ inside example
   await expect(frame.locator(".exampleblock p")).toHaveText("inside example");
 });
 
+test("exports and renders paragraph masquerades", async ({ page }) => {
+  const source = `= Sample Document
+
+[sidebar]
+Aside.
+
+[example]
+Example.
+
+[verse,Carl Sandburg,Fog]
+The fog comes
+on little cat feet.
+
+[abstract]
+Abstract.
+
+[partintro]
+Intro.
+
+[comment]
+Hidden.`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const blocks = document.blocks[0].blocks;
+
+  expect(blocks.map((block) => block.type)).toEqual([
+    "sidebar",
+    "example",
+    "quote",
+    "open",
+    "open",
+    "open"
+  ]);
+  expect(blocks[2].isVerse).toBe(true);
+  expect(blocks[3].style).toBe("abstract");
+  expect(blocks[4].style).toBe("partintro");
+  expect(blocks[5].style).toBe("comment");
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".sidebarblock p")).toHaveText("Aside.");
+  await expect(frame.locator(".exampleblock p")).toHaveText("Example.");
+  await expect(frame.locator(".verseblock pre")).toContainText("The fog comes");
+  await expect(frame.locator(".quoteblock.abstract p")).toHaveText("Abstract.");
+  await expect(frame.locator(".openblock.partintro p")).toHaveText("Intro.");
+  await expect(frame.locator("body")).not.toContainText("Hidden.");
+});
+
+test("exports and renders open block masquerades", async ({ page }) => {
+  test.slow();
+
+  const source = `= Sample Document
+
+[abstract]
+--
+Abstract.
+--
+
+[partintro]
+--
+Intro.
+--
+
+[comment]
+--
+Hidden.
+--
+
+[pass]
+--
+<span class="open-pass">ok</span>
+--
+
+[stem]
+--
+sqrt(4) = 2
+--
+
+[latexmath]
+--
+\\alpha + \\beta = \\gamma
+--
+
+[asciimath]
+--
+sum_(n=0)^oo 1 / n!
+--`;
+
+  const json = await page.evaluate((input) => window.__prepareDocumentJson(input), source);
+  const document = JSON.parse(json);
+  const blocks = document.blocks[0].blocks;
+
+  expect(blocks.map((block) => block.type)).toEqual([
+    "open",
+    "open",
+    "open",
+    "passthrough",
+    "passthrough",
+    "passthrough",
+    "passthrough"
+  ]);
+  expect(blocks[0].style).toBe("abstract");
+  expect(blocks[1].style).toBe("partintro");
+  expect(blocks[2].style).toBe("comment");
+  expect(blocks[3].style).toBe("pass");
+  expect(blocks[4].style).toBe("stem");
+  expect(blocks[5].style).toBe("latexmath");
+  expect(blocks[6].style).toBe("asciimath");
+
+  await page.fill("#source", source);
+  await page.click("#render");
+
+  const frame = page.frameLocator("#preview-frame");
+  await expect(frame.locator(".quoteblock.abstract p")).toHaveText("Abstract.");
+  await expect(frame.locator(".openblock.partintro p")).toHaveText("Intro.");
+  await expect(frame.locator("body")).not.toContainText("Hidden.");
+  await expect(frame.locator(".open-pass")).toHaveText("ok");
+  await expect(frame.locator(".stemblock")).toHaveCount(3);
+  await expect(frame.locator("script[src*='MathJax.js']")).toHaveCount(1);
+  await page.waitForFunction(() => {
+    const iframe = document.querySelector("#preview-frame");
+    const doc = iframe?.contentDocument;
+    if (!doc) {
+      return false;
+    }
+    return (
+      doc.querySelectorAll(".stemblock").length >= 3 &&
+      [...doc.querySelectorAll(".stemblock")].every(
+        (node) =>
+          node.querySelector(".MathJax_CHTML, .mjx-chtml, .mathjax-fallback math") &&
+          !node.querySelector(".MathJax_Error")
+      )
+    );
+  }, { timeout: 45000 });
+});
+
 test("preview trims outer blank lines in delimited verbatim blocks", async ({ page }) => {
   const source = `= Sample Document
 

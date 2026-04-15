@@ -708,10 +708,25 @@ function renderBlock(block, parentSectionLevel = 0, documentAttributes = {}, sec
   }
 
   if (block.type === "open") {
+    if (block.style === "comment") {
+      return "";
+    }
+
     const id = block.id ? ` id="${escapeHtml(block.id)}"` : "";
     const title = block.title ? `<div class="title">${escapeHtml(renderPlainTitle(block.title, renderState))}</div>` : "";
+    if (block.style === "abstract") {
+      return `
+        <div class="quoteblock abstract"${id}>
+          ${title}
+          <blockquote>
+            ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
+          </blockquote>
+        </div>
+      `;
+    }
+    const styleClass = block.style && block.style !== "open" ? ` ${escapeHtml(block.style)}` : "";
     return `
-      <div class="openblock"${id}>
+      <div class="openblock${styleClass}"${id}>
         ${title}
         <div class="content">
           ${renderBlocks(block.blocks ?? [], parentSectionLevel, documentAttributes, sections, renderState)}
@@ -874,10 +889,12 @@ function renderPreview(document) {
     throw new Error("Preview frame is not available");
   }
   previewMathJaxRenderId += 1;
+  const shouldUseMathJax =
+    usesStem(document.attributes ?? {}) || hasStemBlocks(document.blocks ?? []);
   const highlightScript = usesHighlightJs(document.attributes ?? {})
     ? `<script src="${highlightJsScriptHref}" onload="hljs.highlightAll()"></script>`
     : "";
-  const mathJaxScripts = usesStem(document.attributes ?? {})
+  const mathJaxScripts = shouldUseMathJax
     ? `<script type="text/x-mathjax-config">
 MathJax.Hub.Config({
   messageStyle: "none",
@@ -950,7 +967,7 @@ MathJax.Hub.Config({
     </body>
   </html>`);
   doc.close();
-  if (usesStem(document.attributes ?? {})) {
+  if (shouldUseMathJax) {
     queuePreviewMathJaxTypeset(previewMathJaxRenderId);
   }
 }
@@ -1016,6 +1033,39 @@ function usesHighlightJs(documentAttributes = {}) {
 function usesStem(documentAttributes = {}) {
   const stem = getAttribute(documentAttributes, "stem");
   return typeof stem === "string";
+}
+
+function hasStemBlocks(blocks = []) {
+  return (blocks ?? []).some((block) => {
+    if (!block || typeof block !== "object") {
+      return false;
+    }
+
+    if (
+      block.type === "passthrough" &&
+      (block.style === "stem" || block.style === "latexmath" || block.style === "asciimath")
+    ) {
+      return true;
+    }
+
+    if (Array.isArray(block.blocks) && hasStemBlocks(block.blocks)) {
+      return true;
+    }
+
+    if (Array.isArray(block.items)) {
+      return block.items.some((item) => {
+        if (Array.isArray(item?.blocks) && hasStemBlocks(item.blocks)) {
+          return true;
+        }
+        if (item?.description?.blocks && hasStemBlocks(item.description.blocks)) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    return false;
+  });
 }
 
 function resolveStemNotation(style, documentAttributes = {}) {

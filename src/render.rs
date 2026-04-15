@@ -688,7 +688,38 @@ fn render_sidebar(
 }
 
 fn render_open(html: &mut String, block: &crate::prepare::CompoundBlock, ctx: &RenderContext<'_>) {
-    html.push_str("<div class=\"openblock\"");
+    if block.style.as_deref() == Some("comment") {
+        return;
+    }
+
+    if block.style.as_deref() == Some("abstract") {
+        html.push_str("<div class=\"quoteblock abstract\"");
+        if let Some(id) = &block.id {
+            html.push_str(&format!(" id=\"{}\"", escape_html(id)));
+        }
+        html.push_str(">\n");
+        if let Some(title) = expanded_block_title(block.title.as_deref(), ctx) {
+            html.push_str(&format!(
+                "<div class=\"title\">{}</div>\n",
+                escape_html(&title)
+            ));
+        }
+        html.push_str("<blockquote>\n");
+        for child in &block.blocks {
+            render_block(html, child, ctx);
+        }
+        html.push_str("</blockquote>\n</div>\n");
+        return;
+    }
+
+    html.push_str("<div class=\"openblock");
+    if let Some(style) = block.style.as_deref()
+        && style != "open"
+    {
+        html.push(' ');
+        html.push_str(&escape_html(style));
+    }
+    html.push('"');
     if let Some(id) = &block.id {
         html.push_str(&format!(" id=\"{}\"", escape_html(id)));
     }
@@ -2613,6 +2644,30 @@ mod tests {
         ));
         assert!(html.contains("<div class=\"sidebarblock\""));
         assert!(!html.contains("openblock"));
+    }
+
+    #[test]
+    fn renders_paragraph_masquerades_for_sidebar_example_abstract_partintro_and_comment() {
+        let html = render_html(&crate::parser::parse_document(
+            "[sidebar]\nAside.\n\n[example]\nExample.\n\n[abstract]\nAbstract.\n\n[partintro]\nIntro.\n\n[comment]\nHidden.",
+        ));
+        assert!(html.contains("<div class=\"sidebarblock\""));
+        assert!(html.contains("<div class=\"exampleblock\""));
+        assert!(html.contains("<div class=\"quoteblock abstract\""));
+        assert!(html.contains("<div class=\"openblock partintro\""));
+        assert!(!html.contains("Hidden."));
+    }
+
+    #[test]
+    fn renders_open_block_masquerades_for_abstract_partintro_comment_pass_and_stem() {
+        let html = render_html(&crate::parser::parse_document(
+            "[abstract]\n--\nAbstract.\n--\n\n[partintro]\n--\nIntro.\n--\n\n[comment]\n--\nHidden.\n--\n\n[pass]\n--\n<span class=\"open-pass\">ok</span>\n--\n\n[stem]\n--\nsqrt(4) = 2\n--",
+        ));
+        assert!(html.contains("<div class=\"quoteblock abstract\""));
+        assert!(html.contains("<div class=\"openblock partintro\""));
+        assert!(!html.contains("Hidden."));
+        assert!(html.contains("<span class=\"open-pass\">ok</span>"));
+        assert!(html.contains("<div class=\"stemblock\">"));
     }
 
     #[test]

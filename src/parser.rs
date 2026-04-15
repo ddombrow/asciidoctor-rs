@@ -1582,6 +1582,13 @@ fn masquerade_open_block(metadata: BlockMetadata, inner_lines: &[&str]) -> Block
             reftext: None,
             metadata,
         }),
+        "pass" | "stem" | "latexmath" | "asciimath" => {
+            Block::Passthrough(crate::ast::PassthroughBlock {
+                content: inner_lines.join("\n"),
+                reftext: None,
+                metadata,
+            })
+        }
         _ => {
             let mut nested_title = None;
             Block::Open(CompoundBlock {
@@ -2508,6 +2515,12 @@ fn make_block_from_paragraph(
     reftext: Option<String>,
     mut metadata: BlockMetadata,
 ) -> Block {
+    let explicit_normal = metadata.style.as_deref() == Some("normal");
+    if explicit_normal {
+        metadata.style = None;
+        metadata.attributes.remove("style");
+    }
+
     if let Some(variant) = metadata
         .style
         .as_deref()
@@ -2543,6 +2556,51 @@ fn make_block_from_paragraph(
         });
     }
 
+    if matches!(metadata.style.as_deref(), Some("sidebar" | "example" | "open" | "abstract" | "partintro" | "comment"))
+    {
+        if metadata.id.is_none() {
+            metadata.id = id;
+        }
+        let block = if metadata.style.as_deref() == Some("example") {
+            Block::Example(CompoundBlock {
+                blocks: vec![Block::Paragraph(Paragraph {
+                    inlines: parse_inlines(&lines.join("\n")),
+                    lines,
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                reftext,
+                metadata,
+            })
+        } else if metadata.style.as_deref() == Some("sidebar") {
+            Block::Sidebar(CompoundBlock {
+                blocks: vec![Block::Paragraph(Paragraph {
+                    inlines: parse_inlines(&lines.join("\n")),
+                    lines,
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                reftext,
+                metadata,
+            })
+        } else {
+            Block::Open(CompoundBlock {
+                blocks: vec![Block::Paragraph(Paragraph {
+                    inlines: parse_inlines(&lines.join("\n")),
+                    lines,
+                    id: None,
+                    reftext: None,
+                    metadata: BlockMetadata::default(),
+                })],
+                reftext,
+                metadata,
+            })
+        };
+        return block;
+    }
+
     if matches!(metadata.style.as_deref(), Some("listing" | "source")) {
         if metadata.id.is_none() {
             metadata.id = id;
@@ -2571,6 +2629,21 @@ fn make_block_from_paragraph(
         });
     }
 
+    if metadata.style.as_deref() == Some("verse") {
+        if metadata.id.is_none() {
+            metadata.id = id;
+        }
+        return Block::Quote(QuoteBlock {
+            blocks: vec![],
+            content: Some(lines.join("\n")),
+            attribution: metadata.attributes.get("$2").cloned(),
+            citetitle: metadata.attributes.get("$3").cloned(),
+            is_verse: true,
+            reftext,
+            metadata,
+        });
+    }
+
     if metadata.style.as_deref() == Some("pass") {
         return Block::Passthrough(crate::ast::PassthroughBlock {
             content: lines.join("\n"),
@@ -2580,7 +2653,8 @@ fn make_block_from_paragraph(
     }
 
     // Indented paragraph (leading space/tab) → literal block
-    if lines
+    if !explicit_normal
+        && lines
         .first()
         .is_some_and(|l| l.starts_with(' ') || l.starts_with('\t'))
     {
@@ -5142,6 +5216,103 @@ mod tests {
     }
 
     #[test]
+    fn parses_sidebar_styled_paragraph() {
+        let document = parse_document("[sidebar]\nA short aside.");
+
+        let [Block::Sidebar(sidebar)] = document.blocks.as_slice() else {
+            panic!("expected sidebar block");
+        };
+        assert_eq!(sidebar.metadata.style.as_deref(), Some("sidebar"));
+        let [Block::Paragraph(paragraph)] = sidebar.blocks.as_slice() else {
+            panic!("expected paragraph child");
+        };
+        assert_eq!(paragraph.plain_text(), "A short aside.");
+    }
+
+    #[test]
+    fn parses_example_styled_paragraph() {
+        let document = parse_document("[example]\nA short example.");
+
+        let [Block::Example(example)] = document.blocks.as_slice() else {
+            panic!("expected example block");
+        };
+        assert_eq!(example.metadata.style.as_deref(), Some("example"));
+        let [Block::Paragraph(paragraph)] = example.blocks.as_slice() else {
+            panic!("expected paragraph child");
+        };
+        assert_eq!(paragraph.plain_text(), "A short example.");
+    }
+
+    #[test]
+    fn parses_verse_styled_paragraph() {
+        let document = parse_document("[verse, Carl Sandburg, Fog]\nThe fog comes\non little cat feet.");
+
+        let [Block::Quote(quote)] = document.blocks.as_slice() else {
+            panic!("expected verse block");
+        };
+        assert!(quote.is_verse);
+        assert_eq!(
+            quote.content.as_deref(),
+            Some("The fog comes\non little cat feet.")
+        );
+        assert_eq!(quote.attribution.as_deref(), Some("Carl Sandburg"));
+        assert_eq!(quote.citetitle.as_deref(), Some("Fog"));
+    }
+
+    #[test]
+    fn parses_abstract_styled_paragraph_as_open_block() {
+        let document = parse_document("[abstract]\nAn abstract for the article.");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.metadata.style.as_deref(), Some("abstract"));
+        let [Block::Paragraph(paragraph)] = open.blocks.as_slice() else {
+            panic!("expected paragraph child");
+        };
+        assert_eq!(paragraph.plain_text(), "An abstract for the article.");
+    }
+
+    #[test]
+    fn parses_partintro_styled_paragraph_as_open_block() {
+        let document = parse_document("[partintro]\nRead this first.");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.metadata.style.as_deref(), Some("partintro"));
+        let [Block::Paragraph(paragraph)] = open.blocks.as_slice() else {
+            panic!("expected paragraph child");
+        };
+        assert_eq!(paragraph.plain_text(), "Read this first.");
+    }
+
+    #[test]
+    fn parses_comment_styled_paragraph_as_comment_open_block() {
+        let document = parse_document("[comment]\nThis should stay hidden.");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.metadata.style.as_deref(), Some("comment"));
+        let [Block::Paragraph(paragraph)] = open.blocks.as_slice() else {
+            panic!("expected paragraph child");
+        };
+        assert_eq!(paragraph.plain_text(), "This should stay hidden.");
+    }
+
+    #[test]
+    fn parses_normal_styled_indented_paragraph_as_paragraph() {
+        let document = parse_document("[normal]\n indented but not literal");
+
+        let [Block::Paragraph(paragraph)] = document.blocks.as_slice() else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.metadata.style, None);
+        assert_eq!(paragraph.plain_text(), " indented but not literal");
+    }
+
+    #[test]
     fn parses_pass_styled_paragraph() {
         let document = parse_document("[pass]\n<span>ok</span>");
 
@@ -5248,6 +5419,83 @@ mod tests {
         assert_eq!(literal.metadata.style.as_deref(), Some("literal"));
         assert_eq!(literal.lines, vec!["  preserved text"]);
         assert!(literal.callouts.is_empty());
+    }
+
+    #[test]
+    fn parses_abstract_styled_open_block_as_open() {
+        let document = parse_document("[abstract]\n--\nAbstract.\n--");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.metadata.style.as_deref(), Some("abstract"));
+        assert_eq!(open.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_partintro_styled_open_block_as_open() {
+        let document = parse_document("[partintro]\n--\nIntro.\n--");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.metadata.style.as_deref(), Some("partintro"));
+        assert_eq!(open.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_comment_styled_open_block_as_open() {
+        let document = parse_document("[comment]\n--\nHidden.\n--");
+
+        let [Block::Open(open)] = document.blocks.as_slice() else {
+            panic!("expected open block");
+        };
+        assert_eq!(open.metadata.style.as_deref(), Some("comment"));
+        assert_eq!(open.blocks.len(), 1);
+    }
+
+    #[test]
+    fn parses_pass_styled_open_block_as_passthrough() {
+        let document = parse_document("[pass]\n--\n<span>ok</span>\n--");
+
+        let [Block::Passthrough(passthrough)] = document.blocks.as_slice() else {
+            panic!("expected passthrough block");
+        };
+        assert_eq!(passthrough.content, "<span>ok</span>");
+        assert_eq!(passthrough.metadata.style.as_deref(), Some("pass"));
+    }
+
+    #[test]
+    fn parses_stem_styled_open_block_as_passthrough() {
+        let document = parse_document("[stem]\n--\nsqrt(4) = 2\n--");
+
+        let [Block::Passthrough(passthrough)] = document.blocks.as_slice() else {
+            panic!("expected passthrough block");
+        };
+        assert_eq!(passthrough.content, "sqrt(4) = 2");
+        assert_eq!(passthrough.metadata.style.as_deref(), Some("stem"));
+    }
+
+    #[test]
+    fn parses_latexmath_styled_open_block_as_passthrough() {
+        let document = parse_document("[latexmath]\n--\n\\alpha + \\beta\n--");
+
+        let [Block::Passthrough(passthrough)] = document.blocks.as_slice() else {
+            panic!("expected passthrough block");
+        };
+        assert_eq!(passthrough.content, "\\alpha + \\beta");
+        assert_eq!(passthrough.metadata.style.as_deref(), Some("latexmath"));
+    }
+
+    #[test]
+    fn parses_asciimath_styled_open_block_as_passthrough() {
+        let document = parse_document("[asciimath]\n--\nsqrt(4) = 2\n--");
+
+        let [Block::Passthrough(passthrough)] = document.blocks.as_slice() else {
+            panic!("expected passthrough block");
+        };
+        assert_eq!(passthrough.content, "sqrt(4) = 2");
+        assert_eq!(passthrough.metadata.style.as_deref(), Some("asciimath"));
     }
 
     #[test]

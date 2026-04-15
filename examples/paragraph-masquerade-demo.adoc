@@ -1,0 +1,51 @@
+= Paragraph Masquerade Demo
+
+This example exercises paragraph-style block masquerading.
+
+== Sidebar paragraph
+
+[sidebar]
+This sidebar is a single paragraph masquerading as a sidebar block.
+
+== Example paragraph
+
+[example]
+This example is also a single paragraph, but it should render as an example block.
+
+== Verse paragraph
+
+[verse, Robert Frost, Stopping by Woods on a Snowy Evening]
+Whose woods these are I think I know.
+His house is in the village though;
+He will not see me stopping here
+To watch his woods fill up with snow.
+
+== Abstract paragraph
+
+[abstract]
+This abstract is represented by a paragraph masquerading as an abstract-styled open block.
+
+== Part introduction paragraph
+
+[partintro]
+This paragraph masquerades as a part introduction block.
+
+== Comment paragraph
+
+The next source paragraph is styled as a comment, so it should disappear from rendered output.
+
+[comment]
+You should not see this sentence after rendering.
+
+This paragraph should appear immediately after the comment note above.
+
+== Normal paragraph
+
+The next block starts with indentation, but `[normal]` should keep it as a paragraph instead of promoting it to a literal block.
+
+[normal]
+    This line stays in a normal paragraph even though it is indented.
+
+Run with `cargo run -- examples/paragraph-masquerade-demo.adoc`
+or `cargo run -- --format json examples/paragraph-masquerade-demo.adoc`
+to inspect the resulting block kinds and rendered output.

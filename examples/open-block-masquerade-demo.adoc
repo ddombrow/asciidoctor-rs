@@ -1,0 +1,62 @@
+= Open Block Masquerade Demo
+:stem:
+
+This example exercises open block masquerading for styled open blocks and
+passthrough-style specializations.
+
+== Abstract open block
+
+[abstract]
+--
+This open block should masquerade as an abstract and render with abstract quote styling.
+--
+
+== Part introduction open block
+
+[partintro]
+--
+This open block should masquerade as a part introduction.
+--
+
+== Comment open block
+
+The next open block is styled as a comment, so it should disappear from rendered output.
+
+[comment]
+--
+You should not see this sentence after rendering.
+--
+
+This paragraph should appear immediately after the note above.
+
+== Pass open block
+
+[pass]
+--
+<span class="open-pass-demo">This raw HTML should be emitted directly.</span>
+--
+
+== Stem open block
+
+[stem]
+--
+sqrt(4) = 2
+--
+
+== Explicit latexmath open block
+
+[latexmath]
+--
+\alpha + \beta = \gamma
+--
+
+== Explicit asciimath open block
+
+[asciimath]
+--
+sum_(n=0)^oo 1 / n!
+--
+
+Run with `cargo run -- examples/open-block-masquerade-demo.adoc`
+or `cargo run -- --format json examples/open-block-masquerade-demo.adoc`
+to inspect the rendered output and prepared block types.

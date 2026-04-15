@@ -998,6 +998,11 @@ fn parse_tck_open_block(
             block.inlines =
                 text_inlines_for_delimited_content(content, inner_lines, start_line, end_line);
         }
+        "pass" | "stem" | "latexmath" | "asciimath" => {
+            block.name = "passthrough";
+            block.inlines =
+                text_inlines_for_delimited_content(content, inner_lines, start_line, end_line);
+        }
         _ => {
             block.blocks = Some(children);
         }
@@ -4275,6 +4280,49 @@ mod tests {
 
         assert_eq!(block.name, "passthrough");
         assert_eq!(block.form, Some("delimited"));
+        let metadata = block.metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.attributes.get("style").map(String::as_str),
+            Some("stem")
+        );
+        let text = block
+            .inlines
+            .as_ref()
+            .and_then(|inlines| inlines.first())
+            .expect("passthrough text");
+        let AsgInline::Text(text) = text else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "sqrt(4) = 2");
+    }
+
+    #[test]
+    fn renders_tck_pass_styled_open_block_as_passthrough() {
+        let document = parse_tck_document("[pass]\n--\n<span>ok</span>\n--");
+        let block = document.blocks.first().expect("passthrough block");
+
+        assert_eq!(block.name, "passthrough");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("--"));
+        let text = block
+            .inlines
+            .as_ref()
+            .and_then(|inlines| inlines.first())
+            .expect("passthrough text");
+        let AsgInline::Text(text) = text else {
+            panic!("expected text");
+        };
+        assert_eq!(text.value, "<span>ok</span>");
+    }
+
+    #[test]
+    fn renders_tck_stem_styled_open_block_as_passthrough() {
+        let document = parse_tck_document("[stem]\n--\nsqrt(4) = 2\n--");
+        let block = document.blocks.first().expect("passthrough block");
+
+        assert_eq!(block.name, "passthrough");
+        assert_eq!(block.form, Some("delimited"));
+        assert_eq!(block.delimiter, Some("--"));
         let metadata = block.metadata.as_ref().expect("metadata");
         assert_eq!(
             metadata.attributes.get("style").map(String::as_str),
