@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{
     AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CalloutItem, CalloutList,
-    CompoundBlock, Document, Heading, ImageBlock, ListItem, Listing, OpenBlockContext,
-    OrderedList, Paragraph, QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
+    CompoundBlock, Document, Heading, ImageBlock, ListItem, Listing, OpenBlockContext, OrderedList,
+    Paragraph, QuoteBlock, TableBlock, TableCell, TableRow, UnorderedList,
 };
 use crate::inline::parse_inlines;
 use crate::normalize::normalize_asciidoc;
@@ -1288,68 +1288,169 @@ fn assemble_table_rows_without_known_columns(
 }
 
 fn blocks_plain_text(blocks: &[Block]) -> String {
-    blocks
-        .iter()
-        .map(block_plain_text)
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut text = String::new();
+    append_blocks_plain_text(&mut text, blocks);
+    text
 }
 
 fn block_plain_text(block: &Block) -> String {
+    let mut text = String::new();
+    append_block_plain_text_content(&mut text, block);
+    text
+}
+
+fn append_blocks_plain_text(buffer: &mut String, blocks: &[Block]) -> bool {
+    let mut wrote_any = false;
+    for block in blocks {
+        let separator_index = buffer.len();
+        if wrote_any {
+            buffer.push('\n');
+        }
+
+        if append_block_plain_text_content(buffer, block) {
+            wrote_any = true;
+        } else {
+            buffer.truncate(separator_index);
+        }
+    }
+
+    wrote_any
+}
+
+fn append_block_plain_text_content(buffer: &mut String, block: &Block) -> bool {
     match block {
-        Block::Paragraph(paragraph) => paragraph.plain_text(),
-        Block::Admonition(admonition) => blocks_plain_text(&admonition.blocks),
-        Block::UnorderedList(list) => list
-            .items
-            .iter()
-            .map(|item| blocks_plain_text(&item.blocks))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Block::OrderedList(list) => list
-            .items
-            .iter()
-            .map(|item| blocks_plain_text(&item.blocks))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Block::Table(table) => table
-            .rows
-            .iter()
-            .flat_map(|row| row.cells.iter().map(|cell| cell.content.clone()))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Block::Listing(listing) | Block::Literal(listing) => listing.lines.join("\n"),
+        Block::Paragraph(paragraph) => {
+            let text = paragraph.plain_text();
+            if text.is_empty() {
+                return false;
+            }
+            buffer.push_str(&text);
+            true
+        }
+        Block::Admonition(admonition) => append_blocks_plain_text(buffer, &admonition.blocks),
+        Block::UnorderedList(list) => {
+            let mut wrote_any = false;
+            for item in &list.items {
+                let separator_index = buffer.len();
+                if wrote_any {
+                    buffer.push('\n');
+                }
+
+                if append_blocks_plain_text(buffer, &item.blocks) {
+                    wrote_any = true;
+                } else {
+                    buffer.truncate(separator_index);
+                }
+            }
+            wrote_any
+        }
+        Block::OrderedList(list) => {
+            let mut wrote_any = false;
+            for item in &list.items {
+                let separator_index = buffer.len();
+                if wrote_any {
+                    buffer.push('\n');
+                }
+
+                if append_blocks_plain_text(buffer, &item.blocks) {
+                    wrote_any = true;
+                } else {
+                    buffer.truncate(separator_index);
+                }
+            }
+            wrote_any
+        }
+        Block::Table(table) => {
+            let mut wrote_any = false;
+            for row in &table.rows {
+                for cell in &row.cells {
+                    if cell.content.is_empty() {
+                        continue;
+                    }
+                    if wrote_any {
+                        buffer.push('\n');
+                    }
+                    buffer.push_str(&cell.content);
+                    wrote_any = true;
+                }
+            }
+            wrote_any
+        }
+        Block::Listing(listing) | Block::Literal(listing) => {
+            let text = listing.lines.join("\n");
+            if text.is_empty() {
+                return false;
+            }
+            buffer.push_str(&text);
+            true
+        }
         Block::Example(example) | Block::Sidebar(example) | Block::Open(example) => {
-            blocks_plain_text(&example.blocks)
+            append_blocks_plain_text(buffer, &example.blocks)
         }
         Block::Quote(quote) => {
             if let Some(content) = &quote.content {
-                content.clone()
+                if content.is_empty() {
+                    false
+                } else {
+                    buffer.push_str(content);
+                    true
+                }
             } else {
-                blocks_plain_text(&quote.blocks)
+                append_blocks_plain_text(buffer, &quote.blocks)
             }
         }
-        Block::Passthrough(passthrough) => passthrough.content.clone(),
-        Block::Image(image) => image.alt.clone(),
-        Block::Heading(heading) => heading.title.clone(),
-        Block::Toc => String::new(),
-        Block::CalloutList(_) => String::new(),
-        Block::DescriptionList(list) => list
-            .items
-            .iter()
-            .map(|item| {
-                let mut text = String::new();
+        Block::Passthrough(passthrough) => {
+            if passthrough.content.is_empty() {
+                false
+            } else {
+                buffer.push_str(&passthrough.content);
+                true
+            }
+        }
+        Block::Image(image) => {
+            if image.alt.is_empty() {
+                false
+            } else {
+                buffer.push_str(&image.alt);
+                true
+            }
+        }
+        Block::Heading(heading) => {
+            if heading.title.is_empty() {
+                false
+            } else {
+                buffer.push_str(&heading.title);
+                true
+            }
+        }
+        Block::Toc | Block::CalloutList(_) => false,
+        Block::DescriptionList(list) => {
+            let mut wrote_any = false;
+            for item in &list.items {
                 for term in &item.terms {
-                    text.push_str(&term.text);
-                    text.push('\n');
+                    if term.text.is_empty() {
+                        continue;
+                    }
+                    if wrote_any {
+                        buffer.push('\n');
+                    }
+                    buffer.push_str(&term.text);
+                    wrote_any = true;
                 }
                 if let Some(desc) = &item.description {
-                    text.push_str(&blocks_plain_text(&desc.blocks));
+                    let separator_index = buffer.len();
+                    if wrote_any {
+                        buffer.push('\n');
+                    }
+                    if append_blocks_plain_text(buffer, &desc.blocks) {
+                        wrote_any = true;
+                    } else {
+                        buffer.truncate(separator_index);
+                    }
                 }
-                text
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+            }
+            wrote_any
+        }
     }
 }
 
@@ -2369,7 +2470,8 @@ fn parse_list_item(
         return None;
     }
 
-    let mut blocks = vec![make_paragraph_like_block(vec![marker.content.to_owned()])];
+    let mut blocks = Vec::new();
+    let mut paragraph_lines = vec![marker.content.to_owned()];
     let mut consumed = 1;
 
     while index + consumed < lines.len() {
@@ -2381,6 +2483,7 @@ fn parse_list_item(
         }
 
         if trimmed == "+" {
+            flush_list_item_paragraph(&mut blocks, &mut paragraph_lines);
             if let Some((block, continuation_consumed)) =
                 parse_list_item_continuation_block(lines, index + consumed + 1, level)
             {
@@ -2395,6 +2498,7 @@ fn parse_list_item(
 
         if let Some(next_marker) = parse_list_marker(line) {
             if next_marker.level > level {
+                flush_list_item_paragraph(&mut blocks, &mut paragraph_lines);
                 let (block, nested_consumed) =
                     parse_list_block(lines, index + consumed, next_marker.kind, next_marker.level)?;
                 blocks.push(block);
@@ -2405,10 +2509,11 @@ fn parse_list_item(
             break;
         }
 
-        append_to_last_paragraph(&mut blocks, line.trim_start().to_owned());
+        paragraph_lines.push(line.trim_start().to_owned());
         consumed += 1;
     }
 
+    flush_list_item_paragraph(&mut blocks, &mut paragraph_lines);
     Some((ListItem { blocks }, consumed))
 }
 
@@ -2630,8 +2735,10 @@ fn make_block_from_paragraph(
         });
     }
 
-    if matches!(metadata.style.as_deref(), Some("sidebar" | "example" | "open" | "abstract" | "partintro" | "comment"))
-    {
+    if matches!(
+        metadata.style.as_deref(),
+        Some("sidebar" | "example" | "open" | "abstract" | "partintro" | "comment")
+    ) {
         if metadata.id.is_none() {
             metadata.id = id;
         }
@@ -2748,8 +2855,8 @@ fn make_block_from_paragraph(
     // Indented paragraph (leading space/tab) → literal block
     if !explicit_normal
         && lines
-        .first()
-        .is_some_and(|l| l.starts_with(' ') || l.starts_with('\t'))
+            .first()
+            .is_some_and(|l| l.starts_with(' ') || l.starts_with('\t'))
     {
         return Block::Literal(Listing {
             lines,
@@ -2803,22 +2910,12 @@ fn make_paragraph(lines: Vec<String>) -> Paragraph {
     }
 }
 
-fn append_to_last_paragraph(blocks: &mut Vec<Block>, line: String) {
-    if let Some(Block::Paragraph(paragraph)) = blocks.last_mut() {
-        paragraph.lines.push(line);
-        paragraph.inlines = parse_inlines(&paragraph.lines.join("\n"));
+fn flush_list_item_paragraph(blocks: &mut Vec<Block>, paragraph_lines: &mut Vec<String>) {
+    if paragraph_lines.is_empty() {
         return;
     }
 
-    if let Some(Block::Admonition(admonition)) = blocks.last_mut()
-        && let Some(Block::Paragraph(paragraph)) = admonition.blocks.last_mut()
-    {
-        paragraph.lines.push(line);
-        paragraph.inlines = parse_inlines(&paragraph.lines.join("\n"));
-        return;
-    }
-
-    blocks.push(make_paragraph_like_block(vec![line]));
+    blocks.push(make_paragraph_like_block(std::mem::take(paragraph_lines)));
 }
 
 fn flush_paragraph(
@@ -3362,8 +3459,8 @@ fn is_valid_anchor_id(id: &str) -> bool {
 mod tests {
     use crate::ast::{
         AdmonitionBlock, AdmonitionVariant, Block, BlockMetadata, CompoundBlock, Heading, Inline,
-        InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OpenBlockContext,
-        OrderedList, Paragraph, UnorderedList,
+        InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OpenBlockContext, OrderedList,
+        Paragraph, UnorderedList,
     };
     use crate::parser::parse_document;
 
@@ -4314,6 +4411,36 @@ mod tests {
                 metadata: BlockMetadata::default(),
             })]
         );
+    }
+
+    #[test]
+    fn parses_multiline_list_item_inlines_after_buffering() {
+        let document = parse_document("* first _line_\n  and https://example.com[link]");
+
+        let [Block::UnorderedList(list)] = document.blocks.as_slice() else {
+            panic!("expected unordered list");
+        };
+        let [item] = list.items.as_slice() else {
+            panic!("expected single list item");
+        };
+        let [Block::Paragraph(paragraph)] = item.blocks.as_slice() else {
+            panic!("expected paragraph");
+        };
+
+        assert_eq!(
+            paragraph.lines,
+            vec![
+                "first _line_".to_owned(),
+                "and https://example.com[link]".to_owned()
+            ]
+        );
+        assert_eq!(paragraph.plain_text(), "first line\nand link");
+        assert!(paragraph.inlines.iter().any(
+            |inline| matches!(inline, Inline::Span(span) if span.variant == InlineVariant::Emphasis)
+        ));
+        assert!(paragraph.inlines.iter().any(
+            |inline| matches!(inline, Inline::Link(link) if link.target == "https://example.com")
+        ));
     }
 
     #[test]
@@ -5295,7 +5422,8 @@ mod tests {
 
     #[test]
     fn parses_quote_styled_paragraph_with_combined_style_and_id() {
-        let document = parse_document("[quote#roads]\nRoads? Where we're going, we don't need roads.");
+        let document =
+            parse_document("[quote#roads]\nRoads? Where we're going, we don't need roads.");
 
         let [Block::Quote(quote)] = document.blocks.as_slice() else {
             panic!("expected quote block");
@@ -5307,7 +5435,10 @@ mod tests {
         let [Block::Paragraph(paragraph)] = quote.blocks.as_slice() else {
             panic!("expected paragraph child");
         };
-        assert_eq!(paragraph.plain_text(), "Roads? Where we're going, we don't need roads.");
+        assert_eq!(
+            paragraph.plain_text(),
+            "Roads? Where we're going, we don't need roads."
+        );
     }
 
     #[test]
@@ -5340,7 +5471,8 @@ mod tests {
 
     #[test]
     fn parses_verse_styled_paragraph() {
-        let document = parse_document("[verse, Carl Sandburg, Fog]\nThe fog comes\non little cat feet.");
+        let document =
+            parse_document("[verse, Carl Sandburg, Fog]\nThe fog comes\non little cat feet.");
 
         let [Block::Quote(quote)] = document.blocks.as_slice() else {
             panic!("expected verse block");

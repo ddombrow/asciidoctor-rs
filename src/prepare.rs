@@ -1380,19 +1380,14 @@ fn collect_inline_anchor_refs(inlines: &[PreparedInline], refs: &mut BTreeMap<St
     for inline in inlines {
         match inline {
             PreparedInline::Anchor(anchor) => {
-                let anchor_text = anchor
-                    .inlines
-                    .iter()
-                    .map(prepared_inline_plain_text)
-                    .collect::<Vec<_>>()
-                    .join("");
+                let anchor_text = prepared_inlines_plain_text(&anchor.inlines);
                 refs.entry(normalize_section_ref_key(&anchor.id))
                     .or_insert(BlockRef {
                         id: anchor.id.clone(),
                         title: anchor
                             .reftext
                             .clone()
-                            .or_else(|| (!anchor_text.is_empty()).then_some(anchor_text.clone())),
+                            .or_else(|| (!anchor_text.is_empty()).then_some(anchor_text)),
                     });
                 collect_inline_anchor_refs(&anchor.inlines, refs);
             }
@@ -1428,12 +1423,7 @@ fn resolve_xrefs_in_blocks(
             }
             PreparedBlock::Paragraph(paragraph) => {
                 resolve_xrefs_in_inlines(&mut paragraph.inlines, section_refs, block_refs);
-                paragraph.content = paragraph
-                    .inlines
-                    .iter()
-                    .map(prepared_inline_plain_text)
-                    .collect::<Vec<_>>()
-                    .join("");
+                paragraph.content = prepared_inlines_plain_text(&paragraph.inlines);
             }
             PreparedBlock::Admonition(admonition) => {
                 resolve_xrefs_in_blocks(&mut admonition.blocks, section_refs, block_refs)
@@ -1447,12 +1437,7 @@ fn resolve_xrefs_in_blocks(
                 for item in &mut list.items {
                     for term in &mut item.terms {
                         resolve_xrefs_in_inlines(&mut term.inlines, section_refs, block_refs);
-                        term.text = term
-                            .inlines
-                            .iter()
-                            .map(prepared_inline_plain_text)
-                            .collect::<Vec<_>>()
-                            .join("");
+                        term.text = prepared_inlines_plain_text(&term.inlines);
                     }
                     if let Some(desc) = &mut item.description {
                         resolve_xrefs_in_blocks(&mut desc.blocks, section_refs, block_refs);
@@ -1524,12 +1509,7 @@ fn collect_footnotes_from_blocks(
             }
             PreparedBlock::Paragraph(paragraph) => {
                 collect_footnotes_from_inlines(&mut paragraph.inlines, footnotes, next_index);
-                paragraph.content = paragraph
-                    .inlines
-                    .iter()
-                    .map(prepared_inline_plain_text)
-                    .collect::<Vec<_>>()
-                    .join("");
+                paragraph.content = prepared_inlines_plain_text(&paragraph.inlines);
             }
             PreparedBlock::Admonition(admonition) => {
                 collect_footnotes_from_blocks(&mut admonition.blocks, footnotes, next_index)
@@ -1543,12 +1523,7 @@ fn collect_footnotes_from_blocks(
                 for item in &mut list.items {
                     for term in &mut item.terms {
                         collect_footnotes_from_inlines(&mut term.inlines, footnotes, next_index);
-                        term.text = term
-                            .inlines
-                            .iter()
-                            .map(prepared_inline_plain_text)
-                            .collect::<Vec<_>>()
-                            .join("");
+                        term.text = prepared_inlines_plain_text(&term.inlines);
                     }
                     if let Some(desc) = &mut item.description {
                         collect_footnotes_from_blocks(&mut desc.blocks, footnotes, next_index);
@@ -1613,14 +1588,7 @@ fn collect_footnotes_from_inlines(
                 *next_index += 1;
                 footnote.index = Some(index);
                 footnotes.push(Footnote {
-                    text: Some(
-                        footnote
-                            .inlines
-                            .iter()
-                            .map(prepared_inline_plain_text)
-                            .collect::<Vec<_>>()
-                            .join(""),
-                    ),
+                    text: Some(prepared_inlines_plain_text(&footnote.inlines)),
                     index: Some(index),
                     inlines: footnote.inlines.clone(),
                 });
@@ -1644,11 +1612,7 @@ fn collect_footnotes_from_table_row(
             cell.content = if cell.inlines.is_empty() {
                 prepared_blocks_plain_text(&cell.blocks)
             } else {
-                cell.inlines
-                    .iter()
-                    .map(prepared_inline_plain_text)
-                    .collect::<Vec<_>>()
-                    .join("")
+                prepared_inlines_plain_text(&cell.inlines)
             };
         }
     }
@@ -1661,74 +1625,20 @@ fn resolve_xrefs_in_footnotes(
 ) {
     for footnote in footnotes {
         resolve_xrefs_in_inlines(&mut footnote.inlines, section_refs, block_refs);
-        footnote.text = Some(
-            footnote
-                .inlines
-                .iter()
-                .map(prepared_inline_plain_text)
-                .collect::<Vec<_>>()
-                .join(""),
-        );
+        footnote.text = Some(prepared_inlines_plain_text(&footnote.inlines));
     }
 }
 
 fn prepared_blocks_plain_text(blocks: &[PreparedBlock]) -> String {
-    blocks
-        .iter()
-        .map(prepared_block_plain_text)
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut text = String::new();
+    append_prepared_blocks_plain_text(&mut text, blocks);
+    text
 }
 
 fn prepared_block_plain_text(block: &PreparedBlock) -> String {
-    match block {
-        PreparedBlock::Preamble(preamble)
-        | PreparedBlock::Example(preamble)
-        | PreparedBlock::Sidebar(preamble)
-        | PreparedBlock::Open(preamble) => prepared_blocks_plain_text(&preamble.blocks),
-        PreparedBlock::Paragraph(paragraph) => paragraph.content.clone(),
-        PreparedBlock::Admonition(admonition) => prepared_blocks_plain_text(&admonition.blocks),
-        PreparedBlock::Section(section) => prepared_blocks_plain_text(&section.blocks),
-        PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => list
-            .items
-            .iter()
-            .map(|item| prepared_blocks_plain_text(&item.blocks))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        PreparedBlock::DescriptionList(list) => list
-            .items
-            .iter()
-            .flat_map(|item| {
-                item.terms.iter().map(|term| term.text.clone()).chain(
-                    item.description
-                        .as_ref()
-                        .map(|desc| prepared_blocks_plain_text(&desc.blocks))
-                        .into_iter(),
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        PreparedBlock::Table(table) => table
-            .rows
-            .iter()
-            .flat_map(|row| row.cells.iter().map(|cell| cell.content.clone()))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        PreparedBlock::Listing(listing) | PreparedBlock::Literal(listing) => {
-            listing.content.clone()
-        }
-        PreparedBlock::Quote(quote) => {
-            if quote.content.is_empty() {
-                prepared_blocks_plain_text(&quote.blocks)
-            } else {
-                quote.content.clone()
-            }
-        }
-        PreparedBlock::Passthrough(passthrough) => passthrough.content.clone(),
-        PreparedBlock::Image(image) => image.alt.clone(),
-        PreparedBlock::Toc(_) | PreparedBlock::CalloutList(_) => String::new(),
-    }
+    let mut text = String::new();
+    append_prepared_block_plain_text_content(&mut text, block);
+    text
 }
 
 fn resolve_xrefs_in_inlines(
@@ -1869,36 +1779,169 @@ fn xref_href(target: &str) -> String {
 }
 
 fn prepared_inline_plain_text(inline: &PreparedInline) -> String {
+    let mut text = String::new();
+    append_prepared_inline_plain_text(&mut text, inline);
+    text
+}
+
+fn prepared_inlines_plain_text(inlines: &[PreparedInline]) -> String {
+    let mut text = String::new();
+    append_prepared_inline_sequence_plain_text(&mut text, inlines);
+    text
+}
+
+fn append_prepared_blocks_plain_text(buffer: &mut String, blocks: &[PreparedBlock]) -> bool {
+    let mut wrote_any = false;
+    for block in blocks {
+        let separator_index = buffer.len();
+        if wrote_any {
+            buffer.push('\n');
+        }
+
+        if append_prepared_block_plain_text_content(buffer, block) {
+            wrote_any = true;
+        } else {
+            buffer.truncate(separator_index);
+        }
+    }
+
+    wrote_any
+}
+
+fn append_prepared_block_plain_text_content(buffer: &mut String, block: &PreparedBlock) -> bool {
+    match block {
+        PreparedBlock::Preamble(preamble)
+        | PreparedBlock::Example(preamble)
+        | PreparedBlock::Sidebar(preamble)
+        | PreparedBlock::Open(preamble) => {
+            append_prepared_blocks_plain_text(buffer, &preamble.blocks)
+        }
+        PreparedBlock::Paragraph(paragraph) => {
+            buffer.push_str(&paragraph.content);
+            !paragraph.content.is_empty()
+        }
+        PreparedBlock::Admonition(admonition) => {
+            append_prepared_blocks_plain_text(buffer, &admonition.blocks)
+        }
+        PreparedBlock::Section(section) => {
+            append_prepared_blocks_plain_text(buffer, &section.blocks)
+        }
+        PreparedBlock::UnorderedList(list) | PreparedBlock::OrderedList(list) => {
+            let mut wrote_any = false;
+            for item in &list.items {
+                let separator_index = buffer.len();
+                if wrote_any {
+                    buffer.push('\n');
+                }
+
+                if append_prepared_blocks_plain_text(buffer, &item.blocks) {
+                    wrote_any = true;
+                } else {
+                    buffer.truncate(separator_index);
+                }
+            }
+            wrote_any
+        }
+        PreparedBlock::DescriptionList(list) => {
+            let mut wrote_any = false;
+            for item in &list.items {
+                for term in &item.terms {
+                    if term.text.is_empty() {
+                        continue;
+                    }
+                    let separator_index = buffer.len();
+                    if wrote_any {
+                        buffer.push('\n');
+                    }
+                    buffer.push_str(&term.text);
+                    wrote_any = true;
+                }
+
+                if let Some(desc) = &item.description {
+                    let separator_index = buffer.len();
+                    if wrote_any {
+                        buffer.push('\n');
+                    }
+                    if append_prepared_blocks_plain_text(buffer, &desc.blocks) {
+                        wrote_any = true;
+                    } else {
+                        buffer.truncate(separator_index);
+                    }
+                }
+            }
+            wrote_any
+        }
+        PreparedBlock::Table(table) => {
+            let mut wrote_any = false;
+            for row in &table.rows {
+                for cell in &row.cells {
+                    if cell.content.is_empty() {
+                        continue;
+                    }
+                    if wrote_any {
+                        buffer.push('\n');
+                    }
+                    buffer.push_str(&cell.content);
+                    wrote_any = true;
+                }
+            }
+            wrote_any
+        }
+        PreparedBlock::Listing(listing) | PreparedBlock::Literal(listing) => {
+            buffer.push_str(&listing.content);
+            !listing.content.is_empty()
+        }
+        PreparedBlock::Quote(quote) => {
+            if quote.content.is_empty() {
+                append_prepared_blocks_plain_text(buffer, &quote.blocks)
+            } else {
+                buffer.push_str(&quote.content);
+                true
+            }
+        }
+        PreparedBlock::Passthrough(passthrough) => {
+            buffer.push_str(&passthrough.content);
+            !passthrough.content.is_empty()
+        }
+        PreparedBlock::Image(image) => {
+            buffer.push_str(&image.alt);
+            !image.alt.is_empty()
+        }
+        PreparedBlock::Toc(_) | PreparedBlock::CalloutList(_) => false,
+    }
+}
+
+fn append_prepared_inline_plain_text(buffer: &mut String, inline: &PreparedInline) {
     match inline {
-        PreparedInline::Text(text) => text.value.clone(),
-        PreparedInline::Span(span) => span
-            .inlines
-            .iter()
-            .map(prepared_inline_plain_text)
-            .collect::<Vec<_>>()
-            .join(""),
-        PreparedInline::Link(link) => link
-            .inlines
-            .iter()
-            .map(prepared_inline_plain_text)
-            .collect::<Vec<_>>()
-            .join(""),
-        PreparedInline::Xref(xref) => xref
-            .inlines
-            .iter()
-            .map(prepared_inline_plain_text)
-            .collect::<Vec<_>>()
-            .join(""),
-        PreparedInline::Anchor(anchor) => anchor
-            .inlines
-            .iter()
-            .map(prepared_inline_plain_text)
-            .collect::<Vec<_>>()
-            .join(""),
-        PreparedInline::Passthrough(p) => p.value.clone(),
-        PreparedInline::Image(image) => image.alt.clone(),
-        PreparedInline::Icon(icon) => icon.name.clone(),
-        PreparedInline::Footnote(footnote) => format!("[{}]", footnote.index.unwrap_or(0)),
+        PreparedInline::Text(text) => buffer.push_str(&text.value),
+        PreparedInline::Span(span) => {
+            append_prepared_inline_sequence_plain_text(buffer, &span.inlines)
+        }
+        PreparedInline::Link(link) => {
+            append_prepared_inline_sequence_plain_text(buffer, &link.inlines)
+        }
+        PreparedInline::Xref(xref) => {
+            append_prepared_inline_sequence_plain_text(buffer, &xref.inlines)
+        }
+        PreparedInline::Anchor(anchor) => {
+            append_prepared_inline_sequence_plain_text(buffer, &anchor.inlines)
+        }
+        PreparedInline::Passthrough(p) => buffer.push_str(&p.value),
+        PreparedInline::Image(image) => buffer.push_str(&image.alt),
+        PreparedInline::Icon(icon) => buffer.push_str(&icon.name),
+        PreparedInline::Footnote(footnote) => {
+            use std::fmt::Write as _;
+
+            buffer.push('[');
+            let _ = write!(buffer, "{}", footnote.index.unwrap_or(0));
+            buffer.push(']');
+        }
+    }
+}
+
+fn append_prepared_inline_sequence_plain_text(buffer: &mut String, inlines: &[PreparedInline]) {
+    for inline in inlines {
+        append_prepared_inline_plain_text(buffer, inline);
     }
 }
 

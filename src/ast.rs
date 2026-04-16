@@ -284,52 +284,37 @@ pub enum InlineForm {
 
 impl Inline {
     pub fn plain_text(&self) -> String {
-        match self {
-            Self::Text(text) => text.clone(),
-            Self::Span(span) => span
-                .inlines
-                .iter()
-                .map(Self::plain_text)
-                .collect::<Vec<_>>()
-                .join(""),
-            Self::Link(link) => link
-                .text
-                .iter()
-                .map(Self::plain_text)
-                .collect::<Vec<_>>()
-                .join(""),
-            Self::Xref(xref) => xref
-                .text
-                .iter()
-                .map(Self::plain_text)
-                .collect::<Vec<_>>()
-                .join(""),
-            Self::Anchor(anchor) => anchor
-                .inlines
-                .iter()
-                .map(Self::plain_text)
-                .collect::<Vec<_>>()
-                .join(""),
-            Self::Passthrough(raw) => raw.clone(),
-            Self::Image(image) => image.alt.clone(),
-            Self::Icon(icon) => icon.name.clone(),
-            Self::Footnote(footnote) => footnote
-                .inlines
-                .iter()
-                .map(Self::plain_text)
-                .collect::<Vec<_>>()
-                .join(""),
-        }
+        let mut text = String::new();
+        append_inline_plain_text(&mut text, self);
+        text
     }
 }
 
 impl Paragraph {
     pub fn plain_text(&self) -> String {
-        self.inlines
-            .iter()
-            .map(Inline::plain_text)
-            .collect::<Vec<_>>()
-            .join("")
+        let mut text = String::new();
+        append_inline_sequence_plain_text(&mut text, &self.inlines);
+        text
+    }
+}
+
+fn append_inline_sequence_plain_text(buffer: &mut String, inlines: &[Inline]) {
+    for inline in inlines {
+        append_inline_plain_text(buffer, inline);
+    }
+}
+
+fn append_inline_plain_text(buffer: &mut String, inline: &Inline) {
+    match inline {
+        Inline::Text(text) => buffer.push_str(text),
+        Inline::Span(span) => append_inline_sequence_plain_text(buffer, &span.inlines),
+        Inline::Link(link) => append_inline_sequence_plain_text(buffer, &link.text),
+        Inline::Xref(xref) => append_inline_sequence_plain_text(buffer, &xref.text),
+        Inline::Anchor(anchor) => append_inline_sequence_plain_text(buffer, &anchor.inlines),
+        Inline::Passthrough(raw) => buffer.push_str(raw),
+        Inline::Image(image) => buffer.push_str(&image.alt),
+        Inline::Icon(icon) => buffer.push_str(&icon.name),
+        Inline::Footnote(footnote) => append_inline_sequence_plain_text(buffer, &footnote.inlines),
     }
 }
 
