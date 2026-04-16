@@ -22,7 +22,7 @@ pub use ast::{
     Paragraph,
 };
 pub use inline::{SpannedInline, parse_inlines, parse_spanned_inlines};
-pub use parser::parse_document;
+pub use parser::{ParseResult, parse_document, parse_document_with_warnings};
 pub use prepare::{
     AdmonitionBlock as PreparedAdmonitionBlock, AnchorInline, Author, CompoundBlock, DocumentBlock,
     DocumentSection, Footnote, FootnoteInline, ImageBlock, ImageInline, LinkInline, ParagraphBlock,

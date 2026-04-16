@@ -309,7 +309,7 @@ fn parse_blocks_from_lines(
             continue;
         }
 
-        if let Some((list, consumed_lines)) = parse_unordered_list(lines, index) {
+        if let Some((list, consumed_lines)) = parse_unordered_list(lines, index, warnings) {
             flush_paragraph(
                 &mut blocks,
                 &mut current_paragraph,
@@ -351,7 +351,7 @@ fn parse_blocks_from_lines(
             continue;
         }
 
-        if let Some((list, consumed_lines)) = parse_ordered_list(lines, index) {
+        if let Some((list, consumed_lines)) = parse_ordered_list(lines, index, warnings) {
             flush_paragraph(
                 &mut blocks,
                 &mut current_paragraph,
@@ -1673,7 +1673,13 @@ fn parse_delimited_block(
                     blocks: if is_unclosed {
                         unclosed_delimited_blocks(inner_lines)
                     } else {
-                        parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                        parse_blocks_from_lines(
+                            inner_lines,
+                            &mut nested_title,
+                            false,
+                            None,
+                            warnings,
+                        )
                     },
                     content: None,
                     attribution,
@@ -2470,8 +2476,12 @@ fn parse_description_list(
     }
 }
 
-fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, usize)> {
-    parse_list(lines, index, ListKind::Unordered, 1).map(|(items, consumed)| {
+fn parse_unordered_list(
+    lines: &[&str],
+    index: usize,
+    warnings: &mut Vec<String>,
+) -> Option<(UnorderedList, usize)> {
+    parse_list(lines, index, ListKind::Unordered, 1, warnings).map(|(items, consumed)| {
         (
             UnorderedList {
                 items,
@@ -2483,8 +2493,12 @@ fn parse_unordered_list(lines: &[&str], index: usize) -> Option<(UnorderedList, 
     })
 }
 
-fn parse_ordered_list(lines: &[&str], index: usize) -> Option<(OrderedList, usize)> {
-    parse_list(lines, index, ListKind::Ordered, 1).map(|(items, consumed)| {
+fn parse_ordered_list(
+    lines: &[&str],
+    index: usize,
+    warnings: &mut Vec<String>,
+) -> Option<(OrderedList, usize)> {
+    parse_list(lines, index, ListKind::Ordered, 1, warnings).map(|(items, consumed)| {
         (
             OrderedList {
                 items,
@@ -2501,6 +2515,7 @@ fn parse_list(
     index: usize,
     kind: ListKind,
     level: usize,
+    warnings: &mut Vec<String>,
 ) -> Option<(Vec<ListItem>, usize)> {
     let marker = parse_list_marker(*lines.get(index)?)?;
     if marker.kind != kind || marker.level != level {
@@ -2518,7 +2533,8 @@ fn parse_list(
             break;
         }
 
-        let (item, item_consumed) = parse_list_item(lines, index + consumed, kind, level)?;
+        let (item, item_consumed) =
+            parse_list_item(lines, index + consumed, kind, level, warnings)?;
         items.push(item);
         consumed += item_consumed;
 
@@ -2548,6 +2564,7 @@ fn parse_list_item(
     index: usize,
     kind: ListKind,
     level: usize,
+    warnings: &mut Vec<String>,
 ) -> Option<(ListItem, usize)> {
     let marker = parse_list_marker(*lines.get(index)?)?;
     if marker.kind != kind || marker.level != level {
@@ -2569,7 +2586,7 @@ fn parse_list_item(
         if trimmed == "+" {
             flush_list_item_paragraph(&mut blocks, &mut paragraph_lines);
             if let Some((block, continuation_consumed)) =
-                parse_list_item_continuation_block(lines, index + consumed + 1, level)
+                parse_list_item_continuation_block(lines, index + consumed + 1, level, warnings)
             {
                 blocks.push(block);
                 consumed += 1 + continuation_consumed;
@@ -2583,8 +2600,13 @@ fn parse_list_item(
         if let Some(next_marker) = parse_list_marker(line) {
             if next_marker.level > level {
                 flush_list_item_paragraph(&mut blocks, &mut paragraph_lines);
-                let (block, nested_consumed) =
-                    parse_list_block(lines, index + consumed, next_marker.kind, next_marker.level)?;
+                let (block, nested_consumed) = parse_list_block(
+                    lines,
+                    index + consumed,
+                    next_marker.kind,
+                    next_marker.level,
+                    warnings,
+                )?;
                 blocks.push(block);
                 consumed += nested_consumed;
                 continue;
@@ -2605,6 +2627,7 @@ fn parse_list_item_continuation_block(
     lines: &[&str],
     index: usize,
     parent_level: usize,
+    warnings: &mut Vec<String>,
 ) -> Option<(Block, usize)> {
     let blank_lines = count_blank_lines(&lines[index..]);
     let start = index + blank_lines;
@@ -2612,7 +2635,8 @@ fn parse_list_item_continuation_block(
 
     if let Some(marker) = parse_list_marker(line) {
         if marker.level > parent_level {
-            let (block, consumed) = parse_list_block(lines, start, marker.kind, marker.level)?;
+            let (block, consumed) =
+                parse_list_block(lines, start, marker.kind, marker.level, warnings)?;
             return Some((block, blank_lines + consumed));
         }
 
@@ -2627,11 +2651,11 @@ fn parse_list_item_continuation_block(
 
     if let Some(prelude) = continuation_prelude.as_ref() {
         if let Some((block, consumed)) =
-            parse_delimited_block(lines, continuation_start, Some(prelude))
+            parse_delimited_block(lines, continuation_start, Some(prelude), warnings)
         {
             return Some((block, blank_lines + prelude.consumed_lines + consumed));
         }
-    } else if let Some((block, consumed)) = parse_delimited_block(lines, start, None) {
+    } else if let Some((block, consumed)) = parse_delimited_block(lines, start, None, warnings) {
         return Some((block, blank_lines + consumed));
     }
 
@@ -2678,8 +2702,9 @@ fn parse_list_block(
     index: usize,
     kind: ListKind,
     level: usize,
+    warnings: &mut Vec<String>,
 ) -> Option<(Block, usize)> {
-    let (items, consumed) = parse_list(lines, index, kind, level)?;
+    let (items, consumed) = parse_list(lines, index, kind, level, warnings)?;
     let block = match kind {
         ListKind::Unordered => Block::UnorderedList(UnorderedList {
             items,
@@ -3002,6 +3027,10 @@ fn unclosed_delimited_blocks(lines: &[&str]) -> Vec<Block> {
             lines.iter().map(|line| (*line).to_owned()).collect(),
         ))]
     }
+}
+
+fn unclosed_delimited_block_warning(block_kind: &str, delimiter: &str) -> String {
+    format!("unterminated {block_kind} block: expected closing delimiter `{delimiter}`")
 }
 
 fn flush_list_item_paragraph(blocks: &mut Vec<Block>, paragraph_lines: &mut Vec<String>) {
@@ -3556,7 +3585,7 @@ mod tests {
         InlineForm, InlineSpan, InlineVariant, ListItem, Listing, OpenBlockContext, OrderedList,
         Paragraph, UnorderedList,
     };
-    use crate::parser::parse_document;
+    use crate::parser::{parse_document, parse_document_with_warnings};
 
     #[test]
     fn parses_blank_line_separated_paragraphs() {
@@ -5016,6 +5045,16 @@ mod tests {
     }
 
     #[test]
+    fn warns_for_unclosed_delimited_block() {
+        let result = parse_document_with_warnings("====\ninside\n======");
+
+        assert_eq!(
+            result.warnings,
+            vec!["unterminated example block: expected closing delimiter `====`".to_owned()]
+        );
+    }
+
+    #[test]
     fn ignores_comment_blocks_with_longer_delimiters() {
         let document = parse_document("//////\nignore me\n//////\n\nvisible");
 
@@ -5023,6 +5062,16 @@ mod tests {
             panic!("expected paragraph");
         };
         assert_eq!(paragraph.plain_text(), "visible");
+    }
+
+    #[test]
+    fn warns_for_unclosed_comment_block() {
+        let result = parse_document_with_warnings("//////\nignore me");
+
+        assert_eq!(
+            result.warnings,
+            vec!["unterminated comment block: expected closing delimiter `//////`".to_owned()]
+        );
     }
 
     #[test]

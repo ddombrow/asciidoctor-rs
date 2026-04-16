@@ -49,7 +49,11 @@ fn run_with_path(path: String, format: OutputFormat) -> ExitCode {
         .unwrap_or(std::path::Path::new("."));
     let expanded = asciidoctor_rs::preprocess(&input, base_dir);
 
-    let document = asciidoctor_rs::parse_document(&expanded);
+    let parse_result = asciidoctor_rs::parse_document_with_warnings(&expanded);
+    for warning in &parse_result.warnings {
+        eprintln!("warning: {warning}");
+    }
+    let document = parse_result.document;
     match format {
         OutputFormat::Html => {
             let html = asciidoctor_rs::render_html(&document);
@@ -100,7 +104,11 @@ fn run_with_stdin(format: OutputFormat) -> ExitCode {
             }
         },
         OutputFormat::Html | OutputFormat::Json => {
-            let document = asciidoctor_rs::parse_document(&input);
+            let parse_result = asciidoctor_rs::parse_document_with_warnings(&input);
+            for warning in &parse_result.warnings {
+                eprintln!("warning: {warning}");
+            }
+            let document = parse_result.document;
             match format {
                 OutputFormat::Html => {
                     print!("{}", asciidoctor_rs::render_html(&document));
