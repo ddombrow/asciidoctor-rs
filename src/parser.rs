@@ -70,20 +70,43 @@ enum TableFormat {
     Dsv,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseResult {
+    pub document: Document,
+    pub warnings: Vec<String>,
+}
+
 pub fn parse_document(input: &str) -> Document {
+    parse_document_with_warnings(input).document
+}
+
+pub fn parse_document_with_warnings(input: &str) -> ParseResult {
     if input.is_empty() {
-        return Document::default();
+        return ParseResult {
+            document: Document::default(),
+            warnings: Vec::new(),
+        };
     }
 
     let normalized = normalize_asciidoc(input);
     let lines: Vec<&str> = normalized.lines().collect();
     let (mut title, mut attributes, index) = parse_document_header(&lines);
-    let blocks = parse_blocks_from_lines(&lines[index..], &mut title, true, Some(&mut attributes));
+    let mut warnings = Vec::new();
+    let blocks = parse_blocks_from_lines(
+        &lines[index..],
+        &mut title,
+        true,
+        Some(&mut attributes),
+        &mut warnings,
+    );
 
-    Document {
-        title,
-        attributes,
-        blocks,
+    ParseResult {
+        document: Document {
+            title,
+            attributes,
+            blocks,
+        },
+        warnings,
     }
 }
 
@@ -185,6 +208,7 @@ fn parse_blocks_from_lines(
     title: &mut Option<Heading>,
     allow_document_title: bool,
     document_attributes: Option<&mut BTreeMap<String, String>>,
+    warnings: &mut Vec<String>,
 ) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut index = 0;
@@ -206,6 +230,8 @@ fn parse_blocks_from_lines(
             }
             if index < lines.len() {
                 index += 1;
+            } else {
+                warnings.push(unclosed_delimited_block_warning("comment", delimiter));
             }
             continue;
         }
@@ -237,7 +263,7 @@ fn parse_blocks_from_lines(
         }
 
         if let Some((block, consumed_lines)) =
-            parse_delimited_block(lines, index, pending_block_prelude.as_ref())
+            parse_delimited_block(lines, index, pending_block_prelude.as_ref(), warnings)
         {
             flush_paragraph(
                 &mut blocks,
@@ -1227,10 +1253,11 @@ fn build_table_cell(cell: &ParsedTableCell) -> TableCell {
     let normalized = normalize_table_cell_content(&cell.content);
     let lines: Vec<&str> = normalized.lines().collect();
     let mut title = None;
+    let mut warnings = Vec::new();
     let blocks = if lines.is_empty() {
         Vec::new()
     } else {
-        parse_blocks_from_lines(&lines, &mut title, false, None)
+        parse_blocks_from_lines(&lines, &mut title, false, None, &mut warnings)
     };
     let paragraph_inlines = blocks
         .first()
@@ -1507,6 +1534,7 @@ fn parse_delimited_block(
     lines: &[&str],
     index: usize,
     pending_prelude: Option<&BlockPrelude>,
+    warnings: &mut Vec<String>,
 ) -> Option<(Block, usize)> {
     let prelude = pending_prelude.cloned().unwrap_or_default();
     let delimiter_index = index;
@@ -1520,9 +1548,16 @@ fn parse_delimited_block(
     let closing_index = lines[delimiter_index + 1..]
         .iter()
         .position(|line| line.trim() == delimiter)
-        .map(|offset| delimiter_index + 1 + offset)?;
+        .map(|offset| delimiter_index + 1 + offset);
+    let is_unclosed = closing_index.is_none();
+    let closing_index = closing_index.unwrap_or(lines.len());
     let inner_lines = &lines[delimiter_index + 1..closing_index];
-    let consumed = closing_index - index + 1;
+    let consumed = if is_unclosed {
+        warnings.push(unclosed_delimited_block_warning(block_kind, delimiter));
+        lines.len() - index
+    } else {
+        closing_index - index + 1
+    };
 
     if block_kind == "example"
         && let Some(variant) = prelude
@@ -1535,7 +1570,11 @@ fn parse_delimited_block(
         return Some((
             Block::Admonition(AdmonitionBlock {
                 variant,
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 id: prelude.metadata.id.clone(),
                 reftext: None,
                 metadata: prelude.metadata,
@@ -1587,7 +1626,11 @@ fn parse_delimited_block(
             clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Example(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 reftext: None,
                 context: None,
                 metadata,
@@ -1598,7 +1641,11 @@ fn parse_delimited_block(
             clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Sidebar(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 reftext: None,
                 context: None,
                 metadata,
@@ -1623,7 +1670,11 @@ fn parse_delimited_block(
             } else {
                 let mut nested_title = None;
                 Block::Quote(QuoteBlock {
-                    blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                    blocks: if is_unclosed {
+                        unclosed_delimited_blocks(inner_lines)
+                    } else {
+                        parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                    },
                     content: None,
                     attribution,
                     citetitle,
@@ -1635,7 +1686,7 @@ fn parse_delimited_block(
         }
         "open" => {
             // Styled open block: redirect to the appropriate block type.
-            masquerade_open_block(prelude.metadata, inner_lines)
+            masquerade_open_block(prelude.metadata, inner_lines, is_unclosed, warnings)
         }
         _ => return None,
     };
@@ -1643,13 +1694,22 @@ fn parse_delimited_block(
     Some((block, consumed))
 }
 
-fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> Block {
+fn masquerade_open_block(
+    mut metadata: BlockMetadata,
+    inner_lines: &[&str],
+    is_unclosed: bool,
+    warnings: &mut Vec<String>,
+) -> Block {
     let style = metadata.style.clone().unwrap_or_default();
     if let Some(variant) = admonition_variant_from_style(&style) {
         let mut nested_title = None;
         return Block::Admonition(AdmonitionBlock {
             variant,
-            blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+            blocks: if is_unclosed {
+                unclosed_delimited_blocks(inner_lines)
+            } else {
+                parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+            },
             id: metadata.id.clone(),
             reftext: None,
             metadata,
@@ -1683,7 +1743,11 @@ fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> B
             clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Sidebar(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 reftext: None,
                 context: None,
                 metadata,
@@ -1693,7 +1757,11 @@ fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> B
             clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Example(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 reftext: None,
                 context: None,
                 metadata,
@@ -1703,7 +1771,11 @@ fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> B
             clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Quote(QuoteBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 content: None,
                 attribution: metadata.attributes.get("$2").cloned(),
                 citetitle: metadata.attributes.get("$3").cloned(),
@@ -1747,7 +1819,11 @@ fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> B
             clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Open(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 reftext: None,
                 context: Some(context),
                 metadata,
@@ -1757,7 +1833,11 @@ fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> B
             clear_resolved_style(&mut metadata);
             let mut nested_title = None;
             Block::Open(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 reftext: None,
                 context: None,
                 metadata,
@@ -1766,7 +1846,11 @@ fn masquerade_open_block(mut metadata: BlockMetadata, inner_lines: &[&str]) -> B
         _ => {
             let mut nested_title = None;
             Block::Open(CompoundBlock {
-                blocks: parse_blocks_from_lines(inner_lines, &mut nested_title, false, None),
+                blocks: if is_unclosed {
+                    unclosed_delimited_blocks(inner_lines)
+                } else {
+                    parse_blocks_from_lines(inner_lines, &mut nested_title, false, None, warnings)
+                },
                 reftext: None,
                 context: None,
                 metadata,
@@ -2907,6 +2991,16 @@ fn make_paragraph(lines: Vec<String>) -> Paragraph {
         id: None,
         reftext: None,
         metadata: BlockMetadata::default(),
+    }
+}
+
+fn unclosed_delimited_blocks(lines: &[&str]) -> Vec<Block> {
+    if lines.is_empty() {
+        Vec::new()
+    } else {
+        vec![Block::Paragraph(make_paragraph(
+            lines.iter().map(|line| (*line).to_owned()).collect(),
+        ))]
     }
 }
 
@@ -4894,10 +4988,31 @@ mod tests {
     fn does_not_close_delimited_block_with_mismatched_delimiter_length() {
         let document = parse_document("====\ninside\n======");
 
-        let [Block::Paragraph(paragraph)] = document.blocks.as_slice() else {
+        let [Block::Example(example)] = document.blocks.as_slice() else {
+            panic!("expected example block");
+        };
+        let [Block::Paragraph(paragraph)] = example.blocks.as_slice() else {
             panic!("expected paragraph");
         };
-        assert_eq!(paragraph.lines, vec!["====", "inside", "======"]);
+        assert_eq!(paragraph.plain_text(), "inside\n======");
+    }
+
+    #[test]
+    fn consumes_remainder_of_document_for_unclosed_sidebar_with_mismatched_closer() {
+        let document = parse_document(
+            "********\nThis is an invalid sidebar block because the delimiter lines are different lengths.\n****\nAfter paragraph.",
+        );
+
+        let [Block::Sidebar(sidebar)] = document.blocks.as_slice() else {
+            panic!("expected sidebar block");
+        };
+        let [Block::Paragraph(paragraph)] = sidebar.blocks.as_slice() else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(
+            paragraph.plain_text(),
+            "This is an invalid sidebar block because the delimiter lines are different lengths.\n****\nAfter paragraph."
+        );
     }
 
     #[test]
